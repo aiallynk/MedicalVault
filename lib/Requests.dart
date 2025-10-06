@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
-import 'dashboard1.dart';
 import 'main.dart';
 
 // Session Request Model
@@ -210,20 +209,9 @@ class _RequestsPageState extends State<RequestsPage> {
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () async {
-            // Get user data from SharedPreferences
-            final prefs = await SharedPreferences.getInstance();
-            final userDataString = prefs.getString('userData');
-            final userData = userDataString != null
-                ? jsonDecode(userDataString)
-                : <String, dynamic>{};
-
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => Dashboard1(userData: userData),
-              ),
-            );
+          onPressed: () {
+            // Navigate back to previous screen
+            Navigator.pop(context);
           },
         ),
         actions: [

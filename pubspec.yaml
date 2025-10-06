@@ -57,6 +57,7 @@ flutter:
     - assets/icon/app_icon.png
     - assets/LoadingClock.json
     - assets/twodotloading.json
+    - assets/Theme.png
 
 flutter_icons:
   android: true

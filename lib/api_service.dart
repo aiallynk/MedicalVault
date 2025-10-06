@@ -1,9 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'Document_model.dart';
-import 'package:http_parser/http_parser.dart';
+import 'package:dio/dio.dart';
 import 'fcm_service.dart';
 
 class ApiService {
@@ -151,6 +152,7 @@ class ApiService {
     required String category,
     String? notes,
     String? date,
+    Function(double)? onProgress,
   }) async {
     try {
       // ✅ Force category to match backend accepted values
@@ -158,44 +160,62 @@ class ApiService {
       final normalizedCategory =
           validCategories.contains(category) ? category : "Report";
 
-      final uri = Uri.parse("$filesUrl/upload");
-      final request = http.MultipartRequest("POST", uri);
-
+      // Get authentication token
       final token = await _getToken();
+
+      // Create Dio instance
+      final dio = Dio();
+
+      // Set up headers
+      final headers = <String, dynamic>{
+        'Content-Type': 'multipart/form-data',
+      };
+
       if (token != null) {
-        request.headers[HttpHeaders.authorizationHeader] = "Bearer $token";
+        headers['Authorization'] = 'Bearer $token';
       }
 
-      request.fields["title"] = title;
-      request.fields["category"] = normalizedCategory;
-      if (notes != null) request.fields["notes"] = notes;
-      if (date != null) request.fields["date"] = date;
-
-      final stream = http.ByteStream(file.openRead());
-      final length = await file.length();
-
-      // ✅ Detect MIME type by file extension and set explicit contentType
+      // ✅ Detect MIME type by file extension
       String filename = file.path.split("/").last;
       final lowerName = filename.toLowerCase();
       String mimeType = _detectMimeType(lowerName);
 
-      final multipartFile = http.MultipartFile(
-        "file",
-        stream,
-        length,
-        filename: filename,
-        contentType: MediaType.parse(mimeType),
-      );
-      request.files.add(multipartFile);
+      // Prepare form data
+      final formData = FormData.fromMap({
+        'file': await MultipartFile.fromFile(
+          file.path,
+          filename: filename,
+          contentType: DioMediaType.parse(mimeType),
+        ),
+        'title': title,
+        'category': normalizedCategory,
+        if (notes != null) 'notes': notes,
+        if (date != null) 'date': date,
+      });
 
-      final response = await request.send();
-      final body = await response.stream.bytesToString();
+      // Make the upload request with real progress tracking
+      final response = await dio.post(
+        "$filesUrl/upload",
+        data: formData,
+        options: Options(
+          headers: headers,
+          sendTimeout: const Duration(minutes: 5), // 5 minute timeout
+          receiveTimeout: const Duration(minutes: 5),
+        ),
+        onSendProgress: (sent, total) {
+          // This provides REAL upload progress
+          if (onProgress != null && total > 0) {
+            final progress = (sent / total) * 100;
+            onProgress(progress.clamp(0.0, 100.0));
+          }
+        },
+      );
 
       if (response.statusCode == 200) {
-        final json = jsonDecode(body);
+        final json = response.data;
         return Document.fromApi(json['document']);
       } else {
-        print("Upload failed: $body");
+        print("Upload failed: ${response.data}");
         return null;
       }
     } catch (e) {

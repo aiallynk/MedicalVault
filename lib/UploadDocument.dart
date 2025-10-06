@@ -24,6 +24,7 @@ class _UploadDocumentState extends State<UploadDocument> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
   bool _isUploading = false;
+  double _uploadProgress = 0.0;
 
   /// File picker
   Future<void> _pickFile() async {
@@ -47,12 +48,25 @@ class _UploadDocumentState extends State<UploadDocument> {
     }
   }
 
+  /// Remove selected file
+  void _removeSelectedFile() {
+    setState(() {
+      _selectedFile = null;
+    });
+  }
+
   Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final yesterday = now.subtract(const Duration(days: 1));
     final pickedDate = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
+      initialDate: _selectedDate ??
+          yesterday, // Default to yesterday if no date selected
       firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
+      lastDate: now, // ✅ Restrict to current date and earlier (no future dates)
+      helpText: "Select document date",
+      cancelText: "Cancel",
+      confirmText: "Select",
     );
     if (pickedDate != null) {
       setState(() {
@@ -71,7 +85,10 @@ class _UploadDocumentState extends State<UploadDocument> {
       return;
     }
 
-    setState(() => _isUploading = true);
+    setState(() {
+      _isUploading = true;
+      _uploadProgress = 0.0;
+    });
 
     final doc = await ApiService.uploadDocument(
       file: _selectedFile!,
@@ -79,10 +96,19 @@ class _UploadDocumentState extends State<UploadDocument> {
       category:
           _selectedCategory == "Reports" ? "Lab Report" : _selectedCategory!,
       notes: _notesController.text,
-      date: _selectedDate?.toIso8601String(),
+      date:
+          _selectedDate?.toIso8601String() ?? DateTime.now().toIso8601String(),
+      onProgress: (progress) {
+        setState(() {
+          _uploadProgress = progress;
+        });
+      },
     );
 
-    setState(() => _isUploading = false);
+    setState(() {
+      _isUploading = false;
+      _uploadProgress = 0.0;
+    });
 
     if (doc != null) {
       Navigator.pop(context, true);
@@ -146,7 +172,8 @@ class _UploadDocumentState extends State<UploadDocument> {
                     decoration: InputDecoration(
                       prefixIcon:
                           const Icon(Icons.calendar_today, color: Colors.blue),
-                      labelText: "Date",
+                      labelText: "Document Date",
+                      hintText: "Select date when document was created",
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -194,6 +221,15 @@ class _UploadDocumentState extends State<UploadDocument> {
                       onPressed: _pickFromCamera,
                     ),
                   ),
+                  // ✅ Add remove button when file is selected
+                  if (_selectedFile != null) ...[
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.remove, color: Colors.red),
+                      onPressed: _removeSelectedFile,
+                      tooltip: "Remove selected file",
+                    ),
+                  ],
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -212,28 +248,73 @@ class _UploadDocumentState extends State<UploadDocument> {
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.cloud_upload, color: Colors.blue),
-                  label: _isUploading
-                      ? const Text(
-                          "Uploading...",
-                          style: TextStyle(color: Colors.blue),
-                        )
-                      : const Text(
+                child: _isUploading
+                    ? Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF4A90E2), Color(0xFF50E3C2)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  "Uploading... ${_uploadProgress.toInt()}%",
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            LinearProgressIndicator(
+                              value: _uploadProgress / 100,
+                              backgroundColor: Colors.white.withOpacity(0.3),
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
+                              minHeight: 6,
+                            ),
+                          ],
+                        ),
+                      )
+                    : ElevatedButton.icon(
+                        icon:
+                            const Icon(Icons.cloud_upload, color: Colors.blue),
+                        label: const Text(
                           "Upload Document",
                           style: TextStyle(color: Colors.blue),
                         ),
-                  onPressed: _isUploading ? null : _uploadDocument,
-                  style: ElevatedButton.styleFrom(
-                    foregroundColor: Colors.blue,
-                    backgroundColor:
-                        Theme.of(context).brightness == Brightness.dark
-                            ? Colors.grey[800]
-                            : Colors.grey[100],
-                    side: const BorderSide(color: Colors.blue),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
+                        onPressed: _uploadDocument,
+                        style: ElevatedButton.styleFrom(
+                          foregroundColor: Colors.blue,
+                          backgroundColor:
+                              Theme.of(context).brightness == Brightness.dark
+                                  ? Colors.grey[800]
+                                  : Colors.grey[100],
+                          side: const BorderSide(color: Colors.blue),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
               )
             ],
           ),

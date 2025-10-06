@@ -105,236 +105,259 @@ class _Dashboard1State extends State<Dashboard1> {
         final userName =
             passedName.isNotEmpty ? passedName : (snapshot.data ?? "Patient");
 
-        return SafeArea(
-          child: Scaffold(
-            body: PageView(
-              controller: _pageController,
-              physics: const ClampingScrollPhysics(),
-              onPageChanged: (index) {
-                setState(() {
-                  _currentIndex = index;
-                });
-              },
-              children: [
-                // 🏠 Dashboard tab
-                RefreshIndicator(
-                  onRefresh: _loadDocumentCounts,
-                  child: ListView(
-                    padding: const EdgeInsets.all(30.0),
-                    children: [
-                      Row(
-                        children: [
-                          GestureDetector(
-                            onTap: () => _showProfileSwitcher(context),
-                            child: CircleAvatar(
-                              radius: 20,
-                              backgroundColor: Theme.of(context).primaryColor,
-                              child: widget.userData['profilePicture'] != null
-                                  ? ClipOval(
-                                      child: Image.network(
-                                        widget.userData['profilePicture'],
-                                        width: 40,
-                                        height: 40,
-                                        fit: BoxFit.cover,
-                                        errorBuilder:
-                                            (context, error, stackTrace) {
-                                          return Icon(
-                                            Icons.person,
-                                            color: Colors.white,
-                                            size: 20,
-                                          );
-                                        },
-                                      ),
-                                    )
-                                  : Icon(
-                                      Icons.person,
-                                      color: Colors.white,
-                                      size: 20,
-                                    ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Hello, $userName 👋',
-                                  style: const TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold),
-                                ),
-                                if (_linkedProfiles.isNotEmpty)
-                                  Text(
-                                    '${_linkedProfiles.length + 1} profiles available',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey[600],
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => _showProfileSwitcher(context),
-                            icon: Icon(
-                              Icons.swap_horiz,
-                              color: Theme.of(context).iconTheme.color,
-                            ),
-                            tooltip: "Switch Profile",
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                      const Text("Quick Actions",
-                          style: TextStyle(
-                              color: Colors.grey,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500)),
-                      const SizedBox(height: 8),
-                      ListTile(
-                        leading: const CircleAvatar(
-                          backgroundColor: Color(0xFFE0E0E0),
-                          child: Icon(Icons.qr_code, color: Colors.black),
-                        ),
-                        title: const Text('Generate / Share QR'),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => QRPage()),
-                          );
-                        },
-                      ),
-                      ListTile(
-                        leading: const CircleAvatar(
-                          backgroundColor: Color(0xFFE0E0E0),
-                          child: Icon(Icons.list_alt, color: Colors.black),
-                        ),
-                        title: const Text('Access Requests'),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (context) => RequestsPage()),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 24),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('My Documents',
-                              style: TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.bold)),
-                          if (!_isLoadingCounts)
-                            Text(
-                              '${_documentCounts.values.fold(0, (sum, count) => sum + count)} total',
-                              style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey,
-                                  fontWeight: FontWeight.w500),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: 4,
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 16,
-                          mainAxisSpacing: 16,
-                          childAspectRatio: 1,
-                        ),
-                        itemBuilder: (context, index) {
-                          final categories = [
-                            {
-                              "title": "Reports",
-                              "image": "assets/Reports.png",
-                              "category": "Reports",
-                              "count": _documentCounts["Reports"] ?? 0
-                            },
-                            {
-                              "title": "Prescriptions",
-                              "image": "assets/Prescription.png",
-                              "category": "Prescription",
-                              "count": _documentCounts["Prescription"] ?? 0
-                            },
-                            {
-                              "title": "Bills",
-                              "image": "assets/2851468.png",
-                              "category": "Bill",
-                              "count": _documentCounts["Bill"] ?? 0
-                            },
-                            {
-                              "title": "Insurance Details",
-                              "image": "assets/Insurance12.png",
-                              "category": "Insurance",
-                              "count": _documentCounts["Insurance"] ?? 0
-                            },
-                          ];
-
-                          final item = categories[index];
-                          return _buildCategoryCard(
-                            context,
-                            title: item["title"] as String,
-                            imagePath: item["image"] as String,
-                            category: item["category"] as String,
-                            count: item["count"] as int,
-                          );
-                        },
-                      )
-                    ],
+        return WillPopScope(
+          onWillPop: () async {
+            // Show confirmation dialog when back button is pressed on dashboard
+            final shouldExit = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Exit App'),
+                content: const Text('Are you sure you want to exit the app?'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
                   ),
-                ),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: const Text('Exit'),
+                  ),
+                ],
+              ),
+            );
+            return shouldExit ?? false;
+          },
+          child: SafeArea(
+            child: Scaffold(
+              body: PageView(
+                controller: _pageController,
+                physics: const ClampingScrollPhysics(),
+                onPageChanged: (index) {
+                  setState(() {
+                    _currentIndex = index;
+                  });
+                },
+                children: [
+                  // 🏠 Dashboard tab
+                  RefreshIndicator(
+                    onRefresh: _loadDocumentCounts,
+                    child: ListView(
+                      padding: const EdgeInsets.all(30.0),
+                      children: [
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () => _showProfileSwitcher(context),
+                              child: CircleAvatar(
+                                radius: 20,
+                                backgroundColor: Theme.of(context).primaryColor,
+                                child: widget.userData['profilePicture'] != null
+                                    ? ClipOval(
+                                        child: Image.network(
+                                          widget.userData['profilePicture'],
+                                          width: 40,
+                                          height: 40,
+                                          fit: BoxFit.cover,
+                                          errorBuilder:
+                                              (context, error, stackTrace) {
+                                            return Icon(
+                                              Icons.person,
+                                              color: Colors.white,
+                                              size: 20,
+                                            );
+                                          },
+                                        ),
+                                      )
+                                    : Icon(
+                                        Icons.person,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Hello, $userName 👋',
+                                    style: const TextStyle(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                  if (_linkedProfiles.isNotEmpty)
+                                    Text(
+                                      '${_linkedProfiles.length + 1} profiles available',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => _showProfileSwitcher(context),
+                              icon: Icon(
+                                Icons.swap_horiz,
+                                color: Theme.of(context).iconTheme.color,
+                              ),
+                              tooltip: "Switch Profile",
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        const Text("Quick Actions",
+                            style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500)),
+                        const SizedBox(height: 8),
+                        ListTile(
+                          leading: const CircleAvatar(
+                            backgroundColor: Color(0xFFE0E0E0),
+                            child: Icon(Icons.qr_code, color: Colors.black),
+                          ),
+                          title: const Text('Generate / Share QR'),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => QRPage()),
+                            );
+                          },
+                        ),
+                        ListTile(
+                          leading: const CircleAvatar(
+                            backgroundColor: Color(0xFFE0E0E0),
+                            child: Icon(Icons.list_alt, color: Colors.black),
+                          ),
+                          title: const Text('Access Requests'),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (context) => RequestsPage()),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 24),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('My Documents',
+                                style: TextStyle(
+                                    fontSize: 18, fontWeight: FontWeight.bold)),
+                            if (!_isLoadingCounts)
+                              Text(
+                                '${_documentCounts.values.fold(0, (sum, count) => sum + count)} total',
+                                style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey,
+                                    fontWeight: FontWeight.w500),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: 4,
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 16,
+                            mainAxisSpacing: 16,
+                            childAspectRatio: 1,
+                          ),
+                          itemBuilder: (context, index) {
+                            final categories = [
+                              {
+                                "title": "Reports",
+                                "image": "assets/Reports.png",
+                                "category": "Reports",
+                                "count": _documentCounts["Reports"] ?? 0
+                              },
+                              {
+                                "title": "Prescriptions",
+                                "image": "assets/Prescription.png",
+                                "category": "Prescription",
+                                "count": _documentCounts["Prescription"] ?? 0
+                              },
+                              {
+                                "title": "Bills",
+                                "image": "assets/2851468.png",
+                                "category": "Bill",
+                                "count": _documentCounts["Bill"] ?? 0
+                              },
+                              {
+                                "title": "Insurance Details",
+                                "image": "assets/Insurance12.png",
+                                "category": "Insurance",
+                                "count": _documentCounts["Insurance"] ?? 0
+                              },
+                            ];
 
-                // 🔐 Vault tab
-                MyVault(
-                  userId: (widget.userData["id"] ?? "").toString(),
-                ),
+                            final item = categories[index];
+                            return _buildCategoryCard(
+                              context,
+                              title: item["title"] as String,
+                              imagePath: item["image"] as String,
+                              category: item["category"] as String,
+                              count: item["count"] as int,
+                            );
+                          },
+                        )
+                      ],
+                    ),
+                  ),
 
-                QRPage(),
-                RequestsPage(),
-                SettingsPage(userData: widget.userData),
-              ],
-            ),
-            bottomNavigationBar: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                BottomNavigationBar(
-                  type: BottomNavigationBarType.fixed,
-                  currentIndex: _currentIndex,
-                  onTap: (index) {
-                    setState(() {
-                      _currentIndex = index;
-                    });
-                    _pageController.animateToPage(index,
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeInOut);
-                  },
-                  items: const [
-                    BottomNavigationBarItem(
-                        icon: Icon(Icons.home), label: 'Home'),
-                    BottomNavigationBarItem(
-                        icon: Icon(Icons.lock), label: 'Vault'),
-                    BottomNavigationBarItem(
-                        icon: Icon(Icons.qr_code), label: 'QR'),
-                    BottomNavigationBarItem(
-                        icon: Icon(Icons.list_alt), label: 'Requests'),
-                    BottomNavigationBarItem(
-                        icon: Icon(Icons.settings), label: 'Settings'),
-                  ],
-                  selectedItemColor: Theme.of(context)
-                      .bottomNavigationBarTheme
-                      .selectedItemColor,
-                  unselectedItemColor: Theme.of(context)
-                      .bottomNavigationBarTheme
-                      .unselectedItemColor,
-                ),
-                const AppFooter(),
-              ],
+                  // 🔐 Vault tab
+                  MyVault(
+                    userId: (widget.userData["id"] ?? "").toString(),
+                  ),
+
+                  QRPage(),
+                  RequestsPage(),
+                  SettingsPage(userData: widget.userData),
+                ],
+              ),
+              bottomNavigationBar: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  BottomNavigationBar(
+                    type: BottomNavigationBarType.fixed,
+                    currentIndex: _currentIndex,
+                    onTap: (index) {
+                      setState(() {
+                        _currentIndex = index;
+                      });
+                      _pageController.animateToPage(index,
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut);
+                    },
+                    items: const [
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.home), label: 'Home'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.lock), label: 'Vault'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.qr_code), label: 'QR'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.list_alt), label: 'Requests'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.settings), label: 'Settings'),
+                    ],
+                    selectedItemColor: Theme.of(context)
+                        .bottomNavigationBarTheme
+                        .selectedItemColor,
+                    unselectedItemColor: Theme.of(context)
+                        .bottomNavigationBarTheme
+                        .unselectedItemColor,
+                  ),
+                  const AppFooter(),
+                ],
+              ),
             ),
           ),
         );

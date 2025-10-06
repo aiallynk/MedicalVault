@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:cross_file/cross_file.dart';
@@ -6,12 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'HowQrAcessWorks.dart';
 import 'api_service.dart';
-import 'dashboard1.dart';
 import 'main.dart';
 
 /// 👉 Backend base URL (no trailing slash)
@@ -100,20 +97,9 @@ class _QRPageState extends State<QRPage> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () async {
-            // Get user data from SharedPreferences
-            final prefs = await SharedPreferences.getInstance();
-            final userDataString = prefs.getString('userData');
-            final userData = userDataString != null
-                ? jsonDecode(userDataString)
-                : <String, dynamic>{};
-
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => Dashboard1(userData: userData),
-              ),
-            );
+          onPressed: () {
+            // Navigate back to previous screen
+            Navigator.pop(context);
           },
         ),
       ),

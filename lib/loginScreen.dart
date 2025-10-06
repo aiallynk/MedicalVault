@@ -19,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
+  bool _isLoggingIn = false;
 
   @override
   void dispose() {
@@ -63,8 +64,9 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: () async {
-        // Exit the app when back button is pressed on login screen
-        return true;
+        // Navigate back to WelcomeScreen instead of exiting app
+        Navigator.pop(context);
+        return false;
       },
       child: Scaffold(
         resizeToAvoidBottomInset: true,
@@ -262,31 +264,50 @@ class _LoginScreenState extends State<LoginScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: ElevatedButton(
-                    onPressed: () async {
-                      final result = await ApiService.login(
-                        _emailController.text.trim(),
-                        _passwordController.text.trim(),
-                      );
-                      if (result != null) {
-                        // ✅ Get user data from SharedPreferences after login
-                        final prefs = await SharedPreferences.getInstance();
-                        final userDataString = prefs.getString('userData');
-                        final userData = userDataString != null
-                            ? jsonDecode(userDataString)
-                            : <String, dynamic>{};
+                    onPressed: _isLoggingIn
+                        ? null
+                        : () async {
+                            setState(() {
+                              _isLoggingIn = true;
+                            });
 
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => Dashboard1(userData: userData),
-                          ),
-                        );
-                      } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("❌ Login failed")),
-                        );
-                      }
-                    },
+                            try {
+                              final result = await ApiService.login(
+                                _emailController.text.trim(),
+                                _passwordController.text.trim(),
+                              );
+
+                              if (result != null) {
+                                // ✅ Get user data from SharedPreferences after login
+                                final prefs =
+                                    await SharedPreferences.getInstance();
+                                final userDataString =
+                                    prefs.getString('userData');
+                                final userData = userDataString != null
+                                    ? jsonDecode(userDataString)
+                                    : <String, dynamic>{};
+
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        Dashboard1(userData: userData),
+                                  ),
+                                );
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text("❌ Login failed")),
+                                );
+                              }
+                            } finally {
+                              if (mounted) {
+                                setState(() {
+                                  _isLoggingIn = false;
+                                });
+                              }
+                            }
+                          },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.transparent,
                       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -295,10 +316,32 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       elevation: 0,
                     ),
-                    child: const Text(
-                      'Log In',
-                      style: TextStyle(fontSize: 18, color: Colors.white),
-                    ),
+                    child: _isLoggingIn
+                        ? Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              const Text(
+                                'Logging you in...',
+                                style: TextStyle(
+                                    fontSize: 18, color: Colors.white),
+                              ),
+                            ],
+                          )
+                        : const Text(
+                            'Log In',
+                            style: TextStyle(fontSize: 18, color: Colors.white),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 24),
