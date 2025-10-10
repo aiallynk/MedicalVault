@@ -1,0 +1,24 @@
+<svg width="100%" height="100%" viewBox="0 0 1080 1920" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="darkWave1" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" style="stop-color:#00796B; stop-opacity:0.7"/>
+      <stop offset="100%" style="stop-color:#0288D1; stop-opacity:0.6"/>
+    </linearGradient>
+    <linearGradient id="darkWave2" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" style="stop-color:#00ACC1; stop-opacity:0.8"/>
+      <stop offset="100%" style="stop-color:#4DB6AC; stop-opacity:0.5"/>
+    </linearGradient>
+    <linearGradient id="darkWave3" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" style="stop-color:#26A69A; stop-opacity:0.4"/>
+      <stop offset="100%" style="stop-color:#01579B; stop-opacity:0.7"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1080" height="1920" fill="#121212"/>
+
+  <path fill="url(#darkWave3)" d="M -100 1300 Q 300 1100, 600 1350 T 1200 1400 L 1200 1920 L -100 1920 Z" />
+
+  <path fill="url(#darkWave2)" opacity="0.8" d="M -100 1450 Q 400 1650, 700 1400 T 1200 1550 L 1200 1920 L -100 1920 Z" />
+
+  <path fill="url(#darkWave1)" opacity="0.9" d="M -100 1250 Q 540 1400, 1200 1200 L 1200 1920 L -100 1920 Z" />
+</svg>

@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:hello/firebase_options.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -349,6 +350,8 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+
     return WillPopScope(
       onWillPop: () async {
         // Exit the app when back button is pressed on welcome screen
@@ -356,97 +359,112 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       },
       child: Scaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.start,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: 80), // Space from top
-                ShaderMask(
-                  shaderCallback: (bounds) => LinearGradient(
-                    colors: [Color(0xFF4A90E2), Color(0xFF50E3C2)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ).createShader(bounds),
-                  child: const Text(
-                    'Welcome to Medical Vault',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white, // Keep gradient text base
+        body: Stack(
+          children: [
+            // Background SVG
+            Positioned.fill(
+              child: SvgPicture.asset(
+                isDarkMode
+                    ? 'assets/WelcomeDarkTheme.svg'
+                    : 'assets/WelcomeLightTheme.svg',
+                fit: BoxFit.cover,
+              ),
+            ),
+            // Foreground Content
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 80), // Space from top
+                    ShaderMask(
+                      shaderCallback: (bounds) => LinearGradient(
+                        colors: [Color(0xFF4A90E2), Color(0xFF50E3C2)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ).createShader(bounds),
+                      child: const Text(
+                        'Welcome to Medical Vault',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white, // Keep gradient text base
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Your health journey starts here. Track your progress, connect with professionals, and achieve your wellness goals.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 48),
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0xFF4A90E2), Color(0xFF50E3C2)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+                    const SizedBox(height: 16),
+                    Text(
+                      'Your health journey starts here. Track your progress, connect with professionals, and achieve your wellness goals.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium,
                     ),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (context) => LoginScreen()),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
+                    const SizedBox(height: 48),
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Color(0xFF4A90E2), Color(0xFF50E3C2)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      elevation: 0,
-                    ),
-                    child: const Text(
-                      'Log in',
-                      style: TextStyle(
-                        fontSize: 18,
-                        color: Colors.white,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) => LoginScreen()),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: const Text(
+                          'Log in',
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: Colors.white,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => SignUpPage()),
-                    );
-                  },
-                  style: TextButton.styleFrom(
-                    backgroundColor: Theme.of(context).cardColor,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => SignUpPage()),
+                        );
+                      },
+                      style: TextButton.styleFrom(
+                        backgroundColor: Theme.of(context).cardColor,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                      child: Text(
+                        'Sign up',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyLarge
+                            ?.copyWith(fontSize: 18),
+                      ),
                     ),
-                  ),
-                  child: Text(
-                    'Sign up',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyLarge
-                        ?.copyWith(fontSize: 18),
-                  ),
+                    const Spacer(),
+                  ],
                 ),
-                const Spacer(),
-              ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );

@@ -34,6 +34,7 @@ dependencies:
   firebase_messaging: ^16.0.2
   firebase_core: ^4.1.1
   googleapis_auth: ^2.0.0
+  flutter_svg: ^2.0.10+1
 
 dev_dependencies:
   flutter_test:
@@ -58,6 +59,8 @@ flutter:
     - assets/LoadingClock.json
     - assets/twodotloading.json
     - assets/Theme.png
+    - assets/WelcomeLightTheme.svg
+    - assets/WelcomeDarkTheme.svg
 
 flutter_icons:
   android: true
