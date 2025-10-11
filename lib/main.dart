@@ -449,6 +449,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(20),
+                          side: !isDarkMode
+                              ? const BorderSide(
+                                  color: Colors.black12, width: 1)
+                              : BorderSide.none,
                         ),
                       ),
                       child: Text(

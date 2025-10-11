@@ -1,0 +1,93 @@
+<!-- Responsive background for light/dark themes (mobile-friendly) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 844" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <style>
+      :root{
+        /* Light theme */
+        --bg-1:#ffffff;
+        --bg-2:#f3f8ff;
+        --blob-a:#7dd3fc;  /* sky/teal */
+        --blob-b:#a78bfa;  /* violet */
+        --blob-c:#34d399;  /* emerald */
+        --ring:#22d3ee;    /* cyan ring */
+        --noise:0.05;      /* grain intensity */
+      }
+      @media (prefers-color-scheme: dark){
+        :root{
+          --bg-1:#0b1120;
+          --bg-2:#111827;
+          --blob-a:#06b6d4; /* cyan */
+          --blob-b:#6366f1; /* indigo */
+          --blob-c:#10b981; /* emerald */
+          --ring:#22d3ee;
+          --noise:0.08;
+        }
+      }
+    </style>
+
+    <!-- Background vertical gradient -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" style="stop-color: var(--bg-1)"/>
+      <stop offset="100%" style="stop-color: var(--bg-2)"/>
+    </linearGradient>
+
+    <!-- Soft radial blobs -->
+    <radialGradient id="blobA" cx="0" cy="0" r="1" gradientUnits="objectBoundingBox"
+      gradientTransform="translate(.15 .05) scale(1 1)">
+      <stop offset="0%" style="stop-color: var(--blob-a); stop-opacity: .85"/>
+      <stop offset="100%" style="stop-color: var(--blob-a); stop-opacity: 0"/>
+    </radialGradient>
+
+    <radialGradient id="blobB" cx="1" cy="0" r="1" gradientUnits="objectBoundingBox"
+      gradientTransform="translate(.85 .02) scale(1 1)">
+      <stop offset="0%" style="stop-color: var(--blob-b); stop-opacity: .9"/>
+      <stop offset="100%" style="stop-color: var(--blob-b); stop-opacity: 0"/>
+    </radialGradient>
+
+    <radialGradient id="blobC" cx="0" cy="1" r="1" gradientUnits="objectBoundingBox"
+      gradientTransform="translate(.18 .98) scale(1 1)">
+      <stop offset="0%" style="stop-color: var(--blob-c); stop-opacity: .85"/>
+      <stop offset="100%" style="stop-color: var(--blob-c); stop-opacity: 0"/>
+    </radialGradient>
+
+    <!-- Soft blur for blobs -->
+    <filter id="softBlur" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="35" />
+    </filter>
+
+    <!-- Subtle grain -->
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
+      <feColorMatrix type="saturate" values="0" />
+      <feComponentTransfer>
+        <feFuncA type="table" tableValues="0  var(--noise)"/>
+      </feComponentTransfer>
+    </filter>
+
+    <!-- Accent ring -->
+    <radialGradient id="ringGrad" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="60%" style="stop-color: var(--ring); stop-opacity: .6"/>
+      <stop offset="100%" style="stop-color: var(--ring); stop-opacity: 0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="390" height="844" fill="url(#bgGrad)"/>
+
+  <!-- Decorative blobs (top) -->
+  <g filter="url(#softBlur)">
+    <ellipse cx="40" cy="40" rx="180" ry="140" fill="url(#blobA)"/>
+    <ellipse cx="360" cy="20" rx="190" ry="150" fill="url(#blobB)"/>
+  </g>
+
+  <!-- Accent ring behind CTA area -->
+  <circle cx="195" cy="520" r="220" fill="url(#ringGrad)"/>
+
+  <!-- Decorative blobs (bottom) -->
+  <g filter="url(#softBlur)">
+    <ellipse cx="70" cy="790" rx="220" ry="160" fill="url(#blobC)"/>
+  </g>
+
+  <!-- Very subtle grain overlay -->
+  <rect width="390" height="844" filter="url(#grain)" opacity=".6"/>
+</svg>

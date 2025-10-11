@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'loginScreen.dart';
+import 'dashboard1.dart';
+import 'fcm_service.dart';
+import 'google_login.dart';
 import 'TermsAndConditions.dart';
 import 'PrivacyPolicy.dart';
 
@@ -51,18 +53,31 @@ class _SignUpPageState extends State<SignUpPage> {
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body);
 
-        // Save token and user data
+        // Save auth and user data using the same keys as login flow
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('token', data['token']);
-        await prefs.setString('userData', jsonEncode(data['user']));
+        await prefs.setString('authToken', data['token'] ?? '');
+        final user = data['user'] ?? <String, dynamic>{};
+        await prefs.setString('userId', (user['id'] ?? '').toString());
+        await prefs.setString('email', (user['email'] ?? '').toString());
+        await prefs.setString('name', (user['name'] ?? 'Patient').toString());
+        await prefs.setString('userData', jsonEncode(user));
 
+        // Register FCM token now that we have an auth token
+        await FCMService().registerToken();
+
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ Account created successfully")),
+          const SnackBar(
+              content: Text("✅ Account created. You are now logged in.")),
         );
 
-        Navigator.pushReplacement(
+        // Navigate directly to dashboard
+        Navigator.pushAndRemoveUntil(
           context,
-          MaterialPageRoute(builder: (context) => LoginScreen()),
+          MaterialPageRoute(
+              builder: (_) =>
+                  Dashboard1(userData: Map<String, dynamic>.from(user))),
+          (route) => false,
         );
       } else {
         final msg = jsonDecode(response.body)["message"] ?? "Signup failed";
@@ -239,6 +254,49 @@ class _SignUpPageState extends State<SignUpPage> {
                                   ? 'Password must be at least 6 characters'
                                   : null,
                         ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Google Sign Up Button
+                  OutlinedButton(
+                    onPressed: _isLoading
+                        ? null
+                        : () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const GoogleLoginScreen()),
+                            );
+                          },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor:
+                          Theme.of(context).brightness == Brightness.dark
+                              ? Colors.white
+                              : Colors.black87,
+                      backgroundColor: Theme.of(context).cardColor,
+                      side: BorderSide(
+                        color: Theme.of(context).brightness == Brightness.dark
+                            ? Colors.white24
+                            : Colors.black12,
+                        width: 1,
+                      ),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 14, horizontal: 16),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.account_circle,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.white
+                              : Colors.black87,
+                        ),
+                        const SizedBox(width: 10),
+                        const Text('Sign up with Google'),
                       ],
                     ),
                   ),

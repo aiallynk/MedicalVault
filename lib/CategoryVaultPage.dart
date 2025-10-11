@@ -41,10 +41,26 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     '12 Months'
   ];
 
+  // Search and name sort state
+  final TextEditingController _searchController = TextEditingController();
+  String _nameSort = 'None';
+  final List<String> nameSortOptions = [
+    'None',
+    'Name A-Z',
+    'Name Z-A',
+  ];
+
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(_onSearchChanged);
     _loadFiles();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   // Helper method to apply date filter
@@ -113,12 +129,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
         }
       }).toList();
 
-      // Apply date filter
-      final dateFiltered = _applyDateFilter(categoryFiltered);
-
       setState(() {
         files = categoryFiltered; // Store all category files
-        filteredFiles = dateFiltered; // Store filtered files for display
+        filteredFiles =
+            _recomputeFilteredFiles(); // Apply all filters for display
         _isLoading = false;
       });
     } catch (e) {
@@ -132,9 +146,52 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     if (newFilter != null && newFilter != selectedTimeFilter) {
       setState(() {
         selectedTimeFilter = newFilter;
-        filteredFiles = _applyDateFilter(files);
+        filteredFiles = _recomputeFilteredFiles();
       });
     }
+  }
+
+  void _onNameSortChanged(String? newSort) {
+    if (newSort != null && newSort != _nameSort) {
+      setState(() {
+        _nameSort = newSort;
+        filteredFiles = _recomputeFilteredFiles();
+      });
+    }
+  }
+
+  void _onSearchChanged() {
+    setState(() {
+      filteredFiles = _recomputeFilteredFiles();
+    });
+  }
+
+  List<Document> _recomputeFilteredFiles() {
+    // Start from category files and apply date filter
+    final dateFiltered = _applyDateFilter(files);
+
+    // Apply search by title/fileName
+    final query = _searchController.text.trim().toLowerCase();
+    var results = dateFiltered.where((doc) {
+      final name = (doc.title ?? doc.fileName ?? '').toLowerCase();
+      if (query.isEmpty) return true;
+      return name.contains(query);
+    }).toList();
+
+    // Apply name sorting if selected
+    int compareByName(Document a, Document b) {
+      final aName = (a.title ?? a.fileName ?? '').toLowerCase();
+      final bName = (b.title ?? b.fileName ?? '').toLowerCase();
+      return aName.compareTo(bName);
+    }
+
+    if (_nameSort == 'Name A-Z') {
+      results.sort(compareByName);
+    } else if (_nameSort == 'Name Z-A') {
+      results.sort((a, b) => -compareByName(a, b));
+    }
+
+    return results;
   }
 
   // ---------------- OPEN FILE ----------------
@@ -367,58 +424,132 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                   // Time filter dropdown
                   Container(
                     padding: const EdgeInsets.all(16),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(Icons.filter_list,
-                            color: Theme.of(context).iconTheme.color),
-                        const SizedBox(width: 8),
-                        Text('Filter by time:',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w500,
-                                )),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            value: selectedTimeFilter,
-                            decoration: InputDecoration(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color: Theme.of(context).dividerColor),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color: Theme.of(context).dividerColor),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color:
-                                        Theme.of(context).colorScheme.primary),
+                        Row(
+                          children: [
+                            // Icon(Icons.filter_list,
+                            //     color: Theme.of(context).iconTheme.color),
+                            // const SizedBox(width: 8),
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: selectedTimeFilter,
+                                decoration: InputDecoration(
+                                  labelText: 'Filter by time',
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                        color: Theme.of(context).dividerColor),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                        color: Theme.of(context).dividerColor),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary),
+                                  ),
+                                ),
+                                items: timeFilterOptions.map((String option) {
+                                  return DropdownMenuItem<String>(
+                                    value: option,
+                                    child: Text(option),
+                                  );
+                                }).toList(),
+                                onChanged: _onFilterChanged,
                               ),
                             ),
-                            items: timeFilterOptions.map((String option) {
-                              return DropdownMenuItem<String>(
-                                value: option,
-                                child: Text(option),
-                              );
-                            }).toList(),
-                            onChanged: _onFilterChanged,
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: _nameSort,
+                                decoration: InputDecoration(
+                                  labelText: 'Sort by name',
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                        color: Theme.of(context).dividerColor),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                        color: Theme.of(context).dividerColor),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary),
+                                  ),
+                                ),
+                                items: nameSortOptions.map((String option) {
+                                  return DropdownMenuItem<String>(
+                                    value: option,
+                                    child: Text(option),
+                                  );
+                                }).toList(),
+                                onChanged: _onNameSortChanged,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '${filteredFiles.length} of ${files.length}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Search bar
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16.0, vertical: 4),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search by name',
+                        prefixIcon: const Icon(Icons.search),
+                        fillColor: Theme.of(context).cardColor,
+                        filled: true,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).dividerColor,
+                            width: 1,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Text('${filteredFiles.length} of ${files.length}',
-                            style: Theme.of(context).textTheme.bodySmall),
-                      ],
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).dividerColor,
+                            width: 1,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).primaryColor,
+                            width: 1.5,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
 
