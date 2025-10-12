@@ -41,11 +41,14 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     '12 Months'
   ];
 
-  // Search and name sort state
+  // Search and sort state
   final TextEditingController _searchController = TextEditingController();
-  String _nameSort = 'None';
-  final List<String> nameSortOptions = [
-    'None',
+
+  // Combined sort options (date + name)
+  String _selectedSort = 'Newest First';
+  final List<String> sortOptions = [
+    'Newest First',
+    'Oldest First',
     'Name A-Z',
     'Name Z-A',
   ];
@@ -151,10 +154,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     }
   }
 
-  void _onNameSortChanged(String? newSort) {
-    if (newSort != null && newSort != _nameSort) {
+  void _onSortChanged(String? newSort) {
+    if (newSort != null && newSort != _selectedSort) {
       setState(() {
-        _nameSort = newSort;
+        _selectedSort = newSort;
         filteredFiles = _recomputeFilteredFiles();
       });
     }
@@ -178,17 +181,35 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
       return name.contains(query);
     }).toList();
 
-    // Apply name sorting if selected
+    // Apply sorting based on selected option
     int compareByName(Document a, Document b) {
       final aName = (a.title ?? a.fileName ?? '').toLowerCase();
       final bName = (b.title ?? b.fileName ?? '').toLowerCase();
       return aName.compareTo(bName);
     }
 
-    if (_nameSort == 'Name A-Z') {
-      results.sort(compareByName);
-    } else if (_nameSort == 'Name Z-A') {
-      results.sort((a, b) => -compareByName(a, b));
+    switch (_selectedSort) {
+      case 'Name A-Z':
+        results.sort(compareByName);
+        break;
+      case 'Name Z-A':
+        results.sort((a, b) => -compareByName(a, b));
+        break;
+      case 'Oldest First':
+        results.sort((a, b) {
+          final dateA = DateTime.tryParse(a.date ?? '') ?? DateTime(1970);
+          final dateB = DateTime.tryParse(b.date ?? '') ?? DateTime(1970);
+          return dateA.compareTo(dateB); // Ascending
+        });
+        break;
+      case 'Newest First':
+      default:
+        results.sort((a, b) {
+          final dateA = DateTime.tryParse(a.date ?? '') ?? DateTime(1970);
+          final dateB = DateTime.tryParse(b.date ?? '') ?? DateTime(1970);
+          return dateB.compareTo(dateA); // Descending
+        });
+        break;
     }
 
     return results;
@@ -421,97 +442,105 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
               )
             : Column(
                 children: [
-                  // Time filter dropdown
+                  // Filter & Sort controls (Single Line)
                   Container(
                     padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Row(
                       children: [
-                        Row(
-                          children: [
-                            // Icon(Icons.filter_list,
-                            //     color: Theme.of(context).iconTheme.color),
-                            // const SizedBox(width: 8),
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: selectedTimeFilter,
-                                decoration: InputDecoration(
-                                  labelText: 'Filter by time',
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: BorderSide(
-                                        color: Theme.of(context).dividerColor),
-                                  ),
-                                  enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: BorderSide(
-                                        color: Theme.of(context).dividerColor),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: BorderSide(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .primary),
-                                  ),
-                                ),
-                                items: timeFilterOptions.map((String option) {
-                                  return DropdownMenuItem<String>(
-                                    value: option,
-                                    child: Text(option),
-                                  );
-                                }).toList(),
-                                onChanged: _onFilterChanged,
+                        // Time Filter
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            value: selectedTimeFilter,
+                            decoration: InputDecoration(
+                              labelText: 'Time Filter',
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(
+                                    color: Theme.of(context).dividerColor),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(
+                                    color: Theme.of(context).dividerColor),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(
+                                    color:
+                                        Theme.of(context).colorScheme.primary),
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: _nameSort,
-                                decoration: InputDecoration(
-                                  labelText: 'Sort by name',
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: BorderSide(
-                                        color: Theme.of(context).dividerColor),
-                                  ),
-                                  enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: BorderSide(
-                                        color: Theme.of(context).dividerColor),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: BorderSide(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .primary),
-                                  ),
-                                ),
-                                items: nameSortOptions.map((String option) {
-                                  return DropdownMenuItem<String>(
-                                    value: option,
-                                    child: Text(option),
-                                  );
-                                }).toList(),
-                                onChanged: _onNameSortChanged,
+                            items: timeFilterOptions.map((String option) {
+                              return DropdownMenuItem<String>(
+                                value: option,
+                                child: Text(option,
+                                    style: TextStyle(fontSize: 13)),
+                              );
+                            }).toList(),
+                            onChanged: _onFilterChanged,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        // Sort By
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            value: _selectedSort,
+                            decoration: InputDecoration(
+                              labelText: 'Sort By',
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(
+                                    color: Theme.of(context).dividerColor),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(
+                                    color: Theme.of(context).dividerColor),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(
+                                    color:
+                                        Theme.of(context).colorScheme.primary),
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '${filteredFiles.length} of ${files.length}',
-                              style: Theme.of(context).textTheme.bodySmall,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
+                            items: sortOptions.map((String option) {
+                              return DropdownMenuItem<String>(
+                                value: option,
+                                child: Text(option,
+                                    style: TextStyle(fontSize: 13)),
+                              );
+                            }).toList(),
+                            onChanged: _onSortChanged,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        // Document count
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                                color: Theme.of(context).dividerColor),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${filteredFiles.length} / ${files.length}',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                          ),
                         ),
                       ],
                     ),

@@ -226,12 +226,23 @@ class _MyVaultState extends State<MyVault> {
   ];
   String _selectedCategory = "All";
 
-  String _selectedSort = "Today";
+  // Time filter options (matching CategoryVaultPage)
+  String _selectedTimeFilter = "All";
+  final List<String> _timeFilterOptions = [
+    "All",
+    "1 Month",
+    "3 Months",
+    "6 Months",
+    "12 Months"
+  ];
+
+  // Combined sort options (date + name)
+  String _selectedSort = "Newest First";
   final List<String> _sortOptions = [
-    "Today",
-    "Last 2 days",
-    "Last 7 days",
-    "Last 30 days"
+    "Newest First",
+    "Oldest First",
+    "Name A-Z",
+    "Name Z-A",
   ];
 
   @override
@@ -270,9 +281,10 @@ class _MyVaultState extends State<MyVault> {
   }
 
   List<Document> _filterAndSortDocuments() {
-    final query = _searchController.text.toLowerCase();
+    final query = _searchController.text.trim().toLowerCase();
     final now = DateTime.now();
 
+    // Step 1: Filter by category
     var docs = _selectedCategory == "All"
         ? MyVault._allDocuments
         : MyVault._allDocuments
@@ -281,34 +293,73 @@ class _MyVaultState extends State<MyVault> {
                 _selectedCategory.toLowerCase())
             .toList();
 
-    docs = docs
-        .where((doc) => (doc.title ?? '').toLowerCase().contains(query))
-        .toList();
-
-    docs = docs.where((doc) {
-      if (doc.date == null) return false;
-      final docDate = DateTime.tryParse(doc.date!);
-      if (docDate == null) return false;
-      final difference = now.difference(docDate).inDays;
-      switch (_selectedSort) {
-        case "Today":
-          return difference == 0;
-        case "Last 2 days":
-          return difference <= 1;
-        case "Last 7 days":
-          return difference <= 7;
-        case "Last 30 days":
-          return difference <= 30;
+    // Step 2: Apply time filter
+    if (_selectedTimeFilter != "All") {
+      int dayLimit;
+      switch (_selectedTimeFilter) {
+        case "1 Month":
+          dayLimit = 30;
+          break;
+        case "3 Months":
+          dayLimit = 90;
+          break;
+        case "6 Months":
+          dayLimit = 180;
+          break;
+        case "12 Months":
+          dayLimit = 365;
+          break;
         default:
-          return true;
+          dayLimit = 365;
       }
-    }).toList();
 
-    docs.sort((a, b) {
-      final dateA = DateTime.tryParse(a.date ?? '') ?? DateTime(1970);
-      final dateB = DateTime.tryParse(b.date ?? '') ?? DateTime(1970);
-      return dateB.compareTo(dateA);
-    });
+      docs = docs.where((doc) {
+        if (doc.date == null || doc.date!.isEmpty) return false;
+        final docDate = DateTime.tryParse(doc.date!);
+        if (docDate == null) return false;
+        final daysDifference = now.difference(docDate).inDays;
+        return daysDifference <= dayLimit;
+      }).toList();
+    }
+
+    // Step 3: Apply search filter
+    if (query.isNotEmpty) {
+      docs = docs.where((doc) {
+        final name = (doc.title ?? doc.fileName ?? '').toLowerCase();
+        return name.contains(query);
+      }).toList();
+    }
+
+    // Step 4: Apply sorting based on selected option
+    int compareByName(Document a, Document b) {
+      final aName = (a.title ?? a.fileName ?? '').toLowerCase();
+      final bName = (b.title ?? b.fileName ?? '').toLowerCase();
+      return aName.compareTo(bName);
+    }
+
+    switch (_selectedSort) {
+      case "Name A-Z":
+        docs.sort(compareByName);
+        break;
+      case "Name Z-A":
+        docs.sort((a, b) => -compareByName(a, b));
+        break;
+      case "Oldest First":
+        docs.sort((a, b) {
+          final dateA = DateTime.tryParse(a.date ?? '') ?? DateTime(1970);
+          final dateB = DateTime.tryParse(b.date ?? '') ?? DateTime(1970);
+          return dateA.compareTo(dateB); // Ascending
+        });
+        break;
+      case "Newest First":
+      default:
+        docs.sort((a, b) {
+          final dateA = DateTime.tryParse(a.date ?? '') ?? DateTime(1970);
+          final dateB = DateTime.tryParse(b.date ?? '') ?? DateTime(1970);
+          return dateB.compareTo(dateA); // Descending
+        });
+        break;
+    }
 
     return docs;
   }
@@ -553,34 +604,89 @@ class _MyVaultState extends State<MyVault> {
               ),
             ),
 
-            // ⏳ Sort Dropdown
+            // ⏳ Filter & Sort Controls (Single Line)
             Padding(
               padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4),
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text("Sort",
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.copyWith(fontWeight: FontWeight.bold)),
-                  SizedBox(
-                    width: 160,
-                    child: DropdownButton<String>(
-                      isExpanded: true,
-                      value: _selectedSort,
-                      items: _sortOptions
-                          .map((option) => DropdownMenuItem(
-                                value: option,
-                                child: Text(option),
-                              ))
-                          .toList(),
-                      onChanged: (val) {
-                        if (val != null) {
-                          setState(() => _selectedSort = val);
-                        }
-                      },
+                  // Time Filter
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Time Filter",
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        DropdownButtonFormField<String>(
+                          value: _selectedTimeFilter,
+                          decoration: InputDecoration(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            isDense: true,
+                          ),
+                          items: _timeFilterOptions
+                              .map((option) => DropdownMenuItem(
+                                    value: option,
+                                    child: Text(option,
+                                        style: TextStyle(fontSize: 13)),
+                                  ))
+                              .toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setState(() => _selectedTimeFilter = val);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Sort By
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Sort By",
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        DropdownButtonFormField<String>(
+                          value: _selectedSort,
+                          decoration: InputDecoration(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            isDense: true,
+                          ),
+                          items: _sortOptions
+                              .map((option) => DropdownMenuItem(
+                                    value: option,
+                                    child: Text(option,
+                                        style: TextStyle(fontSize: 13)),
+                                  ))
+                              .toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setState(() => _selectedSort = val);
+                            }
+                          },
+                        ),
+                      ],
                     ),
                   ),
                 ],
