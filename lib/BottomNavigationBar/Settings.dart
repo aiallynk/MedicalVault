@@ -474,34 +474,79 @@ class _SettingsPageState extends State<SettingsPage> {
         backgroundColor: Theme.of(context).dialogBackgroundColor,
         title:
             Text("Add Profile", style: Theme.of(context).textTheme.titleLarge),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading:
-                  Icon(Icons.person, color: Theme.of(context).iconTheme.color),
-              title: Text("Link Existing Profile",
-                  style: Theme.of(context).textTheme.bodyLarge),
-              subtitle: Text("Link an existing user account",
-                  style: Theme.of(context).textTheme.bodyMedium),
-              onTap: () {
-                Navigator.pop(context);
-                _showLinkExistingProfileDialog();
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.person_add,
-                  color: Theme.of(context).iconTheme.color),
-              title: Text("Create New Profile",
-                  style: Theme.of(context).textTheme.bodyLarge),
-              subtitle: Text("Create a new profile and link it",
-                  style: Theme.of(context).textTheme.bodyMedium),
-              onTap: () {
-                Navigator.pop(context);
-                _showCreateNewProfileDialog();
-              },
-            ),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Email/Password section
+              Text(
+                "Email/Password",
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: Theme.of(context).primaryColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: Icon(Icons.person,
+                    color: Theme.of(context).iconTheme.color),
+                title: Text("Link Existing Profile",
+                    style: Theme.of(context).textTheme.bodyLarge),
+                subtitle: Text("Link an existing email/password account",
+                    style: Theme.of(context).textTheme.bodySmall),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showLinkExistingProfileDialog();
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.person_add,
+                    color: Theme.of(context).iconTheme.color),
+                title: Text("Create New Profile",
+                    style: Theme.of(context).textTheme.bodyLarge),
+                subtitle: Text("Create a new email/password profile",
+                    style: Theme.of(context).textTheme.bodySmall),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showCreateNewProfileDialog();
+                },
+              ),
+              const Divider(height: 24),
+              // Google section
+              Text(
+                "Google Sign-In",
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: Theme.of(context).primaryColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: Icon(Icons.g_mobiledata,
+                    color: Theme.of(context).iconTheme.color, size: 32),
+                title: Text("Link with Google",
+                    style: Theme.of(context).textTheme.bodyLarge),
+                subtitle: Text("Link an existing Google account",
+                    style: Theme.of(context).textTheme.bodySmall),
+                onTap: () {
+                  Navigator.pop(context);
+                  _handleLinkGoogleProfile();
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.g_mobiledata,
+                    color: Theme.of(context).iconTheme.color, size: 32),
+                title: Text("Create with Google",
+                    style: Theme.of(context).textTheme.bodyLarge),
+                subtitle: Text("Create a new Google profile",
+                    style: Theme.of(context).textTheme.bodySmall),
+                onTap: () {
+                  Navigator.pop(context);
+                  _handleCreateGoogleProfile();
+                },
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -513,6 +558,104 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
+  }
+
+  /// Handle linking a Google profile
+  Future<void> _handleLinkGoogleProfile() async {
+    try {
+      setState(() {
+        isLoadingProfiles = true;
+      });
+
+      final result = await ApiService.linkGoogleProfile();
+
+      if (result != null && result['success'] == true) {
+        await _loadLinkedProfiles();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("✅ Google profile linked successfully"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Failed to link Google profile"),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        final errorMessage = e.toString().replaceAll('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoadingProfiles = false;
+        });
+      }
+    }
+  }
+
+  /// Handle creating a new Google profile
+  Future<void> _handleCreateGoogleProfile() async {
+    try {
+      setState(() {
+        isLoadingProfiles = true;
+      });
+
+      final result = await ApiService.createGoogleProfile();
+
+      if (result != null && result['success'] == true) {
+        await _loadLinkedProfiles();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("✅ Google profile created and linked successfully"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Failed to create Google profile"),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        final errorMessage = e.toString().replaceAll('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoadingProfiles = false;
+        });
+      }
+    }
   }
 
   void _showLinkExistingProfileDialog() {
@@ -727,7 +870,84 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  void _showSwitchProfileDialog(Map<String, dynamic> profile) {
+  /// Handle profile switch based on login type
+  Future<void> _showSwitchProfileDialog(Map<String, dynamic> profile) async {
+    final loginType = profile['loginType']?.toString() ??
+        (profile['googleId'] != null ? 'google' : 'email');
+
+    if (loginType == 'google') {
+      // Google profiles - no password needed, use Google Sign-In
+      await _switchToGoogleProfile(profile);
+    } else {
+      // Email profiles - show password dialog
+      await _showPasswordDialogAndSwitch(profile);
+    }
+  }
+
+  /// Switch to Google profile using Google Sign-In (no password)
+  Future<void> _switchToGoogleProfile(Map<String, dynamic> profile) async {
+    setState(() {
+      isLoadingProfiles = true;
+    });
+
+    try {
+      final result = await ApiService.switchProfile(profile);
+
+      if (result != null && result['success'] == true) {
+        // Get updated user data
+        final prefs = await SharedPreferences.getInstance();
+        final userDataString = prefs.getString('userData');
+        final userData = userDataString != null
+            ? jsonDecode(userDataString)
+            : <String, dynamic>{};
+
+        if (!mounted) return;
+
+        // Navigate to dashboard with new profile
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => Dashboard1(userData: userData),
+          ),
+        );
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("✅ Switched to ${profile['name']}"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Failed to switch profile"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final errorMessage = e.toString().replaceAll('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoadingProfiles = false;
+        });
+      }
+    }
+  }
+
+  /// Show password dialog and switch to email/password profile
+  Future<void> _showPasswordDialogAndSwitch(
+      Map<String, dynamic> profile) async {
     final passwordController = TextEditingController();
     bool isLoading = false;
     bool isPasswordVisible = false;
@@ -780,8 +1000,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       });
                       try {
                         await ApiService.switchProfile(
-                          profile['_id'].toString(),
-                          passwordController.text.trim(),
+                          profile,
+                          password: passwordController.text.trim(),
                         );
                         Navigator.pop(context);
                         // Get updated user data and navigate to dashboard
@@ -800,11 +1020,19 @@ class _SettingsPageState extends State<SettingsPage> {
                         );
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                              content: Text("Switched to ${profile['name']}")),
+                            content: Text("✅ Switched to ${profile['name']}"),
+                            backgroundColor: Colors.green,
+                          ),
                         );
                       } catch (e) {
+                        final errorMessage =
+                            e.toString().replaceAll('Exception: ', '');
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text("Error: ${e.toString()}")),
+                          SnackBar(
+                            content: Text(errorMessage),
+                            backgroundColor: Colors.red,
+                            duration: const Duration(seconds: 4),
+                          ),
                         );
                       } finally {
                         setState(() {

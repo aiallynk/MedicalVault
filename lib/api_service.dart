@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'Document_model.dart';
 import 'package:dio/dio.dart';
+import 'package:hello/helpers/google_auth_helper.dart';
 
 class ApiService {
   static const String baseUrl = "https://backend-medicalvault.onrender.com/api";
@@ -436,15 +437,121 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>?> switchProfile(
-      String profileId, String password) async {
+  // ---------------- GOOGLE PROFILE MANAGEMENT ----------------
+
+  /// Link an existing Google account to current user's profile
+  static Future<Map<String, dynamic>?> linkGoogleProfile() async {
     try {
+      // Get Google authentication data
+      final googleData = await GoogleAuthHelper.signInWithGoogle();
+      if (googleData == null) {
+        print("Google sign-in canceled");
+        return null;
+      }
+
+      // Send to backend with current auth token
       final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("${baseUrl}/profiles/link-google"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({"idToken": googleData['idToken']}),
+      );
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final data = jsonDecode(res.body);
+        return data;
+      } else {
+        print("Link Google profile failed: ${res.body}");
+        final errorData = jsonDecode(res.body);
+        throw Exception(
+            errorData['message'] ?? 'Failed to link Google profile');
+      }
+    } catch (e) {
+      print("Link Google profile error: $e");
+      rethrow;
+    }
+  }
+
+  /// Create a new Google profile under current user
+  static Future<Map<String, dynamic>?> createGoogleProfile() async {
+    try {
+      // Get Google authentication data
+      final googleData = await GoogleAuthHelper.signInWithGoogle();
+      if (googleData == null) {
+        print("Google sign-in canceled");
+        return null;
+      }
+
+      // Create new profile via backend
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("${baseUrl}/profiles/create-google"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({"idToken": googleData['idToken']}),
+      );
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final data = jsonDecode(res.body);
+        return data;
+      } else {
+        print("Create Google profile failed: ${res.body}");
+        final errorData = jsonDecode(res.body);
+        throw Exception(
+            errorData['message'] ?? 'Failed to create Google profile');
+      }
+    } catch (e) {
+      print("Create Google profile error: $e");
+      rethrow;
+    }
+  }
+
+  /// Switch to a profile (Google or email/password)
+  /// For Google profiles: uses idToken (no password needed)
+  /// For email profiles: uses password
+  static Future<Map<String, dynamic>?> switchProfile(
+      Map<String, dynamic> profile,
+      {String? password}) async {
+    try {
+      final profileId =
+          profile['_id']?.toString() ?? profile['id']?.toString() ?? '';
+      final loginType = profile['loginType']?.toString() ??
+          (profile['googleId'] != null ? 'google' : 'email');
+
+      final headers = await _authHeaders();
+      Map<String, dynamic> requestBody = {};
+
+      // Handle Google profiles
+      if (loginType == 'google') {
+        // Get Google authentication
+        final googleData = await GoogleAuthHelper.signInWithGoogle();
+        if (googleData == null) {
+          print("Google sign-in canceled");
+          return null;
+        }
+
+        // Verify email matches
+        if (googleData['email'] != profile['email']) {
+          throw Exception(
+              'Selected Google account doesn\'t match profile email.\n'
+              'Expected: ${profile['email']}\n'
+              'Selected: ${googleData['email']}');
+        }
+
+        requestBody['idToken'] = googleData['idToken'];
+      } else {
+        // Handle email/password profiles
+        if (password == null || password.isEmpty) {
+          throw Exception('Password is required for email/password profiles');
+        }
+        requestBody['password'] = password;
+      }
+
       final res = await http.post(
         Uri.parse("${baseUrl}/profiles/switch/$profileId"),
         headers: {...headers, "Content-Type": "application/json"},
-        body: jsonEncode({"password": password}),
+        body: jsonEncode(requestBody),
       );
+
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final token = data['data']['token'];

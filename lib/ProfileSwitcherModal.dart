@@ -250,12 +250,91 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
                 Icons.swap_horiz,
                 color: Theme.of(context).iconTheme.color,
               ),
-        onTap: isLoading ? null : () => _showSwitchDialog(profile),
+        onTap: isLoading ? null : () => _handleProfileSwitch(profile),
       ),
     );
   }
 
-  void _showSwitchDialog(Map<String, dynamic> profile) {
+  /// Handle profile switch based on login type
+  Future<void> _handleProfileSwitch(Map<String, dynamic> profile) async {
+    final loginType = profile['loginType']?.toString() ??
+        (profile['googleId'] != null ? 'google' : 'email');
+
+    if (loginType == 'google') {
+      // Google profiles - no password needed
+      await _switchToGoogleProfile(profile);
+    } else {
+      // Email profiles - show password dialog
+      await _showPasswordDialogAndSwitch(profile);
+    }
+  }
+
+  /// Switch to Google profile (no password needed)
+  Future<void> _switchToGoogleProfile(Map<String, dynamic> profile) async {
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      final result = await ApiService.switchProfile(profile);
+
+      if (result != null && result['success'] == true) {
+        // Get updated user data
+        final prefs = await SharedPreferences.getInstance();
+        final userDataString = prefs.getString('userData');
+        final userData = userDataString != null
+            ? jsonDecode(userDataString)
+            : <String, dynamic>{};
+
+        if (!mounted) return;
+
+        Navigator.pop(context); // Close profile switcher
+
+        // Navigate to dashboard with new profile
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => Dashboard1(userData: userData),
+          ),
+        );
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("✅ Switched to ${profile['name']}"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Failed to switch profile"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final errorMessage = e.toString().replaceAll('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
+    }
+  }
+
+  /// Show password dialog and switch to email profile
+  Future<void> _showPasswordDialogAndSwitch(
+      Map<String, dynamic> profile) async {
     final passwordController = TextEditingController();
     bool isPasswordLoading = false;
     bool isPasswordVisible = false;
@@ -317,8 +396,8 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
                       });
                       try {
                         await ApiService.switchProfile(
-                          profile['_id'].toString(),
-                          passwordController.text.trim(),
+                          profile,
+                          password: passwordController.text.trim(),
                         );
 
                         // Get updated user data
@@ -342,15 +421,18 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
 
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text("Switched to ${profile['name']}"),
+                            content: Text("✅ Switched to ${profile['name']}"),
                             backgroundColor: Colors.green,
                           ),
                         );
                       } catch (e) {
+                        final errorMessage =
+                            e.toString().replaceAll('Exception: ', '');
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text("Error: ${e.toString()}"),
+                            content: Text(errorMessage),
                             backgroundColor: Colors.red,
+                            duration: const Duration(seconds: 4),
                           ),
                         );
                       } finally {
