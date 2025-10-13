@@ -1,13 +1,13 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:hello/dashboard1.dart';
-import 'package:hello/SignUp.dart';
+import 'package:hello/BottomNavigationBar/dashboard1.dart';
+import 'package:hello/Login_Signup/SignUp.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'api_service.dart'; // 👈 Added
-import 'SettingPages/ForgotPasswordPage.dart';
-import 'package:hello/google_login.dart';
+import 'package:hello/api_service.dart'; // 👈 Added
+import 'package:hello/SettingPages/ForgotPasswordPage.dart';
+import 'package:hello/Login_Signup/google_login.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});

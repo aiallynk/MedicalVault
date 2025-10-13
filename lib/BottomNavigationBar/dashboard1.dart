@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'api_service.dart';
-import 'AppFooter.dart';
-import 'CategoryVaultPage.dart';
+import 'package:hello/api_service.dart';
+import 'package:hello/AppFooter.dart';
+import 'package:hello/CategoryVaultPage.dart';
 import 'MyVault.dart';
 import 'QR.dart';
 import 'Requests.dart';
 import 'Settings.dart';
-import 'ProfileSwitcherModal.dart';
-import 'main.dart';
+import 'package:hello/ProfileSwitcherModal.dart';
+import 'package:hello/main.dart';
 
 class Dashboard1 extends StatefulWidget {
   final Map<String, dynamic> userData;

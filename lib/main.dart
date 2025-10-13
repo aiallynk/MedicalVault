@@ -7,10 +7,10 @@ import 'package:hello/firebase_options.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'SignUp.dart';
-import 'loginScreen.dart';
-import 'fcm_service.dart';
-import 'global_notification_handler.dart';
+import 'Login_Signup/SignUp.dart';
+import 'Login_Signup/loginScreen.dart';
+import 'Notifications/fcm_service.dart';
+import 'Notifications/global_notification_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

@@ -8,10 +8,10 @@ import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
 
-import 'Document_model.dart';
-import 'UploadDocument.dart';
-import 'api_service.dart';
-import 'main.dart';
+import 'package:hello/Document_model.dart';
+import 'package:hello/UploadDocument.dart';
+import 'package:hello/api_service.dart';
+import 'package:hello/main.dart';
 
 // ================= DOCUMENT DETAIL PAGE =================
 class DocumentDetailPage extends StatelessWidget {

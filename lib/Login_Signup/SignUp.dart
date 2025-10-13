@@ -2,11 +2,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dashboard1.dart';
-import 'fcm_service.dart';
+import 'package:hello/BottomNavigationBar/dashboard1.dart';
+import 'package:hello/Notifications/fcm_service.dart';
 import 'google_login.dart';
-import 'TermsAndConditions.dart';
-import 'PrivacyPolicy.dart';
+import 'package:hello/TermsAndConditions.dart';
+import 'package:hello/PrivacyPolicy.dart';
 
 class SignUpPage extends StatefulWidget {
   const SignUpPage({super.key});

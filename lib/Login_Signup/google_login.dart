@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dashboard1.dart';
-import 'fcm_service.dart';
+import 'package:hello/BottomNavigationBar/dashboard1.dart';
+import 'package:hello/Notifications/fcm_service.dart';
 
 class GoogleLoginScreen extends StatefulWidget {
   const GoogleLoginScreen({super.key});
@@ -35,6 +35,9 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
     });
 
     try {
+      // Sign out first to force account picker to show every time
+      await _googleSignIn.signOut();
+
       final GoogleSignInAccount? account = await _googleSignIn.signIn();
 
       if (account == null) {
@@ -55,7 +58,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       }
 
       setState(() {
-        _statusMessage = 'Contacting MedicalVault backend...';
+        _statusMessage = 'Logging you in...';
       });
 
       final response = await http.post(
@@ -165,7 +168,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MedicalVault - Google Sign-In'),
+        title: const Text('Log in with Google'),
       ),
       body: SafeArea(
         child: Padding(

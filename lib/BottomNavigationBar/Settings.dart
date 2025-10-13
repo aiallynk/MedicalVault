@@ -2,20 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'main.dart';
+import 'package:hello/main.dart';
 
 import 'QR.dart';
-import 'SettingPages/ChangePassword.dart';
-import 'SettingPages/ContactSupportPage.dart';
-import 'SettingPages/FaqPage.dart';
-import 'SettingPages/PrivacyPolicyPage.dart';
-import 'SettingPages/ProfilePageSetting.dart';
-import 'SettingPages/TermsOfServicesPage.dart';
-import 'loginScreen.dart';
-import 'api_service.dart';
-import 'dashboard1.dart';
-import 'notification_settings_service.dart';
-import 'logout_service.dart';
+import 'package:hello/SettingPages/ChangePassword.dart';
+import 'package:hello/SettingPages/ContactSupportPage.dart';
+import 'package:hello/SettingPages/FaqPage.dart';
+import 'package:hello/SettingPages/PrivacyPolicyPage.dart';
+import 'package:hello/SettingPages/ProfilePageSetting.dart';
+import 'package:hello/SettingPages/TermsOfServicesPage.dart';
+import 'package:hello/Login_Signup/loginScreen.dart';
+import 'package:hello/api_service.dart';
+import 'package:hello/BottomNavigationBar/dashboard1.dart';
+import 'package:hello/Notifications/notification_settings_service.dart';
+import 'package:hello/Login_Signup/logout_service.dart';
 
 class SettingsPage extends StatefulWidget {
   final Map<String, dynamic> userData; // 👈 full user data map

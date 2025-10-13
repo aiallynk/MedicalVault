@@ -7,9 +7,9 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
-import 'HowQrAcessWorks.dart';
-import 'api_service.dart';
-import 'main.dart';
+import 'package:hello/HowQrAcessWorks.dart';
+import 'package:hello/api_service.dart';
+import 'package:hello/main.dart';
 
 /// 👉 Backend base URL (no trailing slash)
 const String kApiBase = 'https://backend-medicalvault.onrender.com';

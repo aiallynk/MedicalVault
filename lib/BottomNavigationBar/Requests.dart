@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
-import 'main.dart';
+import 'package:hello/main.dart';
 
 // Session Request Model
 class SessionRequest {
