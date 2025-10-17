@@ -13,6 +13,7 @@ class ApiService {
   static const String authUrl = "$baseUrl/auth";
   static const String filesUrl = "$baseUrl/files";
   static const String qrUrl = "$baseUrl/qr";
+  static const String aiUrl = "$baseUrl/ai";
 
   // ---------------- TOKEN ----------------
   static Future<String?> _getToken() async {
@@ -595,6 +596,60 @@ class ApiService {
       }
     } catch (e) {
       print("Remove profile error: $e");
+      return false;
+    }
+  }
+
+  // ---------------- AI ASSISTANT ----------------
+  static Future<Map<String, dynamic>?> askAI(String prompt) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("$aiUrl/ask"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({"prompt": prompt}),
+      );
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        return data;
+      } else {
+        print("AI request failed: ${res.body}");
+        final errorData = jsonDecode(res.body);
+        return {
+          "success": false,
+          "message": errorData['message'] ?? 'AI request failed',
+          "reply":
+              "I'm sorry, I'm having trouble connecting right now. Please try again later."
+        };
+      }
+    } catch (e) {
+      print("AI request error: $e");
+      return {
+        "success": false,
+        "message": "Network error",
+        "reply":
+            "I'm having trouble connecting to the AI service. Please check your internet connection and try again."
+      };
+    }
+  }
+
+  static Future<bool> checkAIStatus() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.get(
+        Uri.parse("$aiUrl/status"),
+        headers: headers,
+      );
+
+      if (res.statusCode == 200) {
+        return true;
+      } else {
+        print("AI status check failed: ${res.body}");
+        return false;
+      }
+    } catch (e) {
+      print("AI status check error: $e");
       return false;
     }
   }

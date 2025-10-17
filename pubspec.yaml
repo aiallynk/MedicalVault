@@ -63,6 +63,9 @@ flutter:
     - assets/WelcomeLightTheme.svg
     - assets/WelcomeDarkTheme.svg
     - assets/NewWelcomeScreen.svg
+    - assets/AiAllyLogoWhite.png
+    - assets/Toogle.json
+    - assets/chatbot.json
 
 flutter_icons:
   android: true

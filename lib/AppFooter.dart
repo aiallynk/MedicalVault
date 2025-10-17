@@ -24,7 +24,9 @@ class AppFooter extends StatelessWidget {
                 ),
           ),
           Image.asset(
-            "assets/AiAllyLogo.png", // 👈 yaha apna footer image daal
+            Theme.of(context).brightness == Brightness.dark
+                ? "assets/AiAllyLogoWhite.png"
+                : "assets/AiAllyLogo.png",
             height: 30,
           ),
           const SizedBox(width: 8),
