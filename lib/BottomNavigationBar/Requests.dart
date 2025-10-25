@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
 import 'package:hello/main.dart';
+import '../Notifications/notification_manager.dart';
 
 // Session Request Model
 class SessionRequest {
@@ -81,6 +84,9 @@ class _RequestsPageState extends State<RequestsPage> {
   List<SessionRequest> sessionRequests = [];
   bool isLoading = true;
   String? errorMessage;
+  Timer? _timer;
+  final NotificationManager _notificationManager = NotificationManager();
+  Set<String> _notifiedSessions = {}; // Track which sessions have been notified
 
   static const String baseUrl = "https://backend-medicalvault.onrender.com/api";
 
@@ -88,6 +94,50 @@ class _RequestsPageState extends State<RequestsPage> {
   void initState() {
     super.initState();
     _loadSessionRequests();
+    _startTimer();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          // This will trigger a rebuild to update the timer display
+        });
+
+        // Check for session expiring notifications
+        _checkSessionExpiringNotifications();
+      }
+    });
+  }
+
+  void _checkSessionExpiringNotifications() {
+    for (final request in sessionRequests) {
+      final timeLeft = request.expiresAt.difference(DateTime.now());
+      final sessionId = request.id;
+
+      // Check if session is expiring in 30 seconds and hasn't been notified yet
+      if (timeLeft.inSeconds <= 30 &&
+          timeLeft.inSeconds > 0 &&
+          !_notifiedSessions.contains(sessionId)) {
+        // Mark as notified to prevent duplicate notifications
+        _notifiedSessions.add(sessionId);
+
+        // Show notification
+        _notificationManager.showSessionExpiringNotificationWithDoctor(
+            context, request.doctor.name);
+
+        if (kDebugMode) {
+          print(
+              'Session expiring notification sent for Dr. ${request.doctor.name}');
+        }
+      }
+    }
   }
 
   // Get auth token from SharedPreferences
@@ -126,6 +176,8 @@ class _RequestsPageState extends State<RequestsPage> {
                 .map((json) => SessionRequest.fromJson(json))
                 .toList();
             isLoading = false;
+            // Clear notified sessions when loading new requests
+            _notifiedSessions.clear();
           });
         } else {
           throw Exception(data['message'] ?? 'Failed to load requests');
@@ -168,8 +220,9 @@ class _RequestsPageState extends State<RequestsPage> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('Request ${status} successfully'),
-                backgroundColor:
-                    status == 'accepted' ? Colors.green : Colors.red,
+                backgroundColor: status == 'accepted'
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.error,
               ),
             );
 
@@ -188,7 +241,7 @@ class _RequestsPageState extends State<RequestsPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error: ${e.toString()}'),
-            backgroundColor: Colors.red,
+            backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
@@ -247,7 +300,7 @@ class _RequestsPageState extends State<RequestsPage> {
             Icon(
               Icons.error_outline,
               size: 64,
-              color: Colors.red[300],
+              color: Theme.of(context).colorScheme.error,
             ),
             const SizedBox(height: 16),
             Text(
@@ -255,7 +308,7 @@ class _RequestsPageState extends State<RequestsPage> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Colors.grey[600],
+                color: Theme.of(context).textTheme.bodyLarge?.color,
               ),
             ),
             const SizedBox(height: 8),
@@ -266,7 +319,7 @@ class _RequestsPageState extends State<RequestsPage> {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
-                  color: Colors.grey[500],
+                  color: Theme.of(context).textTheme.bodyMedium?.color,
                 ),
               ),
             ),
@@ -288,7 +341,11 @@ class _RequestsPageState extends State<RequestsPage> {
             Icon(
               Icons.inbox_outlined,
               size: 64,
-              color: Colors.grey[400],
+              color: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.color
+                  ?.withOpacity(0.6),
             ),
             const SizedBox(height: 16),
             Text(
@@ -296,7 +353,7 @@ class _RequestsPageState extends State<RequestsPage> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Colors.grey[600],
+                color: Theme.of(context).textTheme.bodyLarge?.color,
               ),
             ),
             const SizedBox(height: 8),
@@ -305,7 +362,7 @@ class _RequestsPageState extends State<RequestsPage> {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[500],
+                color: Theme.of(context).textTheme.bodyMedium?.color,
               ),
             ),
           ],
@@ -331,6 +388,14 @@ class _RequestsPageState extends State<RequestsPage> {
     final timeLeft = request.expiresAt.difference(DateTime.now());
     final isExpired = timeLeft.isNegative;
 
+    // Format time as MM:SS
+    String formatTime(Duration duration) {
+      if (duration.isNegative) return "00:00";
+      final minutes = duration.inMinutes;
+      final seconds = duration.inSeconds % 60;
+      return "${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
+    }
+
     return Card(
       elevation: 3,
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -350,9 +415,11 @@ class _RequestsPageState extends State<RequestsPage> {
                   backgroundImage: doctor.profilePicture != null
                       ? NetworkImage(doctor.profilePicture!)
                       : null,
-                  backgroundColor: Colors.blue[100],
+                  backgroundColor:
+                      Theme.of(context).colorScheme.primary.withOpacity(0.1),
                   child: doctor.profilePicture == null
-                      ? const Icon(Icons.person, color: Colors.blue)
+                      ? Icon(Icons.person,
+                          color: Theme.of(context).colorScheme.primary)
                       : null,
                 ),
                 const SizedBox(width: 16),
@@ -362,26 +429,28 @@ class _RequestsPageState extends State<RequestsPage> {
                     children: [
                       Text(
                         doctor.name,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
+                          color: Theme.of(context).textTheme.bodyLarge?.color,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         doctor.email,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
-                          color: Colors.blue,
+                          color: Theme.of(context).colorScheme.primary,
                         ),
                       ),
                       if (doctor.specialization != null) ...[
                         const SizedBox(height: 2),
                         Text(
                           doctor.specialization!,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13,
-                            color: Colors.grey,
+                            color:
+                                Theme.of(context).textTheme.bodyMedium?.color,
                           ),
                         ),
                       ],
@@ -394,15 +463,19 @@ class _RequestsPageState extends State<RequestsPage> {
                   children: [
                     Icon(
                       isExpired ? Icons.schedule : Icons.schedule,
-                      color: isExpired ? Colors.red : Colors.orange,
+                      color: isExpired
+                          ? Theme.of(context).colorScheme.error
+                          : Theme.of(context).colorScheme.primary,
                       size: 16,
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      isExpired ? 'Expired' : '${timeLeft.inMinutes}m left',
+                      isExpired ? 'Expired' : '${formatTime(timeLeft)} left',
                       style: TextStyle(
                         fontSize: 12,
-                        color: isExpired ? Colors.red : Colors.orange,
+                        color: isExpired
+                            ? Theme.of(context).colorScheme.error
+                            : Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -416,11 +489,15 @@ class _RequestsPageState extends State<RequestsPage> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  const Icon(Icons.work_outline, size: 16, color: Colors.grey),
+                  Icon(Icons.work_outline,
+                      size: 16,
+                      color: Theme.of(context).textTheme.bodyMedium?.color),
                   const SizedBox(width: 8),
                   Text(
                     'Experience: ${doctor.experience}',
-                    style: const TextStyle(fontSize: 13, color: Colors.grey),
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: Theme.of(context).textTheme.bodyMedium?.color),
                   ),
                 ],
               ),
@@ -432,13 +509,23 @@ class _RequestsPageState extends State<RequestsPage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.grey[50],
+                  color: Theme.of(context)
+                      .colorScheme
+                      .surfaceVariant
+                      .withOpacity(0.3),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey[200]!),
+                  border: Border.all(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .outline
+                          .withOpacity(0.3)),
                 ),
                 child: Text(
                   request.requestMessage,
-                  style: const TextStyle(fontSize: 14),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(context).textTheme.bodyMedium?.color,
+                  ),
                 ),
               ),
             ],
@@ -447,7 +534,7 @@ class _RequestsPageState extends State<RequestsPage> {
 
             // Action buttons
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Expanded(
                   child: ElevatedButton.icon(

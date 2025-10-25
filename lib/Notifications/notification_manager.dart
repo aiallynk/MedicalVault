@@ -31,6 +31,27 @@ class NotificationManager {
     );
   }
 
+  // Show session expiring notification with doctor name
+  Future<void> showSessionExpiringNotificationWithDoctor(
+      BuildContext context, String doctorName) async {
+    final isEnabled =
+        await _settingsService.isNotificationEnabled('sessionExpiring');
+    if (!isEnabled) return;
+
+    if (kDebugMode) {
+      print('Showing session expiring notification for Dr. $doctorName');
+    }
+
+    // Show in-app notification
+    _showInAppNotification(
+      context,
+      'Session Expiring',
+      'Your session with Dr. $doctorName is expiring in 30 seconds',
+      Icons.timer,
+      Colors.orange,
+    );
+  }
+
   // Show reminder notification
   Future<void> showReminderNotification(
       BuildContext context, String title, String message) async {

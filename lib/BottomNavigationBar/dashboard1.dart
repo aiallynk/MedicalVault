@@ -10,6 +10,7 @@ import 'Settings.dart';
 import 'package:hello/ProfileSwitcherModal.dart';
 import 'package:hello/main.dart';
 import '../widgets/ai_floating_button.dart';
+import 'package:hello/Notifications/global_notification_handler.dart';
 
 class Dashboard1 extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -35,9 +36,11 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     _loadDocumentCounts();
     _loadLinkedProfiles();
 
-    // Set status bar style
+    // Set status bar style and global context for notifications
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StatusBarHelper.setStatusBarStyle(context);
+      // Update global context for notifications
+      GlobalNotificationHandler.setGlobalContext(context);
     });
   }
 

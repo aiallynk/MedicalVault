@@ -85,9 +85,16 @@ class FCMService {
       final authToken = prefs.getString('authToken');
       final userId = prefs.getString('userId');
 
+      if (kDebugMode) {
+        print('🔑 FCM Token Registration Debug:');
+        print('  - Auth Token: ${authToken != null ? "Present" : "Missing"}');
+        print('  - User ID: ${userId ?? "Missing"}');
+        print('  - FCM Token: ${token.substring(0, 20)}...');
+      }
+
       if (authToken == null || userId == null) {
         if (kDebugMode) {
-          print('No auth token or user ID found for FCM registration');
+          print('❌ No auth token or user ID found for FCM registration');
         }
         return;
       }
@@ -105,18 +112,24 @@ class FCMService {
         }),
       );
 
+      if (kDebugMode) {
+        print('📡 FCM Token Save Response:');
+        print('  - Status Code: ${response.statusCode}');
+        print('  - Response Body: ${response.body}');
+      }
+
       if (response.statusCode == 200) {
         if (kDebugMode) {
-          print('FCM token saved successfully');
+          print('✅ FCM token saved successfully');
         }
       } else {
         if (kDebugMode) {
-          print('Failed to save FCM token: ${response.body}');
+          print('❌ Failed to save FCM token: ${response.body}');
         }
       }
     } catch (e) {
       if (kDebugMode) {
-        print('Error saving FCM token: $e');
+        print('❌ Error saving FCM token: $e');
       }
     }
   }
@@ -124,10 +137,11 @@ class FCMService {
   // Handle foreground messages
   void _handleForegroundMessage(RemoteMessage message) {
     if (kDebugMode) {
-      print('Received foreground message: ${message.messageId}');
-      print('Title: ${message.notification?.title}');
-      print('Body: ${message.notification?.body}');
-      print('Data: ${message.data}');
+      print('📱 Received foreground message: ${message.messageId}');
+      print('  - Title: ${message.notification?.title}');
+      print('  - Body: ${message.notification?.body}');
+      print('  - Data: ${message.data}');
+      print('  - Type: ${message.data['type']}');
     }
 
     // Handle the notification based on user settings
@@ -137,10 +151,11 @@ class FCMService {
   // Handle background messages (when app is in background)
   void _handleBackgroundMessage(RemoteMessage message) {
     if (kDebugMode) {
-      print('Received background message: ${message.messageId}');
-      print('Title: ${message.notification?.title}');
-      print('Body: ${message.notification?.body}');
-      print('Data: ${message.data}');
+      print('📱 Received background message: ${message.messageId}');
+      print('  - Title: ${message.notification?.title}');
+      print('  - Body: ${message.notification?.body}');
+      print('  - Data: ${message.data}');
+      print('  - Type: ${message.data['type']}');
     }
 
     // Handle the notification based on user settings
@@ -151,10 +166,11 @@ class FCMService {
   void _handleTerminatedMessage(RemoteMessage message) {
     if (kDebugMode) {
       print(
-          'App opened from terminated state by notification: ${message.messageId}');
-      print('Title: ${message.notification?.title}');
-      print('Body: ${message.notification?.body}');
-      print('Data: ${message.data}');
+          '📱 App opened from terminated state by notification: ${message.messageId}');
+      print('  - Title: ${message.notification?.title}');
+      print('  - Body: ${message.notification?.body}');
+      print('  - Data: ${message.data}');
+      print('  - Type: ${message.data['type']}');
     }
 
     // Handle the notification based on user settings

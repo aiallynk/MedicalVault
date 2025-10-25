@@ -244,7 +244,7 @@ class _SettingsPageState extends State<SettingsPage> {
             else ...[
               _buildNotificationSwitchTile(
                 "Session Expiring",
-                "Get notified when your session with doctor is about to expire (last 15 seconds)",
+                "Get notified when your session with doctor is about to expire (last 30 seconds)",
                 sessionExpiring,
                 Icons.timer,
                 Colors.orange,
