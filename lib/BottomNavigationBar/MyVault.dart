@@ -248,7 +248,10 @@ class _MyVaultState extends State<MyVault> {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(() => setState(() {}));
+    _searchController.addListener(() {
+      if (!mounted) return;
+      setState(() {});
+    });
     _loadDocumentsFromAPI();
   }
 

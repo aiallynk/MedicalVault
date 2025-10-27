@@ -148,7 +148,9 @@ class _RequestsPageState extends State<RequestsPage> {
 
   // Fetch session requests from API
   Future<void> _loadSessionRequests() async {
+    if (!mounted) return;
     try {
+      if (!mounted) return;
       setState(() {
         isLoading = true;
         errorMessage = null;
@@ -171,6 +173,7 @@ class _RequestsPageState extends State<RequestsPage> {
         final data = jsonDecode(response.body);
         if (data['success']) {
           final List<dynamic> requestsJson = data['requests'];
+          if (!mounted) return;
           setState(() {
             sessionRequests = requestsJson
                 .map((json) => SessionRequest.fromJson(json))
@@ -187,6 +190,7 @@ class _RequestsPageState extends State<RequestsPage> {
             'HTTP ${response.statusCode}: ${response.reasonPhrase}');
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         errorMessage = e.toString();
         isLoading = false;

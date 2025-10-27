@@ -143,6 +143,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                     controller: _pageController,
                     physics: const ClampingScrollPhysics(),
                     onPageChanged: (index) {
+                      if (!mounted) return;
                       setState(() {
                         _currentIndex = index;
                       });
@@ -223,11 +224,16 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                               ],
                             ),
                             const SizedBox(height: 20),
-                            const Text("Quick Actions",
-                                style: TextStyle(
-                                    color: Colors.black87,
+                            Text(
+                              "Quick Actions",
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(
                                     fontSize: 18,
-                                    fontWeight: FontWeight.bold)),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                            ),
                             const SizedBox(height: 16),
                             Row(
                               children: [

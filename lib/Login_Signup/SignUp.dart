@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hello/BottomNavigationBar/dashboard1.dart';
+import 'package:hello/Login_Signup/VerifyEmailPage.dart';
 import 'package:hello/Notifications/fcm_service.dart';
 import 'google_login.dart';
 import 'package:hello/TermsAndConditions.dart';
@@ -68,17 +69,27 @@ class _SignUpPageState extends State<SignUpPage> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text("✅ Account created. You are now logged in.")),
+              content: Text(
+                  "✅ Account created. Please verify your email to continue.")),
         );
 
-        // Navigate directly to dashboard
-        Navigator.pushAndRemoveUntil(
+        // Route to verification screen first; only proceed after success
+        final verified = await Navigator.push(
           context,
           MaterialPageRoute(
-              builder: (_) =>
-                  Dashboard1(userData: Map<String, dynamic>.from(user))),
-          (route) => false,
+            builder: (_) => const VerifyEmailPage(),
+          ),
         );
+
+        if (verified == true && mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+                builder: (_) =>
+                    Dashboard1(userData: Map<String, dynamic>.from(user))),
+            (route) => false,
+          );
+        }
       } else {
         final msg = jsonDecode(response.body)["message"] ?? "Signup failed";
         ScaffoldMessenger.of(context).showSnackBar(

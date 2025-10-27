@@ -52,12 +52,14 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
       );
       return;
     }
+    if (!mounted) return;
     setState(() {
       _submitting = true;
     });
 
     final result =
         await ApiService.resetPassword(token: token, newPassword: pw);
+    if (!mounted) return;
     if (!mounted) return;
     setState(() {
       _submitting = false;

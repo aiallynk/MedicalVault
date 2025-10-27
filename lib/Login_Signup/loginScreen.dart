@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hello/api_service.dart'; // 👈 Added
 import 'package:hello/SettingPages/ForgotPasswordPage.dart';
+import 'package:hello/Login_Signup/VerifyEmailPage.dart';
 import 'package:hello/Login_Signup/google_login.dart';
 import 'package:hello/Notifications/global_notification_handler.dart';
 
@@ -280,6 +281,26 @@ class _LoginScreenState extends State<LoginScreen> {
                               );
 
                               if (result != null) {
+                                final emailVerified = (result['user']
+                                            ?['emailVerified'] ??
+                                        result['emailVerified']) ==
+                                    true;
+                                if (!emailVerified) {
+                                  // Prompt to verify email
+                                  final verified = await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => const VerifyEmailPage(),
+                                    ),
+                                  );
+                                  if (verified == true && mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                          content: Text(
+                                              '✅ Email verified. Please proceed.')),
+                                    );
+                                  }
+                                }
                                 // ✅ Get user data from SharedPreferences after login
                                 final prefs =
                                     await SharedPreferences.getInstance();
@@ -303,11 +324,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                 );
                               }
                             } finally {
-                              if (mounted) {
-                                setState(() {
-                                  _isLoggingIn = false;
-                                });
-                              }
+                              if (!mounted) return;
+                              setState(() {
+                                _isLoggingIn = false;
+                              });
                             }
                           },
                     style: ElevatedButton.styleFrom(

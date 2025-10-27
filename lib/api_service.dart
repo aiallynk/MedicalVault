@@ -27,6 +27,80 @@ class ApiService {
   }
 
   // ---------------- PASSWORD FLOWS ----------------
+  // ---------------- EMAIL VERIFICATION ----------------
+  static Future<Map<String, dynamic>?> verifyEmailWithToken(
+      String token) async {
+    try {
+      final res = await http.post(
+        Uri.parse("$authUrl/verify?token=${Uri.encodeQueryComponent(token)}"),
+        headers: {"Content-Type": "application/json"},
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        // Persist updated user
+        final prefs = await SharedPreferences.getInstance();
+        final user = data['user'];
+        if (user != null) {
+          await prefs.setString("userData", jsonEncode(user));
+          await prefs.setString("email", user['email']?.toString() ?? "");
+        }
+        return {"success": true, ...data};
+      } else {
+        return {
+          "success": false,
+          "message": jsonDecode(res.body)['message'] ?? 'Verification failed'
+        };
+      }
+    } catch (e) {
+      return {"success": false, "message": "Network error"};
+    }
+  }
+
+  static Future<Map<String, dynamic>?> verifyEmailWithCode(
+      {required String email, required String code}) async {
+    try {
+      final res = await http.post(
+        Uri.parse("$authUrl/verify-code"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"email": email, "code": code}),
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final prefs = await SharedPreferences.getInstance();
+        final user = data['user'];
+        if (user != null) {
+          await prefs.setString("userData", jsonEncode(user));
+          await prefs.setString("email", user['email']?.toString() ?? "");
+        }
+        return {"success": true, ...data};
+      } else {
+        return {
+          "success": false,
+          "message": jsonDecode(res.body)['message'] ?? 'Invalid code'
+        };
+      }
+    } catch (e) {
+      return {"success": false, "message": "Network error"};
+    }
+  }
+
+  static Future<Map<String, dynamic>?> resendVerification(String email) async {
+    try {
+      final res = await http.post(
+        Uri.parse("$authUrl/resend-verification"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"email": email}),
+      );
+      final data = jsonDecode(res.body);
+      if (res.statusCode == 200) {
+        return {"success": true, ...data};
+      }
+      return {"success": false, ...data};
+    } catch (e) {
+      return {"success": false, "message": "Network error"};
+    }
+  }
+
   static Future<Map<String, dynamic>?> forgotPassword(String email) async {
     try {
       final res = await http.post(
@@ -114,6 +188,10 @@ class ApiService {
           await prefs.setString("name", user?['name']?.toString() ?? "Patient");
           // ✅ Also store userData for dashboard compatibility
           await prefs.setString("userData", jsonEncode(user));
+          // Store emailVerified flag for convenience
+          if (user != null && user['emailVerified'] != null) {
+            await prefs.setBool('emailVerified', user['emailVerified'] == true);
+          }
 
           // Register FCM token after successful login
           await FCMService().registerToken();

@@ -50,6 +50,7 @@ class _QRPageState extends State<QRPage> {
       final token = await ApiService.generateQrToken();
 
       if (token != null) {
+        if (!mounted) return;
         setState(() {
           _qrData = token; // Or show QR URL instead if you prefer
           _loading = false;
@@ -58,6 +59,7 @@ class _QRPageState extends State<QRPage> {
         throw Exception("Failed to generate QR");
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _qrData = "DoctorAccess:${_uuid.v4()}"; // fallback
         _lastError = e.toString();

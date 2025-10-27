@@ -46,17 +46,20 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadLinkedProfiles() async {
+    if (!mounted) return;
     setState(() {
       isLoadingProfiles = true;
     });
     try {
       final profiles = await ApiService.getLinkedProfiles();
+      if (!mounted) return;
       setState(() {
         linkedProfiles = profiles;
       });
     } catch (e) {
       print("Error loading profiles: $e");
     } finally {
+      if (!mounted) return;
       setState(() {
         isLoadingProfiles = false;
       });
@@ -64,11 +67,13 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadNotificationSettings() async {
+    if (!mounted) return;
     setState(() {
       isLoadingSettings = true;
     });
     try {
       final settings = await _settingsService.getNotificationSettings();
+      if (!mounted) return;
       setState(() {
         sessionExpiring = settings['sessionExpiring'] ?? true;
         reminders = settings['reminders'] ?? true;
@@ -77,6 +82,7 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (e) {
       print("Error loading notification settings: $e");
     } finally {
+      if (!mounted) return;
       setState(() {
         isLoadingSettings = false;
       });

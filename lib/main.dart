@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'Login_Signup/SignUp.dart';
 import 'Login_Signup/loginScreen.dart';
+import 'Login_Signup/VerifyEmailPage.dart';
 import 'Notifications/fcm_service.dart';
 import 'Notifications/global_notification_handler.dart';
 
@@ -506,10 +507,24 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
+  String? _pendingToken;
+
+  @override
+  void initState() {
+    super.initState();
+    _initDeepLinks();
+  }
+
+  Future<void> _initDeepLinks() async {
+    // Lightweight deep link handler; if uni_links is configured, plug in here
+    // For now, we rely on manual navigation to VerifyEmailPage if needed.
+  }
   @override
   Widget build(BuildContext context) {
-    // Always show WelcomeScreen first, regardless of authentication status
-    // Users will navigate to dashboard through normal login flow
+    // If a pending verification token exists (from future uni_links integration), route to VerifyEmailPage
+    if (_pendingToken != null) {
+      return VerifyEmailPage(incomingToken: _pendingToken);
+    }
     return const WelcomeScreen();
   }
 }
