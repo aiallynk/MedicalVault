@@ -59,12 +59,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _analyzeDocument(
             widget.initialDocumentId!, widget.initialDocumentName!);
       });
-    } else {
-      _addMessage(
-        "I can analyze your documents, provide insights, and answer in multiple languages. "
-        "Please log in first to access your medical documents and get personalized assistance!",
-        false,
-      );
     }
   }
 

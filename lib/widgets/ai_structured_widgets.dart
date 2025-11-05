@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AITableWidget extends StatelessWidget {
   final Map<String, dynamic> data;
@@ -496,7 +497,30 @@ class DocumentPreviewCard extends StatelessWidget {
             ),
           ],
         ),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (previewUrl != null)
+              IconButton(
+                icon: const Icon(Icons.visibility, size: 18),
+                color: isDarkMode ? Colors.white70 : Colors.black54,
+                tooltip: 'Preview',
+                onPressed: () async {
+                  try {
+                    final url = previewUrl;
+                    if (url != null) {
+                      final uri = Uri.parse(url);
+                      if (await canLaunchUrl(uri)) {
+                        await launchUrl(uri,
+                            mode: LaunchMode.externalApplication);
+                      }
+                    }
+                  } catch (_) {}
+                },
+              ),
+            const Icon(Icons.arrow_forward_ios, size: 16),
+          ],
+        ),
         onTap: onTap,
       ),
     );

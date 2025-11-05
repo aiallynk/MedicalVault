@@ -14,6 +14,7 @@ class ApiService {
   static const String filesUrl = "$baseUrl/files";
   static const String qrUrl = "$baseUrl/qr";
   static const String aiUrl = "$baseUrl/ai";
+  static const String sosUrl = "$baseUrl/sos";
 
   // ---------------- TOKEN ----------------
   static Future<String?> _getToken() async {
@@ -426,8 +427,14 @@ class ApiService {
   static Future<String?> generateQrToken() async {
     try {
       final headers = await _authHeaders();
-      final res =
-          await http.post(Uri.parse("$qrUrl/generate"), headers: headers);
+      // Try to hint backend to invalidate previous tokens when generating a new one.
+      // These hints are optional and safely ignored if unsupported by backend.
+      final uri = Uri.parse("$qrUrl/generate").replace(queryParameters: {
+        // optional flags: backend may ignore them
+        "invalidatePrevious": "true",
+        "rotate": "true",
+      });
+      final res = await http.post(uri, headers: headers);
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         return data['qrUrl'] ?? data['token'];
@@ -438,6 +445,33 @@ class ApiService {
       print("QR error: $e");
     }
     return null;
+  }
+
+  // Optionally ask backend to invalidate any existing QR tokens for the current user.
+  // If the endpoint doesn't exist, this will no-op (handled via status code / exceptions).
+  static Future<void> invalidatePreviousQrTokens() async {
+    try {
+      final headers = await _authHeaders();
+      final candidates = <Uri>[
+        Uri.parse("$qrUrl/invalidate"),
+        Uri.parse("$qrUrl/expire-all"),
+        Uri.parse("$qrUrl/rotate"),
+      ];
+      for (final uri in candidates) {
+        try {
+          final res = await http.post(uri, headers: headers);
+          if (res.statusCode == 200) {
+            // success on any one endpoint; stop trying others
+            return;
+          }
+        } catch (_) {
+          // ignore unsupported endpoints
+        }
+      }
+    } catch (e) {
+      // Silently ignore; feature is optional
+      print("invalidatePreviousQrTokens error: $e");
+    }
   }
 
   // ---------------- PROFILE MANAGEMENT ----------------
@@ -513,6 +547,66 @@ class ApiService {
     } catch (e) {
       print("Add other profile error: $e");
       rethrow;
+    }
+  }
+
+  // ---------------- USER PROFILE (PUBLIC/SELF) ----------------
+  static Future<Map<String, dynamic>?> fetchUserPublicProfile(String userId) async {
+    try {
+      final token = await _getToken();
+      final headers = {
+        'Content-Type': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+      };
+      final res = await http.get(
+        Uri.parse("${baseUrl}/users/$userId"),
+        headers: headers,
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        // Common response shapes: { success, data: { user: {...} } }
+        final user = data['data']?['user'] ?? data['user'];
+        if (user is Map<String, dynamic>) {
+          return user;
+        }
+      } else {
+        print("Fetch user profile failed: ${res.body}");
+      }
+    } catch (e) {
+      print("Fetch user profile error: $e");
+    }
+    return null;
+  }
+
+  // ---------------- SOS ----------------
+  static Future<bool> createSos({
+    String? profileId,
+    String? name,
+    String? age,
+    String? location,
+    String? mobile,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse(sosUrl),
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: jsonEncode({
+          'profileId': profileId ?? '',
+          'name': name ?? '',
+          'age': age ?? '',
+          'location': location ?? '',
+          'mobile': mobile ?? '',
+        }),
+      );
+      if (res.statusCode == 201) {
+        return true;
+      }
+      print('createSos failed: ${res.statusCode} ${res.body}');
+      return false;
+    } catch (e) {
+      print('createSos error: $e');
+      return false;
     }
   }
 

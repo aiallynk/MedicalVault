@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hello/api_service.dart';
 import 'package:hello/AppFooter.dart';
@@ -10,6 +11,7 @@ import 'Settings.dart';
 import 'package:hello/ProfileSwitcherModal.dart';
 import 'package:hello/main.dart';
 import '../widgets/ai_floating_button.dart';
+import 'package:hello/screens/sos_page.dart';
 import 'package:hello/Notifications/global_notification_handler.dart';
 
 class Dashboard1 extends StatefulWidget {
@@ -24,6 +26,9 @@ class Dashboard1 extends StatefulWidget {
 class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   int _currentIndex = 0;
   late PageController _pageController;
+  late PageController _promoPageController;
+  Timer? _promoTimer;
+  late int _promoInitialPage;
 
   Map<String, int> _documentCounts = {};
   bool _isLoadingCounts = true;
@@ -33,6 +38,11 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
+    _promoInitialPage = _promoItems.length * 1000;
+    _promoPageController = PageController(
+      initialPage: _promoInitialPage,
+      viewportFraction: 0.9,
+    );
     _loadDocumentCounts();
     _loadLinkedProfiles();
 
@@ -42,11 +52,30 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       // Update global context for notifications
       GlobalNotificationHandler.setGlobalContext(context);
     });
+
+    // Auto-scroll promo cards
+    _promoTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (!mounted || !_promoPageController.hasClients) return;
+      final int current =
+          _promoPageController.page?.round() ?? _promoInitialPage;
+      final int next = current + 1;
+      try {
+        _promoPageController.animateToPage(
+          next,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+        );
+      } catch (_) {
+        // Ignore transient errors if page view not ready
+      }
+    });
   }
 
   @override
   void dispose() {
     _pageController.dispose();
+    _promoTimer?.cancel();
+    _promoPageController.dispose();
     super.dispose();
   }
 
@@ -94,6 +123,119 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   Future<String?> _getStoredName() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString("name");
+  }
+
+  final List<Map<String, String>> _promoItems = const [
+    {
+      'title': 'Stay Hydrated',
+      'subtitle': 'Drink water regularly to improve wellness',
+    },
+    {
+      'title': 'Secure Backup',
+      'subtitle': 'Back up your health docs to avoid loss',
+    },
+    {
+      'title': 'New Feature',
+      'subtitle': 'Emergency SOS now supports quick location',
+    },
+  ];
+
+  Widget _buildPromoCarousel(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return SizedBox(
+      height: 120,
+      child: PageView.builder(
+        controller: _promoPageController,
+        // infinite carousel, so no need to track index here
+        itemBuilder: (context, index) {
+          final item = _promoItems[index % _promoItems.length];
+          return AnimatedBuilder(
+            animation: _promoPageController,
+            builder: (context, child) {
+              double value = 1.0;
+              if (_promoPageController.position.haveDimensions) {
+                final currentPage = _promoPageController.page ??
+                    _promoPageController.initialPage.toDouble();
+                value = (currentPage - index.toDouble());
+                value = ((1 - (value.abs() * 0.1)).clamp(0.9, 1.0)).toDouble();
+              }
+              return Transform.scale(
+                scale: value,
+                child: child,
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6.0),
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isDark
+                        ? [const Color(0xFF2E2E2E), const Color(0xFF1E1E1E)]
+                        : [const Color(0xFFEEF6FF), const Color(0xFFE3F2FD)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: isDark
+                        ? Colors.white12
+                        : Colors.blue.withValues(alpha: 0.15),
+                    width: 1,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 16),
+                    Icon(
+                      Icons.campaign,
+                      color: isDark ? Colors.lightBlueAccent : Colors.blue,
+                      size: 28,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item['title'] ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: isDark ? Colors.white : Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            item['subtitle'] ?? '',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isDark ? Colors.white70 : Colors.black54,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -223,6 +365,9 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                                 ),
                               ],
                             ),
+                            const SizedBox(height: 16),
+                            // Sliding promo/notification cards
+                            _buildPromoCarousel(context),
                             const SizedBox(height: 20),
                             Text(
                               "Quick Actions",
@@ -263,6 +408,28 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                                         MaterialPageRoute(
                                             builder: (context) =>
                                                 RequestsPage()),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildQuickActionCard(
+                                    context,
+                                    icon: Icons.emergency,
+                                    title: "Emergency\nSOS",
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => SosPage(
+                                            userData: widget.userData,
+                                          ),
+                                        ),
                                       );
                                     },
                                   ),
@@ -341,11 +508,6 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                               ),
                             ),
                             const SizedBox(height: 2),
-                            // AI Assistant Floating Button positioned below My Documents
-                            const Align(
-                              alignment: Alignment.centerRight,
-                              child: AIFloatingButton(),
-                            ),
                           ],
                         ),
                       ),
@@ -359,6 +521,12 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                       RequestsPage(),
                       SettingsPage(userData: widget.userData),
                     ],
+                  ),
+                  // Fixed AI Assistant button above footer
+                  Positioned(
+                    right: -2,
+                    bottom: kBottomNavigationBarHeight - 50,
+                    child: const AIFloatingButton(),
                   ),
                 ],
               ),

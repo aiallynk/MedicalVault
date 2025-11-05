@@ -20,7 +20,11 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   // For Android: clientId is null, it reads from google-services.json
   // For iOS: You need to set the iOS client ID from Firebase Console
   final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: <String>['email', 'profile'],
+    scopes: <String>[
+      'email',
+      'profile',
+      'https://www.googleapis.com/auth/user.birthday.read',
+    ],
   );
 
   bool _isLoading = false;
@@ -49,6 +53,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
 
       final GoogleSignInAuthentication auth = await account.authentication;
       final String? idToken = auth.idToken;
+      final String? accessToken = auth.accessToken;
 
       if (idToken == null) {
         setState(() {
@@ -60,6 +65,16 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       setState(() {
         _statusMessage = 'Logging you in...';
       });
+
+      // Optionally fetch age from Google People API if permitted
+      int? googleAge;
+      try {
+        if (accessToken != null && accessToken.isNotEmpty) {
+          googleAge = await _fetchAgeFromGoogle(accessToken);
+        }
+      } catch (_) {
+        // Ignore People API errors and continue login flow
+      }
 
       final response = await http.post(
         Uri.parse(backendEndpoint),
@@ -81,7 +96,12 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
           await prefs.setString('userId', (user['id'] ?? '').toString());
           await prefs.setString('email', (user['email'] ?? '').toString());
           await prefs.setString('name', (user['name'] ?? 'Patient').toString());
-          await prefs.setString('userData', jsonEncode(user));
+          final Map<String, dynamic> mergedUser = Map<String, dynamic>.from(user);
+          if ((mergedUser['age'] == null || mergedUser['age'].toString().isEmpty) &&
+              googleAge != null) {
+            mergedUser['age'] = googleAge;
+          }
+          await prefs.setString('userData', jsonEncode(mergedUser));
 
           // Register FCM token now that we have an auth token
           await FCMService().registerToken();
@@ -93,7 +113,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
             context,
             MaterialPageRoute(
               builder: (_) =>
-                  Dashboard1(userData: Map<String, dynamic>.from(user)),
+                  Dashboard1(userData: Map<String, dynamic>.from(jsonDecode(prefs.getString('userData')!))),
             ),
             (route) => false,
           );
@@ -126,6 +146,50 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         });
       }
     }
+  }
+
+  // Fetch birthday via Google People API and compute age
+  Future<int?> _fetchAgeFromGoogle(String accessToken) async {
+    final uri = Uri.parse(
+        'https://people.googleapis.com/v1/people/me?personFields=birthdays');
+    final res = await http.get(
+      uri,
+      headers: {
+        'Authorization': 'Bearer $accessToken',
+      },
+    );
+    if (res.statusCode != 200) return null;
+
+    final Map<String, dynamic> body = jsonDecode(res.body);
+    final List<dynamic>? birthdays = body['birthdays'] as List<dynamic>?;
+    if (birthdays == null || birthdays.isEmpty) return null;
+
+    Map<String, dynamic>? chosen;
+    for (final entry in birthdays) {
+      final date = (entry as Map<String, dynamic>)['date'] as Map<String, dynamic>?;
+      if (date == null) continue;
+      if (date.containsKey('year') && date.containsKey('month') && date.containsKey('day')) {
+        chosen = date;
+        break;
+      }
+    }
+    chosen ??= birthdays.first['date'] as Map<String, dynamic>?;
+    if (chosen == null) return null;
+    if (!chosen.containsKey('year') || !chosen.containsKey('month') || !chosen.containsKey('day')) {
+      return null;
+    }
+
+    final dob = DateTime(
+      chosen['year'] as int,
+      chosen['month'] as int,
+      chosen['day'] as int,
+    );
+    final now = DateTime.now();
+    int age = now.year - dob.year;
+    if (now.month < dob.month || (now.month == dob.month && now.day < dob.day)) {
+      age--;
+    }
+    return age;
   }
 
   Widget _buildGoogleButton(BuildContext context) {

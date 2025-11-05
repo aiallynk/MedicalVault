@@ -15,7 +15,11 @@ class GoogleAuthHelper {
   static Future<Map<String, dynamic>?> signInWithGoogle() async {
     try {
       final googleSignIn = GoogleSignIn(
-        scopes: ['email', 'profile'],
+        scopes: [
+          'email',
+          'profile',
+          'https://www.googleapis.com/auth/user.birthday.read',
+        ],
         // Uses Firebase-managed clientId from google-services.json (Android)
       );
 
@@ -43,6 +47,7 @@ class GoogleAuthHelper {
 
       return {
         'idToken': auth.idToken!,
+        'accessToken': auth.accessToken,
         'email': account.email,
         'name': account.displayName ?? '',
         'picture': account.photoUrl,

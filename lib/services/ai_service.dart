@@ -80,6 +80,7 @@ class DocumentInfo {
 
 class AIService {
   static final Dio _dio = Dio();
+  static const String model = 'gpt-4o';
 
   /// Send a message to the AI assistant
   static Future<AIResponse> sendMessage({
@@ -101,6 +102,7 @@ class AIService {
         '${ApiService.baseUrl}/ai/ask',
         data: {
           'prompt': prompt,
+          'model': model,
           if (documentId != null) 'documentId': documentId,
         },
         options: Options(

@@ -47,6 +47,9 @@ class _QRPageState extends State<QRPage> {
     });
 
     try {
+      // Best-effort: ask backend to invalidate previous tokens before creating a new one.
+      await ApiService.invalidatePreviousQrTokens();
+
       final token = await ApiService.generateQrToken();
 
       if (token != null) {
