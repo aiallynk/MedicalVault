@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:hello/Notifications/fcm_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http_parser/http_parser.dart';
 import 'Document_model.dart';
 import 'package:dio/dio.dart';
 import 'package:hello/helpers/google_auth_helper.dart';
@@ -15,6 +16,7 @@ class ApiService {
   static const String qrUrl = "$baseUrl/qr";
   static const String aiUrl = "$baseUrl/ai";
   static const String sosUrl = "$baseUrl/sos";
+  static const String lostFoundUrl = "$baseUrl/lost-found";
 
   // ---------------- TOKEN ----------------
   static Future<String?> _getToken() async {
@@ -266,7 +268,7 @@ class ApiService {
         'file': await MultipartFile.fromFile(
           file.path,
           filename: filename,
-          contentType: DioMediaType.parse(mimeType),
+          contentType: MediaType.parse(mimeType),
         ),
         'title': title,
         'category': normalizedCategory,
@@ -347,6 +349,97 @@ class ApiService {
       default:
         return 'application/octet-stream';
     }
+  }
+
+  // ---------------- LOST & FOUND ----------------
+  static Future<String?> uploadLostFoundPhoto(File file) async {
+    try {
+      final token = await _getToken();
+      final dio = Dio();
+      final filename = file.path.split("/").last;
+      final mimeType = _detectMimeType(filename.toLowerCase());
+      final formData = FormData.fromMap({
+        "photo": await MultipartFile.fromFile(
+          file.path,
+          filename: filename,
+          contentType: MediaType.parse(mimeType),
+        ),
+      });
+
+      final response = await dio.post(
+        "$lostFoundUrl/upload-photo",
+        data: formData,
+        options: Options(
+          headers: {
+            if (token != null) HttpHeaders.authorizationHeader: "Bearer $token",
+            "Content-Type": "multipart/form-data",
+          },
+        ),
+      );
+
+      if (response.statusCode == 201) {
+        return response.data?["data"]?["photoUrl"]?.toString();
+      }
+
+      return null;
+    } catch (e) {
+      print("uploadLostFoundPhoto error: $e");
+      return null;
+    }
+  }
+
+  static Map<String, dynamic> _sanitizeBody(Map<String, dynamic> body) {
+    final sanitized = <String, dynamic>{};
+    body.forEach((key, value) {
+      if (value != null) {
+        sanitized[key] = value;
+      }
+    });
+    return sanitized;
+  }
+
+  static Future<Map<String, dynamic>> createLostPersonReport(
+      Map<String, dynamic> body) async {
+    final headers = await _authHeaders();
+    final res = await http.post(
+      Uri.parse("$lostFoundUrl/lost"),
+      headers: {
+        ...headers,
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode(_sanitizeBody(body)),
+    );
+
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createFoundPersonReport(
+      Map<String, dynamic> body) async {
+    final headers = await _authHeaders();
+    final res = await http.post(
+      Uri.parse("$lostFoundUrl/found"),
+      headers: {
+        ...headers,
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode(_sanitizeBody(body)),
+    );
+
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> fetchMyLostReports() async {
+    final headers = await _authHeaders();
+    final res = await http.get(
+      Uri.parse("$lostFoundUrl/my-lost-reports"),
+      headers: headers,
+    );
+
+    if (res.statusCode == 200) {
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      return decoded["data"]?["reports"] as List<dynamic>? ?? [];
+    }
+    return [];
   }
 
   // ---------------- FETCH FILES ----------------
@@ -579,12 +672,17 @@ class ApiService {
   }
 
   // ---------------- SOS ----------------
-  static Future<bool> createSos({
-    String? profileId,
+  static Future<Map<String, dynamic>?> createSos({
+    required double latitude,
+    required double longitude,
+    double? accuracyMeters,
+    String? notes,
+    String? allergies,
     String? name,
-    String? age,
-    String? location,
     String? mobile,
+    String? age,
+    String? locationText,
+    String? profileId,
   }) async {
     try {
       final headers = await _authHeaders();
@@ -592,21 +690,32 @@ class ApiService {
         Uri.parse(sosUrl),
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: jsonEncode({
-          'profileId': profileId ?? '',
-          'name': name ?? '',
-          'age': age ?? '',
-          'location': location ?? '',
-          'mobile': mobile ?? '',
+          'latitude': latitude,
+          'longitude': longitude,
+          if (accuracyMeters != null && accuracyMeters.isFinite)
+            'accuracyMeters': accuracyMeters,
+          if (notes != null && notes.trim().isNotEmpty)
+            'notes': notes.trim(),
+          if (allergies != null && allergies.trim().isNotEmpty)
+            'allergies': allergies.trim(),
+          if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+          if (mobile != null && mobile.trim().isNotEmpty)
+            'mobile': mobile.trim(),
+          if (age != null && age.trim().isNotEmpty) 'age': age.trim(),
+          if (locationText != null && locationText.trim().isNotEmpty)
+            'locationText': locationText.trim(),
+          if (profileId != null && profileId.trim().isNotEmpty)
+            'profileId': profileId.trim(),
         }),
       );
       if (res.statusCode == 201) {
-        return true;
+        return jsonDecode(res.body) as Map<String, dynamic>;
       }
       print('createSos failed: ${res.statusCode} ${res.body}');
-      return false;
+      return null;
     } catch (e) {
       print('createSos error: $e');
-      return false;
+      return null;
     }
   }
 

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
 import 'package:hello/main.dart';
 import '../Notifications/notification_manager.dart';
+import 'package:hello/localization/app_localizations.dart';
 
 // Session Request Model
 class SessionRequest {
@@ -148,6 +149,7 @@ class _RequestsPageState extends State<RequestsPage> {
 
   // Fetch session requests from API
   Future<void> _loadSessionRequests() async {
+    final l10n = context.l10n;
     if (!mounted) return;
     try {
       if (!mounted) return;
@@ -158,7 +160,7 @@ class _RequestsPageState extends State<RequestsPage> {
 
       final token = await _getToken();
       if (token == null) {
-        throw Exception('No authentication token found');
+        throw Exception(l10n.t('common.noToken'));
       }
 
       final response = await http.get(
@@ -183,7 +185,8 @@ class _RequestsPageState extends State<RequestsPage> {
             _notifiedSessions.clear();
           });
         } else {
-          throw Exception(data['message'] ?? 'Failed to load requests');
+          throw Exception(
+              data['message']?.toString() ?? l10n.t('requests.errorTitle'));
         }
       } else {
         throw Exception(
@@ -201,10 +204,11 @@ class _RequestsPageState extends State<RequestsPage> {
 
   // Respond to session request (accept/decline)
   Future<void> _respondToRequest(String sessionId, String status) async {
+    final l10n = context.l10n;
     try {
       final token = await _getToken();
       if (token == null) {
-        throw Exception('No authentication token found');
+        throw Exception(l10n.t('common.noToken'));
       }
 
       final response = await http.post(
@@ -223,7 +227,11 @@ class _RequestsPageState extends State<RequestsPage> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Request ${status} successfully'),
+                content: Text(
+                  status == 'accepted'
+                      ? l10n.t('requests.acceptedSuccess')
+                      : l10n.t('requests.declinedSuccess'),
+                ),
                 backgroundColor: status == 'accepted'
                     ? Theme.of(context).colorScheme.primary
                     : Theme.of(context).colorScheme.error,
@@ -234,7 +242,8 @@ class _RequestsPageState extends State<RequestsPage> {
             _loadSessionRequests();
           }
         } else {
-          throw Exception(data['message'] ?? 'Failed to respond to request');
+          throw Exception(data['message']?.toString() ??
+              l10n.t('requests.respondFailed'));
         }
       } else {
         throw Exception(
@@ -244,7 +253,9 @@ class _RequestsPageState extends State<RequestsPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: ${e.toString()}'),
+            content: Text(
+              l10n.format('common.errorWithMessage', {'message': e.toString()}),
+            ),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
@@ -258,11 +269,12 @@ class _RequestsPageState extends State<RequestsPage> {
     // Ensure status bar is configured
     StatusBarHelper.setStatusBarStyle(context);
 
+    final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          "Doctor Requests",
-          style: TextStyle(fontWeight: FontWeight.bold),
+        title: Text(
+          l10n.t('requests.title'),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -285,6 +297,7 @@ class _RequestsPageState extends State<RequestsPage> {
   }
 
   Widget _buildBody() {
+    final l10n = context.l10n;
     if (isLoading) {
       return Center(
         child: Lottie.asset(
@@ -308,7 +321,7 @@ class _RequestsPageState extends State<RequestsPage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Error loading requests',
+              l10n.t('requests.errorTitle'),
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -330,7 +343,7 @@ class _RequestsPageState extends State<RequestsPage> {
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: _loadSessionRequests,
-              child: const Text('Retry'),
+              child: Text(l10n.t('common.retry')),
             ),
           ],
         ),
@@ -353,7 +366,7 @@ class _RequestsPageState extends State<RequestsPage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'No pending requests',
+              l10n.t('requests.noRequestsTitle'),
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -362,7 +375,7 @@ class _RequestsPageState extends State<RequestsPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'You don\'t have any doctor access requests at the moment.',
+              l10n.t('requests.noRequestsSubtitle'),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 14,
@@ -388,6 +401,7 @@ class _RequestsPageState extends State<RequestsPage> {
   }
 
   Widget _buildRequestCard(SessionRequest request) {
+    final l10n = context.l10n;
     final doctor = request.doctor;
     final timeLeft = request.expiresAt.difference(DateTime.now());
     final isExpired = timeLeft.isNegative;
@@ -474,7 +488,10 @@ class _RequestsPageState extends State<RequestsPage> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      isExpired ? 'Expired' : '${formatTime(timeLeft)} left',
+            isExpired
+                ? l10n.t('requests.expired')
+                : l10n.format('requests.timeRemaining',
+                    {'time': formatTime(timeLeft)}),
                       style: TextStyle(
                         fontSize: 12,
                         color: isExpired
@@ -498,7 +515,8 @@ class _RequestsPageState extends State<RequestsPage> {
                       color: Theme.of(context).textTheme.bodyMedium?.color),
                   const SizedBox(width: 8),
                   Text(
-                    'Experience: ${doctor.experience}',
+                  l10n.format('requests.doctorExperience',
+                      {'experience': doctor.experience!}),
                     style: TextStyle(
                         fontSize: 13,
                         color: Theme.of(context).textTheme.bodyMedium?.color),
@@ -554,7 +572,7 @@ class _RequestsPageState extends State<RequestsPage> {
                         ? null
                         : () => _respondToRequest(request.id, 'accepted'),
                     icon: const Icon(Icons.check, size: 18),
-                    label: const Text("Accept"),
+                    label: Text(l10n.t('requests.accept')),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -572,7 +590,7 @@ class _RequestsPageState extends State<RequestsPage> {
                         ? null
                         : () => _respondToRequest(request.id, 'declined'),
                     icon: const Icon(Icons.close, size: 18),
-                    label: const Text("Decline"),
+                    label: Text(l10n.t('requests.decline')),
                   ),
                 ),
               ],

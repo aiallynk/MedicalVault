@@ -10,6 +10,7 @@ import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'Document_model.dart';
 import 'api_service.dart';
 import 'main.dart';
+import 'localization/app_localizations.dart';
 
 class CategoryVaultPage extends StatefulWidget {
   final String category;
@@ -52,6 +53,61 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     'Name A-Z',
     'Name Z-A',
   ];
+
+  String _localizedCategoryLabel(
+      String value, AppLocalizations l10n) {
+    switch (value.toLowerCase()) {
+      case 'reports':
+      case 'report':
+        return l10n.t('documents.category.reports');
+      case 'prescriptions':
+      case 'prescription':
+        return l10n.t('documents.category.prescriptions');
+      case 'bills':
+      case 'bill':
+        return l10n.t('documents.category.bills');
+      case 'insurance':
+      case 'insurance details':
+        return l10n.t('documents.category.insurance');
+      case 'all':
+        return l10n.t('myVault.category.all');
+      default:
+        return value;
+    }
+  }
+
+  String _localizedTimeFilterLabel(
+      String value, AppLocalizations l10n) {
+    switch (value) {
+      case 'All':
+        return l10n.t('myVault.timeFilter.all');
+      case '1 Month':
+        return l10n.t('myVault.timeFilter.1month');
+      case '3 Months':
+        return l10n.t('myVault.timeFilter.3months');
+      case '6 Months':
+        return l10n.t('myVault.timeFilter.6months');
+      case '12 Months':
+        return l10n.t('myVault.timeFilter.12months');
+      default:
+        return value;
+    }
+  }
+
+  String _localizedSortLabel(String value, AppLocalizations l10n) {
+    switch (value) {
+      case 'Newest First':
+        return l10n.t('myVault.sort.newestFirst');
+      case 'Oldest First':
+        return l10n.t('myVault.sort.oldestFirst');
+      case 'Name A-Z':
+        return l10n.t('myVault.sort.nameAZ');
+      case 'Name Z-A':
+        return l10n.t('myVault.sort.nameZA');
+      default:
+        return value;
+    }
+  }
 
   @override
   void initState() {
@@ -217,9 +273,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
 
   // ---------------- OPEN FILE ----------------
   Future<void> _openFile(Document document) async {
+    final l10n = context.l10n;
     if (document.id == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Invalid document")),
+        SnackBar(content: Text(l10n.t('common.invalidDocument'))),
       );
       return;
     }
@@ -254,7 +311,11 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     } catch (e) {
       debugPrint("❌ Preview error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Could not open file: $e")),
+        SnackBar(
+          content: Text(
+            l10n.format('common.couldNotOpenFile', {'error': e.toString()}),
+          ),
+        ),
       );
     }
   }
@@ -263,7 +324,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     try {
       final token = await ApiService.getToken();
       if (token == null) {
-        throw Exception('No authentication token available');
+        throw Exception(context.l10n.t('common.noToken'));
       }
 
       final dio = Dio();
@@ -278,16 +339,24 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
         return response.data['signedUrl'];
       } else {
         throw Exception(
-            'Failed to get preview URL: ${response.data['message'] ?? 'Unknown error'}');
+          context.l10n.format('documentDetail.previewUrlFailed', {
+            'message': response.data['message']?.toString() ??
+                context.l10n.t('common.unknown')
+          }),
+        );
       }
     } catch (e) {
       debugPrint("❌ Error getting preview URL: $e");
-      throw Exception('Failed to get preview URL: $e');
+      throw Exception(
+        context.l10n
+            .format('documentDetail.previewUrlFailed', {'message': '$e'}),
+      );
     }
   }
 
   // ---------------- DOWNLOAD & OPEN LOCALLY ----------------
   Future<void> _downloadAndOpenFile(Document document) async {
+    final l10n = context.l10n;
     if (document.id == null) return;
     try {
       final dir = await getTemporaryDirectory();
@@ -309,16 +378,21 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     } catch (e) {
       debugPrint("❌ Download and open error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Download failed: $e")),
+        SnackBar(
+          content: Text(
+            l10n.format('common.downloadFailed', {'error': e.toString()}),
+          ),
+        ),
       );
     }
   }
 
   // ---------------- DOWNLOAD ONLY ----------------
   Future<void> _downloadFile(Document document) async {
+    final l10n = context.l10n;
     if (document.id == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Invalid document ID")),
+        SnackBar(content: Text(l10n.t('common.invalidDocumentId'))),
       );
       return;
     }
@@ -349,12 +423,21 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
       await dio.download(downloadUrl, filePath, options: options);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("✅ File downloaded: $filePath")),
+        SnackBar(
+          content: Text(
+            l10n.format('documentDetail.downloadSuccessPath',
+                {'path': filePath}),
+          ),
+        ),
       );
     } catch (e) {
       debugPrint("❌ Download error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Download failed: $e")),
+        SnackBar(
+          content: Text(
+            l10n.format('common.downloadFailed', {'error': e.toString()}),
+          ),
+        ),
       );
     }
   }
@@ -363,7 +446,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
   Future<void> _deleteFile(Document document) async {
     if (document.id == null || document.id!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Invalid document id")),
+        SnackBar(content: Text(context.l10n.t('common.invalidDocumentId'))),
       );
       return;
     }
@@ -378,7 +461,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
           filteredFiles.remove(document);
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ Document deleted")),
+          SnackBar(content: Text(context.l10n.t('common.deleteSuccess'))),
         );
       } else {
         throw Exception("Server rejected delete for id=${document.id}");
@@ -386,7 +469,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     } catch (e) {
       debugPrint("❌ Delete error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("❌ Failed to delete document: $e")),
+        SnackBar(
+          content: Text(context.l10n
+              .format('common.deleteFailedWithMessage', {'error': '$e'})),
+        ),
       );
     }
   }
@@ -424,9 +510,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     // Ensure status bar is configured
     StatusBarHelper.setStatusBarStyle(context);
 
+    final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.category),
+        title: Text(_localizedCategoryLabel(widget.category, l10n)),
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadFiles),
         ],
@@ -452,7 +539,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                           child: DropdownButtonFormField<String>(
                             value: selectedTimeFilter,
                             decoration: InputDecoration(
-                              labelText: 'Time Filter',
+                              labelText: l10n.t('myVault.timeFilterTitle'),
                               contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 12,
                                 vertical: 8,
@@ -477,8 +564,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                             items: timeFilterOptions.map((String option) {
                               return DropdownMenuItem<String>(
                                 value: option,
-                                child: Text(option,
-                                    style: TextStyle(fontSize: 13)),
+                                child: Text(
+                                  _localizedTimeFilterLabel(option, l10n),
+                                  style: const TextStyle(fontSize: 13),
+                                ),
                               );
                             }).toList(),
                             onChanged: _onFilterChanged,
@@ -490,7 +579,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                           child: DropdownButtonFormField<String>(
                             value: _selectedSort,
                             decoration: InputDecoration(
-                              labelText: 'Sort By',
+                              labelText: l10n.t('myVault.sortTitle'),
                               contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 12,
                                 vertical: 8,
@@ -515,8 +604,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                             items: sortOptions.map((String option) {
                               return DropdownMenuItem<String>(
                                 value: option,
-                                child: Text(option,
-                                    style: TextStyle(fontSize: 13)),
+                                child: Text(
+                                  _localizedSortLabel(option, l10n),
+                                  style: const TextStyle(fontSize: 13),
+                                ),
                               );
                             }).toList(),
                             onChanged: _onSortChanged,
@@ -553,7 +644,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                     child: TextField(
                       controller: _searchController,
                       decoration: InputDecoration(
-                        hintText: 'Search by name',
+                      hintText: l10n.t('categoryVault.searchHint'),
                         prefixIcon: const Icon(Icons.search),
                         fillColor: Theme.of(context).cardColor,
                         filled: true,
@@ -595,8 +686,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                                 const SizedBox(height: 16),
                                 Text(
                                   files.isEmpty
-                                      ? "No documents uploaded yet"
-                                      : "No documents found for selected time period",
+                                      ? l10n.t(
+                                          'categoryVault.noDocsUploadedTitle')
+                                      : l10n.t(
+                                          'categoryVault.noDocsFilteredTitle'),
                                   style: Theme.of(context)
                                       .textTheme
                                       .bodyLarge
@@ -606,8 +699,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                                 ),
                                 Text(
                                   files.isEmpty
-                                      ? "Upload documents to see them here"
-                                      : "Try selecting a different time filter",
+                                      ? l10n.t(
+                                          'categoryVault.noDocsUploadedSubtitle')
+                                      : l10n.t(
+                                          'categoryVault.noDocsFilteredSubtitle'),
                                   style: Theme.of(context)
                                       .textTheme
                                       .bodyMedium
@@ -621,6 +716,11 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                             itemCount: filteredFiles.length,
                             itemBuilder: (context, index) {
                               final file = filteredFiles[index];
+                              final title = file.title ??
+                                  file.fileName ??
+                                  l10n.t('documentDetail.untitled');
+                              final uploadedLabel =
+                                  '${l10n.t('documents.uploadedOnShort')} ${file.date?.isNotEmpty == true ? file.date : l10n.t('common.unknown')}';
                               return Card(
                                 margin: const EdgeInsets.symmetric(
                                     horizontal: 12, vertical: 8),
@@ -628,9 +728,9 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                                     borderRadius: BorderRadius.circular(12)),
                                 child: ListTile(
                                   leading: _buildThumbnail(file),
-                                  title: Text(file.title ?? "Untitled"),
+                                  title: Text(title),
                                   subtitle: Text(
-                                    'Uploaded: ${file.date ?? ''}',
+                                    uploadedLabel,
                                     style:
                                         Theme.of(context).textTheme.bodySmall,
                                   ),
@@ -641,19 +741,19 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                                         icon: const Icon(Icons.remove_red_eye,
                                             color: Colors.blue),
                                         onPressed: () => _openFile(file),
-                                        tooltip: "Preview",
+                                        tooltip: l10n.t('common.preview'),
                                       ),
                                       IconButton(
                                         icon: const Icon(Icons.download,
                                             color: Colors.green),
                                         onPressed: () => _downloadFile(file),
-                                        tooltip: "Download",
+                                        tooltip: l10n.t('common.download'),
                                       ),
                                       IconButton(
                                         icon: const Icon(Icons.delete,
                                             color: Colors.red),
                                         onPressed: () => _deleteFile(file),
-                                        tooltip: "Delete",
+                                        tooltip: l10n.t('common.delete'),
                                       ),
                                     ],
                                   ),
@@ -712,7 +812,8 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _error = e.toString();
+        _error = context.l10n
+            .format('common.errorWithMessage', {'message': e.toString()});
       });
     }
   }
@@ -730,8 +831,8 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
       _loadPdf();
     } else {
       setState(() {
-        _error =
-            'Failed to load PDF after $_maxRetries attempts. Please check your internet connection and try again.';
+        _error = context.l10n
+            .format('pdf.failAfterAttempts', {'max': '$_maxRetries'});
       });
     }
   }
@@ -766,6 +867,7 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
   }
 
   Widget _buildBody() {
+    final l10n = context.l10n;
     if (_error != null) {
       return Center(
         child: Column(
@@ -778,7 +880,7 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Failed to load PDF',
+              l10n.t('pdf.failedTitle'),
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
@@ -793,9 +895,14 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
             ElevatedButton.icon(
               onPressed: _retryLoadPdf,
               icon: const Icon(Icons.refresh),
-              label: Text(_retryCount > 0
-                  ? 'Retry (${_retryCount}/$_maxRetries)'
-                  : 'Retry'),
+              label: Text(
+                _retryCount > 0
+                    ? l10n.format('pdf.retryWithCount', {
+                        'current': '$_retryCount',
+                        'total': '$_maxRetries'
+                      })
+                    : l10n.t('common.retry'),
+              ),
             ),
           ],
         ),
@@ -811,7 +918,8 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
           onDocumentLoadFailed: (PdfDocumentLoadFailedDetails details) {
             setState(() {
               _isLoading = false;
-              _error = details.error;
+              _error = context.l10n.format('common.errorWithMessage',
+                  {'message': details.error});
             });
             // ✅ Fallback: open externally if viewer fails
             OpenFile.open(widget.url);
@@ -825,15 +933,15 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
         if (_isLoading)
           Container(
             color: Colors.white.withOpacity(0.8),
-            child: const Center(
+            child: Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
                   Text(
-                    'Loading PDF...',
-                    style: TextStyle(
+                    context.l10n.t('pdf.loading'),
+                    style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
                     ),
@@ -870,6 +978,7 @@ class _ImagePreviewPageState extends State<ImagePreviewPage> {
   }
 
   Future<void> _loadAuthenticatedImage() async {
+    final l10n = context.l10n;
     try {
       // Check if the URL is a signed URL (contains query parameters)
       // Signed URLs don't need additional authentication
@@ -886,7 +995,7 @@ class _ImagePreviewPageState extends State<ImagePreviewPage> {
         final token = await ApiService.getToken();
         if (token == null) {
           setState(() {
-            _error = 'No authentication token available';
+            _error = l10n.t('common.noToken');
             _isLoading = false;
           });
           return;
@@ -915,14 +1024,15 @@ class _ImagePreviewPageState extends State<ImagePreviewPage> {
           });
         } else {
           setState(() {
-            _error = 'Failed to download image';
+            _error = l10n.t('image.failedTitle');
             _isLoading = false;
           });
         }
       }
     } catch (e) {
       setState(() {
-        _error = 'Error loading image: $e';
+        _error = context.l10n
+            .format('image.errorLoading', {'error': e.toString()});
         _isLoading = false;
       });
     }
@@ -930,6 +1040,7 @@ class _ImagePreviewPageState extends State<ImagePreviewPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
       body: Center(
@@ -945,7 +1056,7 @@ class _ImagePreviewPageState extends State<ImagePreviewPage> {
                       const SizedBox(height: 16),
                       ElevatedButton(
                         onPressed: _loadAuthenticatedImage,
-                        child: const Text('Retry'),
+                        child: Text(l10n.t('common.retry')),
                       ),
                     ],
                   )
@@ -956,15 +1067,17 @@ class _ImagePreviewPageState extends State<ImagePreviewPage> {
                                 _imageDataUrl!,
                                 fit: BoxFit.contain,
                                 errorBuilder: (context, error, stackTrace) {
-                                  return const Center(
+                                  return Center(
                                     child: Column(
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
                                       children: [
                                         Icon(Icons.error,
                                             size: 64, color: Colors.red),
-                                        SizedBox(height: 16),
-                                        Text('Failed to load image'),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          context.l10n.t('image.failedTitle'),
+                                        ),
                                       ],
                                     ),
                                   );
@@ -974,22 +1087,24 @@ class _ImagePreviewPageState extends State<ImagePreviewPage> {
                                 File(_imageDataUrl!),
                                 fit: BoxFit.contain,
                                 errorBuilder: (context, error, stackTrace) {
-                                  return const Center(
+                                  return Center(
                                     child: Column(
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
                                       children: [
                                         Icon(Icons.error,
                                             size: 64, color: Colors.red),
-                                        SizedBox(height: 16),
-                                        Text('Failed to load image'),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          context.l10n.t('image.failedTitle'),
+                                        ),
                                       ],
                                     ),
                                   );
                                 },
                               )),
                       )
-                    : const Text('No image data available'),
+                    : Text(l10n.t('image.noData')),
       ),
     );
   }

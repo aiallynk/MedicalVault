@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:hello/firebase_options.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -12,6 +13,8 @@ import 'Login_Signup/loginScreen.dart';
 import 'Login_Signup/VerifyEmailPage.dart';
 import 'Notifications/fcm_service.dart';
 import 'Notifications/global_notification_handler.dart';
+import 'localization/app_localizations.dart';
+import 'providers/language_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,6 +34,7 @@ void main() async {
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
   final themeMode = await ThemeProvider.loadThemeMode();
+  final initialLocale = await LanguageProvider.loadLocale();
 
   // Set initial status bar style
   if (themeMode == ThemeMode.dark) {
@@ -53,8 +57,11 @@ void main() async {
   }
 
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => ThemeProvider(themeMode),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider(themeMode)),
+        ChangeNotifierProvider(create: (_) => LanguageProvider(initialLocale)),
+      ],
       child: const MyApp(),
     ),
   );
@@ -65,9 +72,8 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ThemeProvider>(
-      builder: (context, themeProvider, child) {
-        // Set status bar style based on current theme
+    return Consumer2<ThemeProvider, LanguageProvider>(
+      builder: (context, themeProvider, languageProvider, child) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _setStatusBarStyle(themeProvider.themeMode);
         });
@@ -78,6 +84,23 @@ class MyApp extends StatelessWidget {
           theme: AppThemes.lightTheme,
           darkTheme: AppThemes.darkTheme,
           themeMode: themeProvider.themeMode,
+          locale: languageProvider.locale,
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          localeResolutionCallback: (locale, supportedLocales) {
+            if (locale == null) return supportedLocales.first;
+            for (final supported in supportedLocales) {
+              if (supported.languageCode == locale.languageCode) {
+                return supported;
+              }
+            }
+            return supportedLocales.first;
+          },
           home: const NotificationWrapper(),
         );
       },

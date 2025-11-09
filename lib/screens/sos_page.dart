@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hello/api_service.dart';
+import 'package:hello/models/user_profile.dart';
+import 'package:hello/localization/app_localizations.dart';
 
 class SosPage extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -22,7 +24,14 @@ class _SosPageState extends State<SosPage> {
   late TextEditingController _mobileController;
   late TextEditingController _locationController;
   late TextEditingController _timeController;
+  late TextEditingController _notesController;
   Timer? _timer;
+  double? _currentLatitude;
+  double? _currentLongitude;
+  double? _currentAccuracyMeters;
+  bool _isSending = false;
+  UserProfile? _currentUser;
+  String? _allergies;
 
   @override
   void initState() {
@@ -36,12 +45,16 @@ class _SosPageState extends State<SosPage> {
         text: (widget.userData['mobile'] ?? '').toString());
     _locationController = TextEditingController(text: '');
     _timeController = TextEditingController(text: _formatNow());
+    _notesController = TextEditingController();
+    _currentUser = UserProfile.fromJson(widget.userData);
+    _allergies = _currentUser?.allergies;
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       _timeController.text = _formatNow();
       setState(() {});
     });
     _loadProfiles();
+    _refreshCurrentUser();
     _tryUpdateLocation();
   }
 
@@ -53,6 +66,7 @@ class _SosPageState extends State<SosPage> {
     _mobileController.dispose();
     _locationController.dispose();
     _timeController.dispose();
+    _notesController.dispose();
     super.dispose();
   }
 
@@ -111,6 +125,15 @@ class _SosPageState extends State<SosPage> {
     return age;
   }
 
+  String _localizedProfileName(Map<String, dynamic> profile,
+      AppLocalizations l10n) {
+    final raw = profile['name']?.toString() ?? '';
+    if (raw.isEmpty) return l10n.t('sos.profileFallback');
+    if (raw == 'My Profile') return l10n.t('sos.myProfile');
+    if (raw == 'Profile') return l10n.t('sos.profileFallback');
+    return raw;
+  }
+
   Future<void> _loadProfiles() async {
     try {
       final linked = await ApiService.getLinkedProfiles();
@@ -145,6 +168,22 @@ class _SosPageState extends State<SosPage> {
     }
   }
 
+  Future<void> _refreshCurrentUser() async {
+    try {
+      final profile = await ApiService.me();
+      if (!mounted) return;
+      if (profile is Map<String, dynamic>) {
+        final parsed = UserProfile.fromJson(profile);
+        setState(() {
+          _currentUser = parsed;
+          _allergies = parsed.allergies;
+        });
+      }
+    } catch (_) {
+      // Silent failure – keep whatever data is already cached
+    }
+  }
+
   Future<void> _applyProfileSelection(String id) async {
     try {
       // If it's current user
@@ -155,6 +194,9 @@ class _SosPageState extends State<SosPage> {
         final computed = _computeAgeFromDob(widget.userData['dateOfBirth']);
         _ageController.text = computed ?? '';
         _mobileController.text = (widget.userData['mobile'] ?? '').toString();
+        final rawAllergies =
+            _currentUser?.allergies ?? widget.userData['allergies'];
+        _allergies = rawAllergies == null ? null : rawAllergies.toString();
         setState(() {});
         return;
       }
@@ -174,6 +216,8 @@ class _SosPageState extends State<SosPage> {
       final computed = _computeAgeFromDob(dob);
       _ageController.text = computed ?? '';
       _mobileController.text = (user?['mobile'] ?? '').toString();
+      final rawAllergies = user?['allergies'];
+      _allergies = rawAllergies == null ? null : rawAllergies.toString();
       setState(() {});
     } catch (_) {
       // On error, leave age empty so it can be entered manually
@@ -211,24 +255,72 @@ class _SosPageState extends State<SosPage> {
         pos = await Geolocator.getLastKnownPosition();
       }
       if (pos != null) {
-        final lat = pos.latitude.toStringAsFixed(6);
-        final lon = pos.longitude.toStringAsFixed(6);
-        _locationController.text = '$lat,$lon';
-        if (mounted) setState(() {});
+        final lat = pos.latitude;
+        final lon = pos.longitude;
+        final latStr = lat.toStringAsFixed(6);
+        final lonStr = lon.toStringAsFixed(6);
+        final accuracy = pos.accuracy;
+        if (!mounted) return;
+        setState(() {
+          _currentLatitude = lat;
+          _currentLongitude = lon;
+          _currentAccuracyMeters =
+              accuracy.isFinite ? accuracy : null;
+          _locationController.text = '$latStr,$lonStr';
+        });
       }
     } catch (_) {
       // ignore errors; keep empty
     }
   }
 
+  Widget _buildAllergiesInfo(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    final allergiesText = (_allergies?.trim().isNotEmpty ?? false)
+        ? _allergies!.trim()
+        : l10n.t('sos.allergiesNone');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.t('sos.allergiesTitle'),
+          style:
+              theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: theme.dividerColor.withOpacity(0.4),
+            ),
+            color: theme.brightness == Brightness.dark
+                ? theme.colorScheme.surfaceVariant.withOpacity(0.25)
+                : theme.colorScheme.surfaceVariant.withOpacity(0.6),
+          ),
+          child: Text(
+            allergiesText,
+            style: theme.textTheme.bodyMedium,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final l10n = context.l10n;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Emergency SOS'),
+        title: Text(l10n.t('sos.title')),
         centerTitle: true,
       ),
       body: SafeArea(
@@ -237,7 +329,7 @@ class _SosPageState extends State<SosPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Select Profile',
+              Text(l10n.t('sos.selectProfile'),
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
@@ -247,7 +339,7 @@ class _SosPageState extends State<SosPage> {
                 items: _profiles
                     .map((p) => DropdownMenuItem<String>(
                           value: p['id'].toString(),
-                          child: Text(p['name'].toString()),
+                          child: Text(_localizedProfileName(p, l10n)),
                         ))
                     .toList(),
                 onChanged: (v) async {
@@ -257,7 +349,7 @@ class _SosPageState extends State<SosPage> {
                 },
               ),
               const SizedBox(height: 16),
-              Text('Full Name',
+              Text(l10n.t('sos.fullName'),
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
@@ -266,7 +358,7 @@ class _SosPageState extends State<SosPage> {
                 decoration: _inputDecoration(isDark),
               ),
               const SizedBox(height: 16),
-              Text('Mobile Number',
+              Text(l10n.t('sos.mobileNumber'),
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
@@ -274,10 +366,10 @@ class _SosPageState extends State<SosPage> {
                 controller: _mobileController,
                 keyboardType: TextInputType.phone,
                 decoration: _inputDecoration(isDark)
-                    .copyWith(hintText: 'Mobile (auto-filled if available)'),
+                    .copyWith(hintText: l10n.t('sos.mobileHint')),
               ),
               const SizedBox(height: 16),
-              Text('Age',
+              Text(l10n.t('sos.age'),
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
@@ -287,7 +379,7 @@ class _SosPageState extends State<SosPage> {
                 decoration: _inputDecoration(isDark),
               ),
               const SizedBox(height: 16),
-              Text('Current Location',
+              Text(l10n.t('sos.currentLocation'),
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
@@ -295,16 +387,30 @@ class _SosPageState extends State<SosPage> {
                 controller: _locationController,
                 readOnly: true,
                 decoration: _inputDecoration(isDark).copyWith(
-                  hintText: 'Location (empty)',
+                  hintText: l10n.t('sos.locationHint'),
                   suffixIcon: IconButton(
                     onPressed: _tryUpdateLocation,
-                    tooltip: 'Get location',
+                    tooltip: l10n.t('sos.getLocation'),
                     icon: const Icon(Icons.gps_fixed),
                   ),
                 ),
               ),
+              if (_currentAccuracyMeters != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    l10n.format('sos.accuracyLabel', {
+                      'meters': _currentAccuracyMeters!
+                          .toStringAsFixed(0),
+                    }),
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.hintColor),
+                  ),
+                ),
               const SizedBox(height: 16),
-              Text('Current Time',
+              _buildAllergiesInfo(context),
+              const SizedBox(height: 16),
+              Text(l10n.t('sos.currentTime'),
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
@@ -312,6 +418,18 @@ class _SosPageState extends State<SosPage> {
                 controller: _timeController,
                 readOnly: true,
                 decoration: _inputDecoration(isDark),
+              ),
+              const SizedBox(height: 16),
+              Text(l10n.t('sos.notesTitle'),
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _notesController,
+                maxLines: 3,
+                decoration: _inputDecoration(isDark).copyWith(
+                  hintText: l10n.t('sos.notesHint'),
+                ),
               ),
               const SizedBox(height: 8),
             ],
@@ -334,33 +452,90 @@ class _SosPageState extends State<SosPage> {
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                   ),
-                  onPressed: () async {
-                    final ok = await ApiService.createSos(
-                      profileId: _selectedProfileId,
-                      name: _nameController.text.trim(),
-                      age: _ageController.text.trim().isEmpty
-                          ? ''
-                          : _ageController.text.trim(),
-                      location: _locationController.text.trim(),
-                      mobile: _mobileController.text.trim(),
-                    );
-                    if (!mounted) return;
-                    if (ok) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('SOS sent')),
-                      );
-                      // Return to Dashboard after successful SOS
-                      Navigator.of(context).pop();
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Failed to send SOS')),
-                      );
-                    }
-                  },
-                  child: const Text(
-                    'Send SOS',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
+                  onPressed: _isSending
+                      ? null
+                      : () async {
+                          final lat = _currentLatitude;
+                          final lon = _currentLongitude;
+
+                          if (lat == null || lon == null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  l10n.t('sos.locationMissing'),
+                                ),
+                              ),
+                            );
+                            await _tryUpdateLocation();
+                            return;
+                          }
+
+                          setState(() => _isSending = true);
+                          final notes = _notesController.text.trim();
+                          final response = await ApiService.createSos(
+                            latitude: lat,
+                            longitude: lon,
+                            accuracyMeters: _currentAccuracyMeters,
+                            notes: notes.isEmpty ? null : notes,
+                            allergies: (_allergies?.trim().isNotEmpty ?? false)
+                                ? _allergies
+                                : null,
+                            name: _nameController.text.trim().isNotEmpty
+                                ? _nameController.text.trim()
+                                : null,
+                            mobile: _mobileController.text.trim().isNotEmpty
+                                ? _mobileController.text.trim()
+                                : null,
+                            age: _ageController.text.trim().isNotEmpty
+                                ? _ageController.text.trim()
+                                : null,
+                            locationText:
+                                _locationController.text.trim().isNotEmpty
+                                    ? _locationController.text.trim()
+                                    : null,
+                            profileId: _selectedProfileId,
+                          );
+
+                          if (!mounted) {
+                            return;
+                          }
+
+                          setState(() => _isSending = false);
+
+                          if (response != null && response['success'] == true) {
+                            final bool massTriggered =
+                                response['massIncidentTriggered'] == true;
+                            final message = massTriggered
+                                ? l10n.t('sos.sendSuccessMass')
+                                : l10n.t('sos.sendSuccess');
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(message)),
+                            );
+                            Navigator.of(context).pop();
+                          } else {
+                            final error =
+                                response?['message']?.toString() ??
+                                    l10n.t('sos.sendFailed');
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(error)),
+                            );
+                          }
+                        },
+                  child: _isSending
+                      ? const SizedBox(
+                          height: 22,
+                          width: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : Text(
+                          l10n.t('sos.sendButton'),
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
                 ),
               ),
               const SizedBox(height: 8),

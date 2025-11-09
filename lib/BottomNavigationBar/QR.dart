@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import 'package:hello/HowQrAcessWorks.dart';
 import 'package:hello/api_service.dart';
 import 'package:hello/main.dart';
+import 'package:hello/localization/app_localizations.dart';
 
 /// 👉 Backend base URL (no trailing slash)
 const String kApiBase = 'https://backend-medicalvault.onrender.com';
@@ -65,7 +66,8 @@ class _QRPageState extends State<QRPage> {
       if (!mounted) return;
       setState(() {
         _qrData = "DoctorAccess:${_uuid.v4()}"; // fallback
-        _lastError = e.toString();
+        _lastError = context.l10n
+            .format('qr.generateError', {'error': e.toString()});
         _loading = false;
       });
     }
@@ -80,23 +82,32 @@ class _QRPageState extends State<QRPage> {
       final pngBytes = byteData!.buffer.asUint8List();
       final xfile =
           XFile.fromData(pngBytes, name: 'qr_code.png', mimeType: 'image/png');
-      await Share.shareXFiles([xfile], text: 'Share this QR code');
+      await Share.shareXFiles(
+        [xfile],
+        text: context.l10n.t('qr.shareText'),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error sharing QR: $e')),
+        SnackBar(
+          content: Text(
+            context.l10n
+                .format('qr.shareError', {'error': e.toString()}),
+          ),
+        ),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text(
-          'QR Code',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        title: Text(
+          l10n.t('qr.title'),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         elevation: 0,
@@ -163,7 +174,7 @@ class _QRPageState extends State<QRPage> {
 
               const SizedBox(height: 24),
               Text(
-                "Doctor will scan this QR to request access",
+                l10n.t('qr.instructions'),
                 style: Theme.of(context)
                     .textTheme
                     .bodyMedium
@@ -197,7 +208,7 @@ class _QRPageState extends State<QRPage> {
                           ),
                         ),
                         icon: const Icon(Icons.share, color: Colors.white),
-                        label: const Text("Share QR"),
+                        label: Text(l10n.t('qr.share')),
                       ),
                     ),
 
@@ -224,7 +235,7 @@ class _QRPageState extends State<QRPage> {
                           ),
                         ),
                         icon: const Icon(Icons.refresh, color: Colors.white),
-                        label: const Text("Regenerate QR"),
+                        label: Text(l10n.t('qr.regenerate')),
                       ),
                     ),
 
@@ -267,9 +278,9 @@ class _QRPageState extends State<QRPage> {
                                 builder: (context) => const QrAccessWorks()),
                           );
                         },
-                        child: const Text(
-                          "How QR access works?",
-                          style: TextStyle(
+                        child: Text(
+                          l10n.t('qr.accessHelp'),
+                          style: const TextStyle(
                             fontSize: 15,
                             color: Colors.white,
                             decoration: TextDecoration.underline,

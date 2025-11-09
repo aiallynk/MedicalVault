@@ -16,6 +16,8 @@ import 'package:hello/api_service.dart';
 import 'package:hello/BottomNavigationBar/dashboard1.dart';
 import 'package:hello/Notifications/notification_settings_service.dart';
 import 'package:hello/Login_Signup/logout_service.dart';
+import 'package:hello/localization/app_localizations.dart';
+import 'package:hello/providers/language_provider.dart';
 
 class SettingsPage extends StatefulWidget {
   final Map<String, dynamic> userData; // 👈 full user data map
@@ -107,17 +109,28 @@ class _SettingsPageState extends State<SettingsPage> {
       });
 
       // Show confirmation message
+      final l10n = context.l10n;
+      final label = switch (type) {
+        'sessionExpiring' => l10n.auto('Session Expiring'),
+        'reminders' => l10n.auto('Reminders'),
+        'system' => l10n.auto('System'),
+        _ => type,
+      };
+      final statusText = value
+          ? l10n.t('notifications.status.enabled')
+          : l10n.t('notifications.status.disabled');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              "${type == 'sessionExpiring' ? 'Session Expiring' : type == 'reminders' ? 'Reminders' : 'System'} notifications ${value ? 'enabled' : 'disabled'}"),
+          content: Text('$label $statusText'),
           duration: const Duration(seconds: 2),
         ),
       );
     } catch (e) {
       print("Error updating notification setting: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to update notification setting: $e")),
+        SnackBar(
+            content: Text(
+                "${context.l10n.t('notifications.status.updateFailure')} $e")),
       );
     }
   }
@@ -127,16 +140,16 @@ class _SettingsPageState extends State<SettingsPage> {
     final shouldLogout = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+        title: Text(context.l10n.auto('Logout')),
+        content: Text(context.l10n.t('settings.logout.confirm')),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(context.l10n.auto('Cancel')),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Logout'),
+            child: Text(context.l10n.auto('Logout')),
           ),
         ],
       ),
@@ -168,8 +181,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Logged out successfully'),
+          SnackBar(
+            content: Text(context.l10n.t('settings.logout.success')),
             backgroundColor: Colors.green,
           ),
         );
@@ -180,7 +193,10 @@ class _SettingsPageState extends State<SettingsPage> {
         // Show error message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Logout failed: $e'),
+            content: Text(
+              context.l10n
+                  .format('settings.logout.failure', {'error': e.toString()}),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -192,6 +208,9 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     // Ensure status bar is configured
     StatusBarHelper.setStatusBarStyle(context);
+
+    final l10n = context.l10n;
+    final languageProvider = context.watch<LanguageProvider>();
 
     // 👇 safe values nikale
     final String name = widget.userData["name"]?.toString() ?? "Your Name";
@@ -206,11 +225,11 @@ class _SettingsPageState extends State<SettingsPage> {
         child: ListView(
           padding: const EdgeInsets.all(10),
           children: [
-            const SectionTitle("My Profile"),
+            SectionTitle(l10n.auto('My Profile')),
             _buildTile(
               Icons.person,
-              "Personal Details",
-              "View and edit your personal details",
+              l10n.auto('Personal Details'),
+              l10n.auto('View and edit your personal details'),
               ProfileName(
                 userData: {
                   "name": name,
@@ -232,16 +251,19 @@ class _SettingsPageState extends State<SettingsPage> {
                 },
               ),
             ),
-            const SectionTitle("Switch Profile"),
+            SectionTitle(l10n.auto('Switch Profile')),
             _buildSwitchProfileSection(),
-            const SectionTitle("Security"),
-            _buildTile(Icons.lock, "Password", "", ChangePasswordScreen()),
-            const SectionTitle("QR & Sharing"),
-            _buildTile(Icons.qr_code, "Regenerate QR", "", QRPage()),
-            _buildTile(Icons.share, "Sharing Controls", "", QRPage()),
-            const SectionTitle("Switch Themes"),
+            SectionTitle(l10n.auto('Security')),
+            _buildTile(
+                Icons.lock, l10n.auto('Password'), '', ChangePasswordScreen()),
+            SectionTitle(l10n.auto('QR & Sharing')),
+            _buildTile(Icons.qr_code, l10n.auto('Regenerate QR'), "", QRPage()),
+            _buildTile(Icons.share, l10n.auto('Sharing Controls'), "", QRPage()),
+            SectionTitle(l10n.auto('Language')),
+            _buildLanguageSection(languageProvider, l10n),
+            SectionTitle(l10n.auto('Switch Themes')),
             _buildDarkModeRow(context),
-            const SectionTitle("Notifications"),
+            SectionTitle(l10n.auto('Notifications')),
             if (isLoadingSettings)
               const Padding(
                 padding: EdgeInsets.all(16.0),
@@ -249,40 +271,43 @@ class _SettingsPageState extends State<SettingsPage> {
               )
             else ...[
               _buildNotificationSwitchTile(
-                "Session Expiring",
-                "Get notified when your session with doctor is about to expire (last 30 seconds)",
+                l10n.auto('Session Expiring'),
+                l10n.auto(
+                    'Get notified when your session with doctor is about to expire (last 30 seconds)'),
                 sessionExpiring,
                 Icons.timer,
                 Colors.orange,
                 (val) => _updateNotificationSetting('sessionExpiring', val),
               ),
               _buildNotificationSwitchTile(
-                "Reminders",
-                "Receive appointment reminders and other important notifications",
+                l10n.auto('Reminders'),
+                l10n.auto(
+                    'Receive appointment reminders and other important notifications'),
                 reminders,
                 Icons.notifications,
                 Colors.blue,
                 (val) => _updateNotificationSetting('reminders', val),
               ),
               _buildNotificationSwitchTile(
-                "System",
-                "Get system updates, advertisements, and instruction notifications",
+                l10n.auto('System'),
+                l10n.auto(
+                    'Get system updates, advertisements, and instruction notifications'),
                 systemNotifs,
                 Icons.info,
                 Colors.green,
                 (val) => _updateNotificationSetting('system', val),
               ),
             ],
-            const SectionTitle("Privacy & Terms"),
+            SectionTitle(l10n.auto('Privacy & Terms')),
             _buildTile(
-                Icons.privacy_tip, "Privacy Policy", "", PrivacyPolicy()),
+                Icons.privacy_tip, l10n.auto('Privacy Policy'), "", PrivacyPolicy()),
             _buildTile(
-                Icons.description, "Terms of Service", "", TermsOfService()),
-            const SectionTitle("Help & Support"),
-            _buildTile(Icons.help_outline, "FAQs", "", FAQs()),
-            _buildTile(Icons.support_agent, "Contact Support", "",
+                Icons.description, l10n.auto('Terms of Service'), "", TermsOfService()),
+            SectionTitle(l10n.auto('Help & Support')),
+            _buildTile(Icons.help_outline, l10n.auto('FAQs'), "", FAQs()),
+            _buildTile(Icons.support_agent, l10n.auto('Contact Support'), "",
                 ContactSupportScreen()),
-            const SectionTitle("Account"),
+            SectionTitle(l10n.auto('Account')),
             _buildLogoutTile(),
           ],
         ),
@@ -304,6 +329,63 @@ class _SettingsPageState extends State<SettingsPage> {
           MaterialPageRoute(builder: (context) => page),
         );
       },
+    );
+  }
+
+  Widget _buildLanguageSection(
+      LanguageProvider languageProvider, AppLocalizations l10n) {
+    final currentCode = languageProvider.locale.languageCode;
+    final languages = [
+      {'code': 'en', 'label': l10n.auto('English')},
+      {'code': 'hi', 'label': l10n.auto('Hindi')},
+      {'code': 'mr', 'label': l10n.auto('Marathi')},
+      {'code': 'gu', 'label': l10n.auto('Gujarati')},
+    ];
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            title: Text(l10n.t('settings.language.selectorTitle')),
+            subtitle: Text(l10n.t('settings.language.selectorSubtitle')),
+          ),
+          const Divider(height: 0),
+          ...languages.map((lang) {
+            return RadioListTile<String>(
+              value: lang['code']!,
+              groupValue: currentCode,
+              title: Text(lang['label']!),
+              onChanged: (value) async {
+                if (value == null) return;
+                await languageProvider.setLocale(Locale(value));
+                if (!mounted) return;
+                final updatedL10n = context.l10n;
+                final languageDisplay = switch (value) {
+                  'hi' => updatedL10n.auto('Hindi'),
+                  'mr' => updatedL10n.auto('Marathi'),
+                  'gu' => updatedL10n.auto('Gujarati'),
+                  _ => updatedL10n.auto('English'),
+                };
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      updatedL10n.format(
+                          'settings.language.changed',
+                          {'language': languageDisplay}),
+                    ),
+                  ),
+                );
+              },
+            );
+          }),
+        ],
+      ),
     );
   }
 
@@ -381,7 +463,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final isDark = themeProvider.themeMode == ThemeMode.dark;
     return ListTile(
       leading: Icon(Icons.dark_mode, color: Theme.of(context).iconTheme.color),
-      title: const Text("Dark Mode"),
+      title: Text(context.l10n.auto('Dark Mode')),
       trailing: Switch(
         value: isDark,
         onChanged: (_) => themeProvider.toggleTheme(),
@@ -401,9 +483,10 @@ class _SettingsPageState extends State<SettingsPage> {
           ListTile(
             leading: Icon(Icons.person_add,
                 color: Theme.of(context).iconTheme.color),
-            title: Text("No linked profiles",
+            title: Text(context.l10n.auto('No linked profiles'),
                 style: Theme.of(context).textTheme.bodyLarge),
-            subtitle: Text("Add profiles to switch between them",
+            subtitle: Text(
+                context.l10n.auto('Add profiles to switch between them'),
                 style: Theme.of(context).textTheme.bodyMedium),
             trailing: Icon(Icons.arrow_forward_ios,
                 color: Theme.of(context).iconTheme.color),
@@ -414,8 +497,9 @@ class _SettingsPageState extends State<SettingsPage> {
         ListTile(
           leading: Icon(Icons.add, color: Theme.of(context).iconTheme.color),
           title:
-              Text("Add Profile", style: Theme.of(context).textTheme.bodyLarge),
-          subtitle: Text("Link an existing or create new profile",
+              Text(context.l10n.auto('Add Profile'), style: Theme.of(context).textTheme.bodyLarge),
+          subtitle: Text(
+              context.l10n.auto('Link an existing or create new profile'),
               style: Theme.of(context).textTheme.bodyMedium),
           trailing: Icon(Icons.arrow_forward_ios,
               color: Theme.of(context).iconTheme.color),
@@ -449,7 +533,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 color: Colors.white,
               ),
       ),
-      title: Text(profile['name'] ?? 'Unknown',
+      title: Text(profile['name'] ?? context.l10n.auto('Unknown'),
           style: Theme.of(context).textTheme.bodyLarge),
       subtitle: Text(profile['email'] ?? '',
           style: Theme.of(context).textTheme.bodyMedium),
@@ -460,13 +544,13 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: Icon(Icons.swap_horiz,
                 color: Theme.of(context).iconTheme.color),
             onPressed: () => _showSwitchProfileDialog(profile),
-            tooltip: "Switch to this profile",
+            tooltip: context.l10n.auto('Switch to this profile'),
           ),
           IconButton(
             icon: Icon(Icons.remove_circle_outline,
                 color: Theme.of(context).colorScheme.error),
             onPressed: () => _showRemoveProfileDialog(profile),
-            tooltip: "Remove profile",
+            tooltip: context.l10n.auto('Remove profile'),
           ),
         ],
       ),
@@ -474,19 +558,20 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _showAddProfileDialog() {
+    final l10n = context.l10n;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: Theme.of(context).dialogBackgroundColor,
-        title:
-            Text("Add Profile", style: Theme.of(context).textTheme.titleLarge),
+        title: Text(l10n.auto('Add Profile'),
+            style: Theme.of(context).textTheme.titleLarge),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               // Email/Password section
               Text(
-                "Email/Password",
+                l10n.auto('Email/Password'),
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       color: Theme.of(context).primaryColor,
                       fontWeight: FontWeight.bold,
@@ -496,9 +581,10 @@ class _SettingsPageState extends State<SettingsPage> {
               ListTile(
                 leading: Icon(Icons.person,
                     color: Theme.of(context).iconTheme.color),
-                title: Text("Link Existing Profile",
+                title: Text(l10n.auto('Link Existing Profile'),
                     style: Theme.of(context).textTheme.bodyLarge),
-                subtitle: Text("Link an existing email/password account",
+                subtitle: Text(
+                    l10n.auto('Link an existing email/password account'),
                     style: Theme.of(context).textTheme.bodySmall),
                 onTap: () {
                   Navigator.pop(context);
@@ -508,9 +594,10 @@ class _SettingsPageState extends State<SettingsPage> {
               ListTile(
                 leading: Icon(Icons.person_add,
                     color: Theme.of(context).iconTheme.color),
-                title: Text("Create New Profile",
+                title: Text(l10n.auto('Create New Profile'),
                     style: Theme.of(context).textTheme.bodyLarge),
-                subtitle: Text("Create a new email/password profile",
+                subtitle: Text(
+                    l10n.auto('Create a new email/password profile'),
                     style: Theme.of(context).textTheme.bodySmall),
                 onTap: () {
                   Navigator.pop(context);
@@ -520,7 +607,7 @@ class _SettingsPageState extends State<SettingsPage> {
               const Divider(height: 24),
               // Google section
               Text(
-                "Google Sign-In",
+                l10n.auto('Google Sign-In'),
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       color: Theme.of(context).primaryColor,
                       fontWeight: FontWeight.bold,
@@ -530,9 +617,10 @@ class _SettingsPageState extends State<SettingsPage> {
               ListTile(
                 leading: Icon(Icons.g_mobiledata,
                     color: Theme.of(context).iconTheme.color, size: 32),
-                title: Text("Link with Google",
+                title: Text(l10n.auto('Link with Google'),
                     style: Theme.of(context).textTheme.bodyLarge),
-                subtitle: Text("Link an existing Google account",
+                subtitle:
+                    Text(l10n.auto('Link an existing Google account'),
                     style: Theme.of(context).textTheme.bodySmall),
                 onTap: () {
                   Navigator.pop(context);
@@ -542,9 +630,9 @@ class _SettingsPageState extends State<SettingsPage> {
               ListTile(
                 leading: Icon(Icons.g_mobiledata,
                     color: Theme.of(context).iconTheme.color, size: 32),
-                title: Text("Create with Google",
+                title: Text(l10n.auto('Create with Google'),
                     style: Theme.of(context).textTheme.bodyLarge),
-                subtitle: Text("Create a new Google profile",
+                subtitle: Text(l10n.auto('Create a new Google profile'),
                     style: Theme.of(context).textTheme.bodySmall),
                 onTap: () {
                   Navigator.pop(context);
@@ -557,7 +645,7 @@ class _SettingsPageState extends State<SettingsPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text("Cancel",
+            child: Text(l10n.auto('Cancel'),
                 style: TextStyle(
                     color: Theme.of(context).textTheme.bodyLarge?.color)),
           ),
@@ -579,8 +667,9 @@ class _SettingsPageState extends State<SettingsPage> {
         await _loadLinkedProfiles();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("✅ Google profile linked successfully"),
+            SnackBar(
+              content: Text(
+                  "✅ ${context.l10n.auto('Google profile linked successfully')}"),
               backgroundColor: Colors.green,
             ),
           );
@@ -588,8 +677,8 @@ class _SettingsPageState extends State<SettingsPage> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Failed to link Google profile"),
+            SnackBar(
+              content: Text(context.l10n.auto('Failed to link Google profile')),
               backgroundColor: Colors.red,
             ),
           );
@@ -628,8 +717,9 @@ class _SettingsPageState extends State<SettingsPage> {
         await _loadLinkedProfiles();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("✅ Google profile created and linked successfully"),
+            SnackBar(
+              content: Text(
+                  "✅ ${context.l10n.auto('Google profile created and linked successfully')}"),
               backgroundColor: Colors.green,
             ),
           );
@@ -637,8 +727,9 @@ class _SettingsPageState extends State<SettingsPage> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Failed to create Google profile"),
+            SnackBar(
+              content: Text(
+                  context.l10n.auto('Failed to create Google profile')),
               backgroundColor: Colors.red,
             ),
           );
@@ -669,20 +760,21 @@ class _SettingsPageState extends State<SettingsPage> {
     final passwordController = TextEditingController();
     bool isLoading = false;
     bool isPasswordVisible = false;
+    final l10n = context.l10n;
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text("Link Existing Profile"),
+          title: Text(l10n.auto('Link Existing Profile')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: emailController,
-                decoration: const InputDecoration(
-                  labelText: "Email",
-                  hintText: "Enter email of existing profile",
+                decoration: InputDecoration(
+                  labelText: l10n.auto('Email'),
+                  hintText: l10n.auto('Enter email of existing profile'),
                 ),
                 keyboardType: TextInputType.emailAddress,
               ),
@@ -690,8 +782,8 @@ class _SettingsPageState extends State<SettingsPage> {
               TextField(
                 controller: passwordController,
                 decoration: InputDecoration(
-                  labelText: "Password",
-                  hintText: "Enter password",
+                  labelText: l10n.auto('Password'),
+                  hintText: l10n.auto('Enter password'),
                   suffixIcon: IconButton(
                     icon: Icon(
                       isPasswordVisible
@@ -713,8 +805,8 @@ class _SettingsPageState extends State<SettingsPage> {
           actions: [
             TextButton(
               onPressed: isLoading ? null : () => Navigator.pop(context),
-              child:
-                  Text("Cancel", style: Theme.of(context).textTheme.bodyLarge),
+              child: Text(l10n.auto('Cancel'),
+                  style: Theme.of(context).textTheme.bodyLarge),
             ),
             TextButton(
               onPressed: isLoading
@@ -730,10 +822,12 @@ class _SettingsPageState extends State<SettingsPage> {
                         );
                         await _loadLinkedProfiles();
                         Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text("Profile linked successfully")),
-                        );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                              "✅ ${l10n.t('settings.linkSuccess')}"),
+                        ),
+                      );
                       } catch (e) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text("Error: ${e.toString()}")),
@@ -750,7 +844,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text("Link"),
+                  : Text(l10n.auto('Link')),
             ),
           ],
         ),
@@ -765,38 +859,39 @@ class _SettingsPageState extends State<SettingsPage> {
     final passwordController = TextEditingController();
     bool isLoading = false;
     bool isPasswordVisible = false;
+    final l10n = context.l10n;
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text("Create New Profile"),
+          title: Text(l10n.auto('Create New Profile')),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: "Name",
-                    hintText: "Enter full name",
+                  decoration: InputDecoration(
+                    labelText: l10n.auto('Name'),
+                    hintText: l10n.auto('Enter full name'),
                   ),
                 ),
                 const SizedBox(height: 16),
                 TextField(
                   controller: emailController,
-                  decoration: const InputDecoration(
-                    labelText: "Email",
-                    hintText: "Enter email address",
+                  decoration: InputDecoration(
+                    labelText: l10n.auto('Email'),
+                    hintText: l10n.auto('Enter email address'),
                   ),
                   keyboardType: TextInputType.emailAddress,
                 ),
                 const SizedBox(height: 16),
                 TextField(
                   controller: mobileController,
-                  decoration: const InputDecoration(
-                    labelText: "Mobile",
-                    hintText: "Enter mobile number",
+                  decoration: InputDecoration(
+                    labelText: l10n.auto('Mobile'),
+                    hintText: l10n.auto('Enter mobile number'),
                   ),
                   keyboardType: TextInputType.phone,
                 ),
@@ -804,8 +899,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 TextField(
                   controller: passwordController,
                   decoration: InputDecoration(
-                    labelText: "Password",
-                    hintText: "Enter password",
+                    labelText: l10n.auto('Password'),
+                    hintText: l10n.auto('Enter password'),
                     suffixIcon: IconButton(
                       icon: Icon(
                         isPasswordVisible
@@ -828,8 +923,8 @@ class _SettingsPageState extends State<SettingsPage> {
           actions: [
             TextButton(
               onPressed: isLoading ? null : () => Navigator.pop(context),
-              child:
-                  Text("Cancel", style: Theme.of(context).textTheme.bodyLarge),
+              child: Text(l10n.auto('Cancel'),
+                  style: Theme.of(context).textTheme.bodyLarge),
             ),
             TextButton(
               onPressed: isLoading
@@ -848,9 +943,10 @@ class _SettingsPageState extends State<SettingsPage> {
                         await _loadLinkedProfiles();
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text(
-                                  "Profile created and linked successfully")),
+                      SnackBar(
+                        content: Text(
+                            "✅ ${l10n.t('settings.createSuccess')}"),
+                      ),
                         );
                       } catch (e) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -868,7 +964,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text("Create"),
+                  : Text(l10n.auto('Create')),
             ),
           ],
         ),
@@ -918,18 +1014,20 @@ class _SettingsPageState extends State<SettingsPage> {
         );
 
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("✅ Switched to ${profile['name']}"),
-            backgroundColor: Colors.green,
+        SnackBar(
+          content: Text(
+            "✅ ${context.l10n.format('settings.switch.success', {'name': profile['name']?.toString() ?? context.l10n.auto('Unknown')})}",
           ),
+          backgroundColor: Colors.green,
+        ),
         );
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Failed to switch profile"),
-            backgroundColor: Colors.red,
-          ),
+        SnackBar(
+          content: Text(context.l10n.t('settings.switch.failure')),
+          backgroundColor: Colors.red,
+        ),
         );
       }
     } catch (e) {
@@ -957,22 +1055,29 @@ class _SettingsPageState extends State<SettingsPage> {
     final passwordController = TextEditingController();
     bool isLoading = false;
     bool isPasswordVisible = false;
+    final l10n = context.l10n;
+    final profileName = profile['name']?.toString() ?? l10n.auto('Unknown');
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text("Switch to ${profile['name']}"),
+          title: Text(
+            l10n.format('settings.switch.dialogTitle', {'name': profileName}),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text("Enter password for ${profile['name']}:"),
+              Text(
+                l10n.auto('Enter password for {name}:')
+                    .replaceAll('{name}', profileName),
+              ),
               const SizedBox(height: 16),
               TextField(
                 controller: passwordController,
                 decoration: InputDecoration(
-                  labelText: "Password",
-                  hintText: "Enter password",
+                  labelText: l10n.auto('Password'),
+                  hintText: l10n.auto('Enter password'),
                   suffixIcon: IconButton(
                     icon: Icon(
                       isPasswordVisible
@@ -994,8 +1099,8 @@ class _SettingsPageState extends State<SettingsPage> {
           actions: [
             TextButton(
               onPressed: isLoading ? null : () => Navigator.pop(context),
-              child:
-                  Text("Cancel", style: Theme.of(context).textTheme.bodyLarge),
+              child: Text(l10n.auto('Cancel'),
+                  style: Theme.of(context).textTheme.bodyLarge),
             ),
             TextButton(
               onPressed: isLoading
@@ -1026,7 +1131,9 @@ class _SettingsPageState extends State<SettingsPage> {
                         );
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text("✅ Switched to ${profile['name']}"),
+                            content: Text(
+                              "✅ ${l10n.format('settings.switch.success', {'name': profileName})}",
+                            ),
                             backgroundColor: Colors.green,
                           ),
                         );
@@ -1052,7 +1159,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text("Switch"),
+                  : Text(l10n.auto('Switch')),
             ),
           ],
         ),
@@ -1061,16 +1168,21 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _showRemoveProfileDialog(Map<String, dynamic> profile) {
+    final l10n = context.l10n;
+    final profileName = profile['name']?.toString() ?? l10n.auto('Unknown');
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Remove Profile"),
+        title: Text(l10n.auto('Remove Profile')),
         content: Text(
-            "Are you sure you want to remove ${profile['name']} from your linked profiles?"),
+          l10n
+              .format('settings.removeConfirm', {'name': profileName}),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text("Cancel", style: Theme.of(context).textTheme.bodyLarge),
+            child: Text(l10n.auto('Cancel'),
+                style: Theme.of(context).textTheme.bodyLarge),
           ),
           TextButton(
             onPressed: () async {
@@ -1082,12 +1194,18 @@ class _SettingsPageState extends State<SettingsPage> {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                        content:
-                            Text("${profile['name']} removed successfully")),
+                      content: Text(
+                        l10n.format('settings.removeSuccess',
+                            {'name': profileName}),
+                      ),
+                    ),
                   );
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Failed to remove profile")),
+                    SnackBar(
+                      content:
+                          Text(l10n.auto('Failed to remove profile')),
+                    ),
                   );
                 }
               } catch (e) {
@@ -1096,7 +1214,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 );
               }
             },
-            child: const Text("Remove"),
+            child: Text(l10n.auto('Remove')),
           ),
         ],
       ),
@@ -1106,8 +1224,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _buildLogoutTile() {
     return ListTile(
       leading: Icon(Icons.logout, color: Colors.red),
-      title: const Text('Logout'),
-      subtitle: const Text('Sign out of your account'),
+      title: Text(context.l10n.auto('Logout')),
+      subtitle: Text(context.l10n.auto('Sign out of your account')),
       onTap: _handleLogout,
       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
     );
