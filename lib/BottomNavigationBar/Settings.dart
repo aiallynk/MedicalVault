@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -5,6 +6,7 @@ import 'dart:convert';
 import 'package:hello/main.dart';
 
 import 'QR.dart';
+import 'MedicalCard.dart';
 import 'package:hello/SettingPages/ChangePassword.dart';
 import 'package:hello/SettingPages/ContactSupportPage.dart';
 import 'package:hello/SettingPages/FaqPage.dart';
@@ -35,6 +37,7 @@ class _SettingsPageState extends State<SettingsPage> {
   List<Map<String, dynamic>> linkedProfiles = [];
   bool isLoadingProfiles = false;
   bool isLoadingSettings = false;
+  late Map<String, dynamic> _userData;
 
   final NotificationSettingsService _settingsService =
       NotificationSettingsService();
@@ -43,8 +46,18 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    _userData = Map<String, dynamic>.from(widget.userData);
     _loadLinkedProfiles();
     _loadNotificationSettings();
+    _refreshUserFromPrefs();
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!mapEquals(oldWidget.userData, widget.userData)) {
+      _userData = Map<String, dynamic>.from(widget.userData);
+    }
   }
 
   Future<void> _loadLinkedProfiles() async {
@@ -65,6 +78,23 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() {
         isLoadingProfiles = false;
       });
+    }
+  }
+
+  Future<void> _refreshUserFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString('userData');
+      if (stored == null) return;
+      final decoded = jsonDecode(stored);
+      if (decoded is Map<String, dynamic>) {
+        if (!mounted) return;
+        setState(() {
+          _userData = Map<String, dynamic>.from(decoded);
+        });
+      }
+    } catch (e) {
+      print("Error refreshing user data: $e");
     }
   }
 
@@ -213,12 +243,12 @@ class _SettingsPageState extends State<SettingsPage> {
     final languageProvider = context.watch<LanguageProvider>();
 
     // 👇 safe values nikale
-    final String name = widget.userData["name"]?.toString() ?? "Your Name";
+    final String name = _userData["name"]?.toString() ?? "Your Name";
     final String email =
-        widget.userData["email"]?.toString() ?? "youremail@gmail.com";
-    final String mobile = widget.userData["mobile"]?.toString() ?? "N/A";
-    final String aadhaar = widget.userData["aadhaar"]?.toString() ?? "N/A";
-    final String dob = widget.userData["dateOfBirth"]?.toString() ?? "N/A";
+        _userData["email"]?.toString() ?? "youremail@gmail.com";
+    final String mobile = _userData["mobile"]?.toString() ?? "N/A";
+    final String aadhaar = _userData["aadhaar"]?.toString() ?? "N/A";
+    final String dob = _userData["dateOfBirth"]?.toString() ?? "N/A";
 
     return Scaffold(
       body: SafeArea(
@@ -226,30 +256,50 @@ class _SettingsPageState extends State<SettingsPage> {
           padding: const EdgeInsets.all(10),
           children: [
             SectionTitle(l10n.auto('My Profile')),
-            _buildTile(
-              Icons.person,
-              l10n.auto('Personal Details'),
-              l10n.auto('View and edit your personal details'),
-              ProfileName(
-                userData: {
-                  "name": name,
-                  "email": email,
-                  "mobile": mobile,
-                  "aadhaar": aadhaar,
-                  "dateOfBirth": dob,
-                  "age": widget.userData["age"],
-                  "gender": widget.userData["gender"],
-                  "bloodType": widget.userData["bloodType"],
-                  "height": widget.userData["height"],
-                  "weight": widget.userData["weight"],
-                  "lastVisit": widget.userData["lastVisit"],
-                  "nextAppointment": widget.userData["nextAppointment"],
-                  "emergencyContact": widget.userData["emergencyContact"],
-                  "medicalHistory": widget.userData["medicalHistory"] ?? [],
-                  "medications": widget.userData["medications"] ?? [],
-                  "medicalRecords": widget.userData["medicalRecords"] ?? [],
-                },
+            ListTile(
+              leading: Icon(Icons.person, color: Theme.of(context).iconTheme.color),
+              title: Text(l10n.auto('Personal Details')),
+              subtitle: Text(
+                l10n.auto('View and edit your personal details'),
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
+              onTap: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ProfileName(
+                      userData: {
+                        "name": name,
+                        "email": email,
+                        "mobile": mobile,
+                        "aadhaar": aadhaar,
+                        "dateOfBirth": dob,
+                        "age": _userData["age"],
+                        "gender": _userData["gender"],
+                        "bloodType": _userData["bloodType"],
+                        "height": _userData["height"],
+                        "weight": _userData["weight"],
+                        "lastVisit": _userData["lastVisit"],
+                        "nextAppointment": _userData["nextAppointment"],
+                        "emergencyContact": _userData["emergencyContact"],
+                        "medicalHistory": _userData["medicalHistory"] ?? [],
+                        "medications": _userData["medications"] ?? [],
+                        "medicalRecords": _userData["medicalRecords"] ?? [],
+                      "profilePicture": _userData["profilePicture"],
+                      "profilePictureUrl": _userData["profilePictureUrl"],
+                      },
+                    ),
+                  ),
+                );
+                if (!mounted) return;
+                if (result is Map<String, dynamic>) {
+                  setState(() {
+                    _userData = Map<String, dynamic>.from(result);
+                  });
+                } else {
+                  await _refreshUserFromPrefs();
+                }
+              },
             ),
             SectionTitle(l10n.auto('Switch Profile')),
             _buildSwitchProfileSection(),
@@ -259,6 +309,7 @@ class _SettingsPageState extends State<SettingsPage> {
             SectionTitle(l10n.auto('QR & Sharing')),
             _buildTile(Icons.qr_code, l10n.auto('Regenerate QR'), "", QRPage()),
             _buildTile(Icons.share, l10n.auto('Sharing Controls'), "", QRPage()),
+            _buildMedicalCardTile(),
             SectionTitle(l10n.auto('Language')),
             _buildLanguageSection(languageProvider, l10n),
             SectionTitle(l10n.auto('Switch Themes')),
@@ -356,11 +407,23 @@ class _SettingsPageState extends State<SettingsPage> {
             subtitle: Text(l10n.t('settings.language.selectorSubtitle')),
           ),
           const Divider(height: 0),
-          ...languages.map((lang) {
-            return RadioListTile<String>(
-              value: lang['code']!,
-              groupValue: currentCode,
-              title: Text(lang['label']!),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: DropdownButtonFormField<String>(
+              value: currentCode,
+              decoration: InputDecoration(
+                labelText: l10n.auto('Select Language'),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+              items: languages.map((lang) {
+                return DropdownMenuItem<String>(
+                  value: lang['code']!,
+                  child: Text(lang['label']!),
+                );
+              }).toList(),
               onChanged: (value) async {
                 if (value == null) return;
                 await languageProvider.setLocale(Locale(value));
@@ -382,10 +445,35 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 );
               },
-            );
-          }),
+            ),
+          ),
+          const SizedBox(height: 8),
         ],
       ),
+    );
+  }
+
+  Widget _buildMedicalCardTile() {
+    return ListTile(
+      leading: Icon(Icons.medical_services, color: Theme.of(context).iconTheme.color),
+      title: Text(context.l10n.auto('Medical Card')),
+      subtitle: Text(
+        context.l10n.auto('View your permanent medical card QR code'),
+        style: const TextStyle(fontSize: 12, color: Colors.grey),
+      ),
+      onTap: () {
+        // Create a copy of userData without profile picture URLs to prevent image loading errors
+        final medicalCardUserData = Map<String, dynamic>.from(_userData);
+        medicalCardUserData.remove('profilePicture');
+        medicalCardUserData.remove('profilePictureUrl');
+        
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MedicalCardPage(userData: medicalCardUserData),
+          ),
+        );
+      },
     );
   }
 
@@ -510,25 +598,39 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildProfileTile(Map<String, dynamic> profile) {
+    final photoUrl = (profile['profilePictureUrl'] ?? profile['profilePicture'])
+        ?.toString();
+
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: Theme.of(context).primaryColor,
-        child: profile['profilePicture'] != null
+        child: (photoUrl != null && photoUrl.isNotEmpty)
             ? ClipOval(
                 child: Image.network(
-                  profile['profilePicture'],
+                  photoUrl,
                   width: 40,
                   height: 40,
                   fit: BoxFit.cover,
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return const Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
+                  },
                   errorBuilder: (context, error, stackTrace) {
-                    return Icon(
+                    // Silently handle image loading errors (403, network issues, etc.)
+                    return const Icon(
                       Icons.person,
                       color: Colors.white,
                     );
                   },
                 ),
               )
-            : Icon(
+            : const Icon(
                 Icons.person,
                 color: Colors.white,
               ),

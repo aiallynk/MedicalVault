@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../api_service.dart';
+import '../localization/app_localizations.dart';
 
 class ResetPasswordPage extends StatefulWidget {
   final String? token;
@@ -22,19 +23,17 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
   }
 
   String? _extractTokenFromRoute(BuildContext context) {
-    // If token passed directly use it, else try to read from query params
     if (widget.token != null && widget.token!.isNotEmpty) return widget.token;
-    final uri = Uri.base; // works for web or deep links
-    final token = uri.queryParameters['token'];
-    return token;
+    final uri = Uri.base;
+    return uri.queryParameters['token'];
   }
 
   Future<void> _submit() async {
+    final l10n = context.l10n;
     final token = _extractTokenFromRoute(context);
     if (token == null || token.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('Reset token missing. Open the link from email.')),
+        SnackBar(content: Text(l10n.t('resetPassword.missingToken'))),
       );
       return;
     }
@@ -42,13 +41,13 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     final cpw = _confirmController.text;
     if (pw.length < 6) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Password must be at least 6 characters')),
+        SnackBar(content: Text(l10n.t('resetPassword.minLength'))),
       );
       return;
     }
     if (pw != cpw) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Passwords do not match')),
+        SnackBar(content: Text(l10n.t('resetPassword.mismatch'))),
       );
       return;
     }
@@ -60,7 +59,6 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     final result =
         await ApiService.resetPassword(token: token, newPassword: pw);
     if (!mounted) return;
-    if (!mounted) return;
     setState(() {
       _submitting = false;
     });
@@ -68,8 +66,8 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     if (result != null && result['success'] == true) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result['message'] ??
-              'Password reset successfully. Please sign in.'),
+          content: Text(
+              result['message'] ?? l10n.t('resetPassword.successFallback')),
           backgroundColor: Colors.green,
         ),
       );
@@ -77,8 +75,8 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result?['message'] ??
-              'Failed to reset password. The link may be expired.'),
+          content: Text(
+              result?['message'] ?? l10n.t('resetPassword.failureFallback')),
           backgroundColor: Colors.red,
         ),
       );
@@ -87,21 +85,22 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
-      appBar: AppBar(title: Text('Reset Password')),
+      appBar: AppBar(title: Text(l10n.t('resetPassword.title'))),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Create a new password',
+            Text(l10n.t('resetPassword.subtitle'),
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
             TextField(
               controller: _passwordController,
               obscureText: true,
               decoration: InputDecoration(
-                labelText: 'New Password',
+                labelText: l10n.t('resetPassword.newPassword'),
                 border:
                     OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
@@ -111,7 +110,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
               controller: _confirmController,
               obscureText: true,
               decoration: InputDecoration(
-                labelText: 'Confirm Password',
+                labelText: l10n.t('resetPassword.confirmPassword'),
                 border:
                     OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
@@ -126,7 +125,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Reset Password'),
+                    : Text(l10n.t('resetPassword.button')),
               ),
             )
           ],

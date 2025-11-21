@@ -228,6 +228,36 @@ class ApiService {
     return null;
   }
 
+  static Future<Map<String, dynamic>?> updateProfile(
+      Map<String, dynamic> updates) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.put(
+        Uri.parse("$authUrl/me"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode(_sanitizeBody(updates)),
+      );
+      final data = jsonDecode(res.body);
+      if (res.statusCode == 200 && data['success'] == true) {
+        final prefs = await SharedPreferences.getInstance();
+        final userData = data['data'];
+        if (userData != null) {
+          await prefs.setString('userData', jsonEncode(userData));
+          if (userData['name'] != null) {
+            await prefs.setString('name', userData['name'].toString());
+          }
+          if (userData['email'] != null) {
+            await prefs.setString('email', userData['email'].toString());
+          }
+        }
+      }
+      return data;
+    } catch (e) {
+      print("updateProfile error: $e");
+      return {"success": false, "message": "Network error"};
+    }
+  }
+
   // ---------------- UPLOAD ----------------
   static Future<Document?> uploadDocument({
     required File file,
@@ -352,6 +382,54 @@ class ApiService {
   }
 
   // ---------------- LOST & FOUND ----------------
+  static Future<Map<String, dynamic>?> uploadProfilePhoto(File file) async {
+    try {
+      final token = await _getToken();
+      final dio = Dio();
+      final filename = file.path.split("/").last;
+      final mimeType = _detectMimeType(filename.toLowerCase());
+      final formData = FormData.fromMap({
+        "photo": await MultipartFile.fromFile(
+          file.path,
+          filename: filename,
+          contentType: MediaType.parse(mimeType),
+        ),
+      });
+
+      final response = await dio.post(
+        "$authUrl/profile-picture",
+        data: formData,
+        options: Options(
+          headers: {
+            if (token != null) HttpHeaders.authorizationHeader: "Bearer $token",
+            "Content-Type": "multipart/form-data",
+          },
+        ),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = response.data;
+        final user = data?['data']?['user'];
+        if (user != null) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('userData', jsonEncode(user));
+          if (user['name'] != null) {
+            await prefs.setString('name', user['name'].toString());
+          }
+          if (user['email'] != null) {
+            await prefs.setString('email', user['email'].toString());
+          }
+        }
+        return data;
+      }
+
+      return response.data;
+    } catch (e) {
+      print("uploadProfilePhoto error: $e");
+      return {"success": false, "message": "Network error"};
+    }
+  }
+
   static Future<String?> uploadLostFoundPhoto(File file) async {
     try {
       final token = await _getToken();

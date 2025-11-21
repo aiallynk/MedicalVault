@@ -4,6 +4,7 @@ import 'dart:async';
 import '../services/ai_service.dart';
 import '../widgets/ai_structured_widgets.dart';
 import '../widgets/language_selector.dart';
+import 'package:hello/localization/app_localizations.dart';
 
 class ChatScreen extends StatefulWidget {
   final String? initialDocumentId;
@@ -50,12 +51,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     if (widget.initialDocumentId != null &&
         widget.initialDocumentName != null) {
-      _addMessage(
-        "I see you want to analyze: ${widget.initialDocumentName}. Let me help you with that!",
-        false,
-      );
-      // Auto-analyze the document
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final l10n = context.l10n;
+        _addMessage(
+          l10n.format('chat.autoAnalyze',
+              {'name': widget.initialDocumentName!}),
+          false,
+        );
         _analyzeDocument(
             widget.initialDocumentId!, widget.initialDocumentName!);
       });
@@ -64,6 +67,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   Future<void> _loadSavedMessages() async {
     try {
+      if (!mounted) return;
+      final l10n = context.l10n;
       final savedMessages = await _getSavedMessages();
 
       if (savedMessages.isNotEmpty) {
@@ -74,20 +79,21 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       } else {
         // Add welcome message if no saved messages
         _addMessage(
-          "Hello! I'm your Medical Vault AI Assistant 🤖 How can I help you today?",
+          l10n.t('chat.welcome.greeting'),
           false,
         );
         _addMessage(
-          "I can analyze your documents, provide insights, and answer in multiple languages. "
-          "Please log in first to access your medical documents and get personalized assistance!",
+          l10n.t('chat.welcome.helper'),
           false,
         );
       }
     } catch (e) {
       print('Error loading saved messages: $e');
       // Fallback to welcome message
+      if (!mounted) return;
+      final l10n = context.l10n;
       _addMessage(
-        "Hello! I'm your Medical Vault AI Assistant 🤖 How can I help you today?",
+        l10n.t('chat.welcome.greeting'),
         false,
       );
     }
@@ -112,12 +118,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     // Add welcome message
     _addMessage(
-      "Hello! I'm your Medical Vault AI Assistant 🤖 How can I help you today?",
+      context.l10n.t('chat.welcome.greeting'),
       false,
     );
     _addMessage(
-      "I can analyze your documents, provide insights, and answer in multiple languages. "
-      "Please log in first to access your medical documents and get personalized assistance!",
+      context.l10n.t('chat.welcome.helper'),
       false,
     );
   }
@@ -213,16 +218,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         // Handle authentication error specifically
         if (response.message?.contains('No authentication token') == true) {
           _addMessage(
-            '🔐 Please log in to use the AI Assistant!\n\n'
-            'You can log in from the Settings page or by tapping the profile icon. '
-            'Once logged in, I can help you analyze your medical documents and answer questions about your health records.\n\n'
-            '💡 Tip: Use the navigation bar to go to Settings and log in with your credentials.',
+            context.l10n.t('chat.loginRequired'),
             false,
           );
         } else {
           _addMessage(
             response.message ??
-                'Sorry, I encountered an error. Please try again.',
+                context.l10n.t('chat.error.generic'),
             false,
           );
         }
@@ -233,14 +235,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       });
       _typingController.stop();
       _addMessage(
-        'Sorry, I encountered an error. Please try again.',
+        context.l10n.t('chat.error.generic'),
         false,
       );
     }
   }
 
   Future<void> _analyzeDocument(String documentId, String documentName) async {
-    final userMessage = "Analyze this document: $documentName";
+    final userMessage =
+        context.l10n.format('chat.userAnalyzePrompt', {'name': documentName});
 
     // Add user message
     _addMessage(userMessage, true);
@@ -254,7 +257,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     try {
       // Send document analysis request to AI service
       final response = await AIService.sendMessage(
-        prompt: "Please analyze this document and provide insights",
+        prompt: context.l10n.t('chat.aiAnalyzePrompt'),
         documentId: documentId,
       );
 
@@ -273,7 +276,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         );
       } else {
         _addMessage(
-          response.message ?? 'Sorry, I could not analyze the document.',
+          response.message ?? context.l10n.t('chat.error.analysis'),
           false,
         );
       }
@@ -283,7 +286,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       });
       _typingController.stop();
       _addMessage(
-        'Sorry, I encountered an error while analyzing the document.',
+        context.l10n.t('chat.error.analysis'),
         false,
       );
     }
@@ -302,9 +305,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'AI Assistant 🤖',
-          style: TextStyle(
+        title: Text(
+          context.l10n.t('chat.title'),
+          style: const TextStyle(
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -322,7 +325,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             onPressed: () {
               _showClearChatDialog();
             },
-            tooltip: 'Clear Chat',
+            tooltip: context.l10n.t('chat.tooltip.clear'),
           ),
           LanguageSelector(
             selectedLanguage: _selectedLanguage,
@@ -416,15 +419,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   String _getHintText() {
+    final l10n = context.l10n;
     switch (_selectedLanguage) {
       case 'hindi':
-        return 'अपने स्वास्थ्य रिकॉर्ड के बारे में पूछें...';
+        return l10n.t('chat.inputHint.hindi');
       case 'marathi':
-        return 'तुमच्या आरोग्य रेकॉर्ड्स बद्दल विचारा...';
+        return l10n.t('chat.inputHint.marathi');
       case 'hinglish':
-        return 'Ask about your health records...';
+        return l10n.t('chat.inputHint.hinglish');
       default:
-        return 'Ask me about your health records...';
+        return l10n.t('chat.inputHint.english');
     }
   }
 
@@ -512,7 +516,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       children: [
                         const SizedBox(height: 8),
                         Text(
-                          'Documents:',
+                          context.l10n.t('chat.documentsLabel'),
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: isDarkMode ? Colors.white : Colors.black87,
@@ -674,22 +678,21 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Clear Chat'),
-          content: const Text(
-              'Are you sure you want to clear all chat messages? This action cannot be undone.'),
+          title: Text(context.l10n.t('chat.clearDialog.title')),
+          content: Text(context.l10n.t('chat.clearDialog.message')),
           actions: [
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
               },
-              child: const Text('Cancel'),
+              child: Text(context.l10n.t('common.cancel')),
             ),
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
                 _clearChat();
               },
-              child: const Text('Clear'),
+              child: Text(context.l10n.t('chat.clearDialog.confirm')),
             ),
           ],
         );

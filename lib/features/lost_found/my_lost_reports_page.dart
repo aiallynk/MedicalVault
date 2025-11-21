@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../api_service.dart';
+import '../../localization/app_localizations.dart';
 
 class MyLostReportsPage extends StatefulWidget {
   const MyLostReportsPage({super.key});
@@ -57,28 +58,31 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
     }
   }
 
-  String _statusLabel(String status) {
+  String _statusLabel(String status, AppLocalizations l10n) {
     switch (status) {
       case "matched":
-        return "Matched";
+        return l10n.t('myLostReports.status.matched');
       case "closed":
-        return "Closed";
+        return l10n.t('myLostReports.status.closed');
       default:
-        return "Open";
+        return l10n.t('myLostReports.status.open');
     }
   }
 
-  String _formatDate(String? iso) {
-    if (iso == null || iso.isEmpty) return "Time not recorded";
+  String _formatDate(String? iso, AppLocalizations l10n) {
+    if (iso == null || iso.isEmpty) {
+      return l10n.t('myLostReports.timeUnknown');
+    }
     try {
       final date = DateTime.parse(iso);
       return _dateFormat.format(date.toLocal());
     } catch (_) {
-      return "Time not recorded";
+      return l10n.t('myLostReports.timeUnknown');
     }
   }
 
-  Widget _buildReportCard(Map<String, dynamic> report, ThemeData theme) {
+  Widget _buildReportCard(
+      Map<String, dynamic> report, ThemeData theme, AppLocalizations l10n) {
     final status = report["status"]?.toString() ?? "open";
     final photoUrl = report["photoUrl"]?.toString();
     final dynamic matchedRaw = report["matchedFoundReportId"];
@@ -129,7 +133,7 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                       Text(
                         report["personName"]?.toString().isNotEmpty == true
                             ? report["personName"].toString()
-                            : "Unnamed report",
+                            : l10n.t('myLostReports.card.unnamed'),
                         style: theme.textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
@@ -139,7 +143,7 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                         runSpacing: 4,
                         children: [
                           Chip(
-                            label: Text(_statusLabel(status)),
+                            label: Text(_statusLabel(status, l10n)),
                             backgroundColor:
                                 _statusColor(status, theme).withOpacity(0.12),
                             labelStyle: TextStyle(
@@ -150,7 +154,10 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                           if (report["approxAge"] != null)
                             Chip(
                               label: Text(
-                                  "Age ~${report["approxAge"].toString()}"),
+                                l10n.format('myLostReports.card.ageApprox', {
+                                  'age': report["approxAge"].toString()
+                                }),
+                              ),
                               backgroundColor:
                                   theme.colorScheme.surfaceVariant,
                             ),
@@ -169,7 +176,9 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
             ),
             const SizedBox(height: 12),
             Text(
-              "Last seen: ${_formatDate(report["lastSeenTime"]?.toString())}",
+              l10n.format('myLostReports.card.lastSeen', {
+                'time': _formatDate(report["lastSeenTime"]?.toString(), l10n)
+              }),
               style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 8),
@@ -196,9 +205,9 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            "Match suggested",
-                            style: TextStyle(
+                          Text(
+                            l10n.t('myLostReports.card.matchSuggested'),
+                            style: const TextStyle(
                               fontWeight: FontWeight.w600,
                               color: Colors.green,
                             ),
@@ -206,16 +215,25 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                           const SizedBox(height: 4),
                           if (matched["currentHospitalId"] != null)
                             Text(
-                              "Current facility: ${matched["currentHospitalId"]}",
+                              l10n.format(
+                                  'myLostReports.card.currentFacility', {
+                                'facility':
+                                    matched["currentHospitalId"].toString()
+                              }),
                               style: theme.textTheme.bodyMedium,
                             ),
                           if (matched["condition"] != null)
                             Text(
-                              "Condition: ${matched["condition"]}",
+                              l10n.format('myLostReports.card.condition', {
+                                'condition': matched["condition"].toString()
+                              }),
                               style: theme.textTheme.bodyMedium,
                             ),
                           Text(
-                            "Last updated: ${_formatDate(matched["foundTime"]?.toString())}",
+                            l10n.format('myLostReports.card.lastUpdated', {
+                              'time': _formatDate(
+                                  matched["foundTime"]?.toString(), l10n)
+                            }),
                             style: theme.textTheme.bodySmall,
                           ),
                         ],
@@ -234,10 +252,11 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("My Lost Reports"),
+        title: Text(l10n.t('myLostReports.title')),
       ),
       body: SafeArea(
         child: RefreshIndicator(
@@ -255,19 +274,20 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                                   size: 48, color: Colors.redAccent),
                               const SizedBox(height: 12),
                               Text(
-                                "Failed to load reports",
+                                l10n.t('myLostReports.error.title'),
                                 style: theme.textTheme.titleMedium,
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                _error!,
+                                l10n.format('common.errorWithMessage',
+                                    {'message': _error!}),
                                 textAlign: TextAlign.center,
                                 style: theme.textTheme.bodyMedium,
                               ),
                               const SizedBox(height: 16),
                               FilledButton(
                                 onPressed: _loadReports,
-                                child: const Text("Retry"),
+                                child: Text(l10n.t('common.retry')),
                               ),
                             ],
                           ),
@@ -286,12 +306,12 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                                       color: theme.colorScheme.outline),
                                   const SizedBox(height: 12),
                                   Text(
-                                    "No lost person reports yet",
+                                l10n.t('myLostReports.empty.title'),
                                     style: theme.textTheme.titleMedium,
                                   ),
                                   const SizedBox(height: 8),
                                   Text(
-                                    "When you report a lost family member, the status and suggested matches will appear here.",
+                                l10n.t('myLostReports.empty.subtitle'),
                                     textAlign: TextAlign.center,
                                     style: theme.textTheme.bodyMedium,
                                   ),
@@ -305,7 +325,7 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                           itemBuilder: (context, index) {
                             final report =
                                 Map<String, dynamic>.from(_reports[index]);
-                            return _buildReportCard(report, theme);
+                            return _buildReportCard(report, theme, l10n);
                           },
                         ),
         ),

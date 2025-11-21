@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../localization/app_localizations.dart';
 
 class FAQs extends StatelessWidget {
   const FAQs({super.key});
@@ -44,6 +45,15 @@ class FAQs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final items = List.generate(
+      5,
+      (index) => (
+        l10n.t('faq.item${index + 1}.question'),
+        l10n.t('faq.item${index + 1}.answer')
+      ),
+    );
+
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
@@ -55,7 +65,7 @@ class FAQs extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          'FAQs',
+          l10n.t('faq.title'),
           style: Theme.of(context).textTheme.titleLarge,
         ),
         backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
@@ -64,36 +74,8 @@ class FAQs extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16.0),
         children: [
-          _buildFAQ(
-            'How to upload my medical documents?',
-            'To upload your medical documents, navigate to the \'Documents\' section in the app. Tap the \'Upload\' button and select the files from your device. Ensure they are in the accepted format and within the size limit.',
-            false,
-            context,
-          ),
-          _buildFAQ(
-            'What are the accepted file formats?',
-            'We accept PDF, JPEG, PNG, and DOCX formats.',
-            false,
-            context,
-          ),
-          _buildFAQ(
-            'Is there a size limit for uploads?',
-            'Yes, each file must be under 10MB.',
-            false,
-            context,
-          ),
-          _buildFAQ(
-            'Can I upload multiple documents at once?',
-            'Yes, you can select multiple files in one upload session.',
-            false,
-            context,
-          ),
-          _buildFAQ(
-            'How do I know if my documents were successfully uploaded?',
-            'You will receive a confirmation notification, and the documents will appear in your \'Documents\' section.',
-            false,
-            context,
-          ),
+          for (final item in items)
+            _buildFAQ(item.$1, item.$2, false, context),
         ],
       ),
     );

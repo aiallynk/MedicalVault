@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'api_service.dart';
+import 'localization/app_localizations.dart';
 
 class UploadDocument extends StatefulWidget {
   final String userId;
@@ -56,6 +57,7 @@ class _UploadDocumentState extends State<UploadDocument> {
   }
 
   Future<void> _pickDate() async {
+    final l10n = context.l10n;
     final now = DateTime.now();
     final yesterday = now.subtract(const Duration(days: 1));
     final pickedDate = await showDatePicker(
@@ -64,9 +66,9 @@ class _UploadDocumentState extends State<UploadDocument> {
           yesterday, // Default to yesterday if no date selected
       firstDate: DateTime(2000),
       lastDate: now, // ✅ Restrict to current date and earlier (no future dates)
-      helpText: "Select document date",
-      cancelText: "Cancel",
-      confirmText: "Select",
+      helpText: l10n.t('uploadDocument.datePicker.help'),
+      cancelText: l10n.t('uploadDocument.datePicker.cancel'),
+      confirmText: l10n.t('uploadDocument.datePicker.confirm'),
     );
     if (pickedDate != null) {
       setState(() {
@@ -76,11 +78,14 @@ class _UploadDocumentState extends State<UploadDocument> {
   }
 
   Future<void> _uploadDocument() async {
+    final l10n = context.l10n;
     if (_selectedFile == null ||
         _titleController.text.isEmpty ||
         _selectedCategory == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("⚠️ Fill all fields and select a file")),
+        SnackBar(
+            content:
+                Text(l10n.t('uploadDocument.error.missingFields'))),
       );
       return;
     }
@@ -114,15 +119,25 @@ class _UploadDocumentState extends State<UploadDocument> {
       Navigator.pop(context, true);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("❌ Upload failed")),
+        SnackBar(content: Text(l10n.t('uploadDocument.error.uploadFailed'))),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final categories = [
+      {'value': 'Report', 'label': l10n.t('documents.category.reports')},
+      {
+        'value': 'Prescription',
+        'label': l10n.t('documents.category.prescriptions')
+      },
+      {'value': 'Bill', 'label': l10n.t('documents.category.bills')},
+      {'value': 'Insurance', 'label': l10n.t('documents.category.insurance')},
+    ];
     return Scaffold(
-      appBar: AppBar(title: const Text("Upload Document")),
+      appBar: AppBar(title: Text(l10n.t('uploadDocument.title'))),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: SingleChildScrollView(
@@ -132,7 +147,7 @@ class _UploadDocumentState extends State<UploadDocument> {
                 controller: _titleController,
                 decoration: InputDecoration(
                   prefixIcon: const Icon(Icons.title, color: Colors.blue),
-                  labelText: "Document Title",
+                  labelText: l10n.t('uploadDocument.field.titleLabel'),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -143,19 +158,18 @@ class _UploadDocumentState extends State<UploadDocument> {
                 value: _selectedCategory,
                 decoration: InputDecoration(
                   prefixIcon: const Icon(Icons.category, color: Colors.blue),
-                  labelText: "Category",
+                  labelText: l10n.t('uploadDocument.field.categoryLabel'),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                items: [
-                  "Report",
-                  "Prescription",
-                  "Bill",
-                  "Insurance",
-                ]
+                items: categories
                     .map(
-                        (cat) => DropdownMenuItem(value: cat, child: Text(cat)))
+                      (cat) => DropdownMenuItem(
+                        value: cat['value'] as String,
+                        child: Text(cat['label'] as String),
+                      ),
+                    )
                     .toList(),
                 onChanged: (val) => setState(() => _selectedCategory = val),
               ),
@@ -172,8 +186,8 @@ class _UploadDocumentState extends State<UploadDocument> {
                     decoration: InputDecoration(
                       prefixIcon:
                           const Icon(Icons.calendar_today, color: Colors.blue),
-                      labelText: "Document Date",
-                      hintText: "Select date when document was created",
+                      labelText: l10n.t('uploadDocument.field.dateLabel'),
+                      hintText: l10n.t('uploadDocument.field.dateHint'),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -187,7 +201,7 @@ class _UploadDocumentState extends State<UploadDocument> {
                 maxLines: 3,
                 decoration: InputDecoration(
                   prefixIcon: const Icon(Icons.notes, color: Colors.blue),
-                  labelText: "Notes (optional)",
+                  labelText: l10n.t('uploadDocument.field.notesLabel'),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -227,7 +241,7 @@ class _UploadDocumentState extends State<UploadDocument> {
                     IconButton(
                       icon: const Icon(Icons.remove, color: Colors.red),
                       onPressed: _removeSelectedFile,
-                      tooltip: "Remove selected file",
+                      tooltip: l10n.t('uploadDocument.button.removeFile'),
                     ),
                   ],
                   const SizedBox(width: 8),
@@ -235,7 +249,7 @@ class _UploadDocumentState extends State<UploadDocument> {
                     child: Text(
                       _selectedFile != null
                           ? _selectedFile!.path.split('/').last
-                          : "No file selected / photo captured",
+                          : l10n.t('uploadDocument.field.filePlaceholder'),
                       style: TextStyle(
                         color: Theme.of(context).brightness == Brightness.dark
                             ? Colors.grey[400]
@@ -276,7 +290,9 @@ class _UploadDocumentState extends State<UploadDocument> {
                                 ),
                                 const SizedBox(width: 12),
                                 Text(
-                                  "Uploading... ${_uploadProgress.toInt()}%",
+                                  l10n.format('uploadDocument.progressLabel', {
+                                    'percent': _uploadProgress.toInt().toString()
+                                  }),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 16,
@@ -300,9 +316,9 @@ class _UploadDocumentState extends State<UploadDocument> {
                     : ElevatedButton.icon(
                         icon:
                             const Icon(Icons.cloud_upload, color: Colors.blue),
-                        label: const Text(
-                          "Upload Document",
-                          style: TextStyle(color: Colors.blue),
+                        label: Text(
+                          l10n.t('uploadDocument.button.upload'),
+                          style: const TextStyle(color: Colors.blue),
                         ),
                         onPressed: _uploadDocument,
                         style: ElevatedButton.styleFrom(

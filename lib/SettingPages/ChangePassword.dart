@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../api_service.dart';
+import '../localization/app_localizations.dart';
 
 class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({super.key});
@@ -28,6 +29,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
@@ -39,7 +41,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          'Change Password',
+          l10n.t('changePassword.title'),
           style: Theme.of(context).textTheme.titleLarge,
         ),
         centerTitle: true,
@@ -54,14 +56,14 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
           children: [
             const SizedBox(height: 32),
             Text(
-              'Change your password',
+              l10n.t('changePassword.heading'),
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Enter your new password and confirm.',
+              l10n.t('changePassword.subheading'),
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Theme.of(context)
                         .textTheme
@@ -75,7 +77,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             // Current Password Field
             _buildPasswordField(
               controller: _currentPasswordController,
-              label: 'Current Password',
+              label: l10n.t('changePassword.current'),
               isVisible: _isCurrentPasswordVisible,
               onToggleVisibility: () {
                 setState(() {
@@ -88,7 +90,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             // New Password Field
             _buildPasswordField(
               controller: _newPasswordController,
-              label: 'New Password',
+              label: l10n.t('changePassword.new'),
               isVisible: _isNewPasswordVisible,
               onToggleVisibility: () {
                 setState(() {
@@ -101,7 +103,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             // Confirm Password Field
             _buildPasswordField(
               controller: _confirmPasswordController,
-              label: 'Confirm New Password',
+              label: l10n.t('changePassword.confirm'),
               isVisible: _isConfirmPasswordVisible,
               onToggleVisibility: () {
                 setState(() {
@@ -136,9 +138,9 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                               AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
                       )
-                    : const Text(
-                        'Update Password',
-                        style: TextStyle(
+                    : Text(
+                        l10n.t('changePassword.updateButton'),
+                        style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
                         ),
@@ -180,7 +182,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                     ?.color
                     ?.withOpacity(0.6),
               ),
-          hintText: 'Enter $label',
+          hintText: context.l10n
+              .format('changePassword.hint', {'field': label}),
           hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context)
                     .textTheme
@@ -226,12 +229,13 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   }
 
   Future<void> _updatePassword() async {
+    final l10n = context.l10n;
     if (_currentPasswordController.text.isEmpty ||
         _newPasswordController.text.isEmpty ||
         _confirmPasswordController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Please fill in all fields'),
+          content: Text(l10n.t('changePassword.error.missingFields')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
@@ -241,7 +245,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     if (_newPasswordController.text != _confirmPasswordController.text) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('New passwords do not match'),
+          content: Text(l10n.t('changePassword.error.mismatch')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
@@ -251,7 +255,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     if (_newPasswordController.text.length < 6) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Password must be at least 6 characters long'),
+          content: Text(l10n.t('changePassword.error.minLength')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
@@ -275,7 +279,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     if (result != null && result['success'] == true) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result['message'] ?? 'Password updated successfully'),
+          content: Text(result['message'] ??
+              l10n.t('changePassword.successFallback')),
           backgroundColor: Colors.green,
         ),
       );
@@ -287,7 +292,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result?['message'] ?? 'Failed to update password'),
+          content: Text(result?['message'] ??
+              l10n.t('changePassword.failureFallback')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );

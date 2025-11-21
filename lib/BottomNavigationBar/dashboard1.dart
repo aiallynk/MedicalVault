@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hello/api_service.dart';
 import 'package:hello/AppFooter.dart';
@@ -34,6 +35,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   Timer? _promoTimer;
   late int _promoInitialPage;
   late AnimationController _alertController;
+  late Map<String, dynamic> _userData;
 
   Map<String, int> _documentCounts = {};
   bool _isLoadingCounts = true;
@@ -42,6 +44,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _userData = Map<String, dynamic>.from(widget.userData);
     _pageController = PageController(initialPage: _currentIndex);
     _promoInitialPage = _promoItems.length * 1000;
     _promoPageController = PageController(
@@ -60,6 +63,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       StatusBarHelper.setStatusBarStyle(context);
       // Update global context for notifications
       GlobalNotificationHandler.setGlobalContext(context);
+      _refreshUserData();
     });
 
     // Auto-scroll promo cards
@@ -127,6 +131,23 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       setState(() {
         _isLoadingCounts = false;
       });
+    }
+  }
+
+  Future<void> _refreshUserData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString("userData");
+      if (stored == null) return;
+      final decoded = jsonDecode(stored);
+      if (decoded is Map<String, dynamic>) {
+        if (!mounted) return;
+        setState(() {
+          _userData = Map<String, dynamic>.from(decoded);
+        });
+      }
+    } catch (e) {
+      print("Error refreshing user data: $e");
     }
   }
 
@@ -261,7 +282,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     StatusBarHelper.setStatusBarStyle(context);
 
     final l10n = context.l10n;
-    final passedName = (widget.userData['name'] ?? "").toString();
+    final passedName = (_userData['name'] ?? "").toString();
 
     return FutureBuilder<String?>(
       future: _getStoredName(),
@@ -309,6 +330,9 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                       setState(() {
                         _currentIndex = index;
                       });
+                      if (index == 0) {
+                        _refreshUserData();
+                      }
                     },
                     children: [
                       // 🏠 Dashboard tab
@@ -326,29 +350,36 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                                     radius: 20,
                                     backgroundColor:
                                         Theme.of(context).primaryColor,
-                                    child: widget.userData['profilePicture'] !=
-                                            null
-                                        ? ClipOval(
-                                            child: Image.network(
-                                              widget.userData['profilePicture'],
-                                              width: 40,
-                                              height: 40,
-                                              fit: BoxFit.cover,
-                                              errorBuilder:
-                                                  (context, error, stackTrace) {
-                                                return Icon(
-                                                  Icons.person,
-                                                  color: Colors.white,
-                                                  size: 20,
-                                                );
-                                              },
-                                            ),
-                                          )
-                                        : Icon(
-                                            Icons.person,
-                                            color: Colors.white,
-                                            size: 20,
+                                    child: (() {
+                                      final photoUrl = (_userData[
+                                                  'profilePictureUrl'] ??
+                                              _userData['profilePicture'] ??
+                                              '')
+                                          .toString();
+                                      if (photoUrl.isNotEmpty) {
+                                        return ClipOval(
+                                          child: Image.network(
+                                            photoUrl,
+                                            width: 40,
+                                            height: 40,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (context, error,
+                                                stackTrace) {
+                                              return const Icon(
+                                                Icons.person,
+                                                color: Colors.white,
+                                                size: 20,
+                                              );
+                                            },
                                           ),
+                                        );
+                                      }
+                                      return const Icon(
+                                        Icons.person,
+                                        color: Colors.white,
+                                        size: 20,
+                                      );
+                                    })(),
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -457,7 +488,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                                         context,
                                         MaterialPageRoute(
                                           builder: (context) => SosPage(
-                                            userData: widget.userData,
+                                            userData: _userData,
                                           ),
                                         ),
                                       );
@@ -591,12 +622,12 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
 
                       // 🔐 Vault tab
                       MyVault(
-                        userId: (widget.userData["id"] ?? "").toString(),
+                        userId: (_userData["id"] ?? "").toString(),
                       ),
 
                       QRPage(),
                       RequestsPage(),
-                      SettingsPage(userData: widget.userData),
+                      SettingsPage(userData: _userData),
                     ],
                   ),
                   // Fixed AI Assistant button above footer
@@ -681,7 +712,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
           MaterialPageRoute(
             builder: (context) => CategoryVaultPage(
               category: category,
-              userId: (widget.userData["id"] ?? "").toString(),
+              userId: (_userData["id"] ?? "").toString(),
             ),
           ),
         );
@@ -789,7 +820,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => ProfileSwitcherModal(
-        currentUser: widget.userData,
+        currentUser: _userData,
         linkedProfiles: _linkedProfiles,
       ),
     ).then((_) {
@@ -803,7 +834,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       context,
       MaterialPageRoute(
         builder: (context) => ReportLostPage(
-          currentUser: Map<String, dynamic>.from(widget.userData),
+          currentUser: Map<String, dynamic>.from(_userData),
           linkedProfiles: _linkedProfiles,
         ),
       ),

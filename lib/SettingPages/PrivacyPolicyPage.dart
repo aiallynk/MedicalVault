@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../localization/app_localizations.dart';
 
 class PrivacyPolicy extends StatefulWidget {
   const PrivacyPolicy({super.key});
@@ -42,21 +43,21 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
       setState(() {
         _privacyUpdates = [
           {
-            'date': '2024-01-15',
-            'version': '1.1',
-            'changes': [
-              'Added biometric authentication support',
-              'Enhanced data encryption protocols',
-              'Updated third-party data sharing policies'
+            'dateKey': 'privacy.update1.date',
+            'versionKey': 'privacy.update1.version',
+            'changeKeys': [
+              'privacy.update1.change1',
+              'privacy.update1.change2',
+              'privacy.update1.change3',
             ]
           },
           {
-            'date': '2024-01-01',
-            'version': '1.0',
-            'changes': [
-              'Initial privacy policy implementation',
-              'Basic data collection and usage policies',
-              'User consent mechanisms'
+            'dateKey': 'privacy.update2.date',
+            'versionKey': 'privacy.update2.version',
+            'changeKeys': [
+              'privacy.update2.change1',
+              'privacy.update2.change2',
+              'privacy.update2.change3',
             ]
           }
         ];
@@ -78,8 +79,9 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Privacy Policy accepted successfully'),
+      SnackBar(
+        content:
+            Text(context.l10n.t('privacy.acceptedSuccess')),
         backgroundColor: Colors.green,
       ),
     );
@@ -87,13 +89,18 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final sections = List.generate(
+      13,
+      (index) => index + 1,
+    );
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('Privacy Policy'),
+        title: Text(l10n.t('privacy.title')),
         actions: [
           IconButton(
             icon: const Icon(Icons.update),
@@ -102,7 +109,7 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
                 _showUpdates = !_showUpdates;
               });
             },
-            tooltip: 'Show Updates',
+            tooltip: l10n.t('privacy.showUpdates'),
           ),
         ],
       ),
@@ -130,8 +137,9 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
                       Expanded(
                         child: Text(
                           _hasAcceptedPrivacy
-                              ? 'Privacy Policy Accepted (v$_version)'
-                              : 'Please review and accept our Privacy Policy',
+                              ? l10n.format('privacy.banner.accepted',
+                                  {'version': _version})
+                              : l10n.t('privacy.banner.pending'),
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: _hasAcceptedPrivacy
@@ -145,7 +153,7 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
                 ),
 
                 // Privacy Updates Section
-                if (_showUpdates) _buildPrivacyUpdatesSection(),
+                if (_showUpdates) _buildPrivacyUpdatesSection(l10n),
 
                 // Main Privacy Policy Content
                 Expanded(
@@ -155,116 +163,12 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _buildSectionTitle('1. Information We Collect'),
-                          _buildBulletPoint(
-                              'Personal Information: Name, email, phone number, date of birth'),
-                          _buildBulletPoint(
-                              'Health Information: Medical records, prescriptions, test results'),
-                          _buildBulletPoint(
-                              'Device Information: Device type, operating system, unique identifiers'),
-                          _buildBulletPoint(
-                              'Usage Data: App interactions, features used, time spent'),
-                          _buildBulletPoint(
-                              'Location Data: General location for emergency services (optional)'),
-                          const SizedBox(height: 20),
-                          _buildSectionTitle('2. How We Use Your Information'),
-                          _buildBulletPoint(
-                              'Provide healthcare services and medical consultations'),
-                          _buildBulletPoint(
-                              'Maintain your medical records and health history'),
-                          _buildBulletPoint(
-                              'Send appointment reminders and health notifications'),
-                          _buildBulletPoint(
-                              'Improve app functionality and user experience'),
-                          _buildBulletPoint(
-                              'Comply with legal and regulatory requirements'),
-                          _buildBulletPoint(
-                              'Emergency medical situations and safety alerts'),
-                          const SizedBox(height: 20),
-                          _buildSectionTitle('3. Information Sharing'),
-                          _buildBulletPoint(
-                              'Healthcare Providers: Share with your authorized doctors and specialists'),
-                          _buildBulletPoint(
-                              'Emergency Services: Share critical information in life-threatening situations'),
-                          _buildBulletPoint(
-                              'Service Providers: Trusted third parties who assist in app operations'),
-                          _buildBulletPoint(
-                              'Legal Requirements: When required by law or court order'),
-                          _buildBulletPoint(
-                              'Your Consent: Only with your explicit permission for other purposes'),
-                          const SizedBox(height: 20),
-                          _buildSectionTitle('4. Data Security'),
-                          _buildBulletPoint(
-                              'End-to-end encryption for all health data transmission'),
-                          _buildBulletPoint(
-                              'Secure cloud storage with industry-standard security protocols'),
-                          _buildBulletPoint(
-                              'Regular security audits and vulnerability assessments'),
-                          _buildBulletPoint(
-                              'Access controls and authentication mechanisms'),
-                          _buildBulletPoint(
-                              'Data backup and disaster recovery procedures'),
-                          const SizedBox(height: 20),
-                          _buildSectionTitle('5. Your Rights'),
-                          _buildBulletPoint(
-                              'Access: Request copies of your personal and health information'),
-                          _buildBulletPoint(
-                              'Correction: Update or correct inaccurate information'),
-                          _buildBulletPoint(
-                              'Deletion: Request deletion of your data (subject to legal requirements)'),
-                          _buildBulletPoint(
-                              'Portability: Export your data in a standard format'),
-                          _buildBulletPoint(
-                              'Restriction: Limit how we process your information'),
-                          _buildBulletPoint(
-                              'Objection: Object to certain types of data processing'),
-                          const SizedBox(height: 20),
-                          _buildSectionTitle('6. Data Retention'),
-                          _buildBulletPoint(
-                              'Medical records: Retained as required by healthcare regulations'),
-                          _buildBulletPoint(
-                              'Account data: Retained while your account is active'),
-                          _buildBulletPoint(
-                              'Usage data: Retained for up to 2 years for analytics'),
-                          _buildBulletPoint(
-                              'Deleted data: Permanently removed from all systems'),
-                          const SizedBox(height: 20),
-                          _buildSectionTitle('7. Children\'s Privacy'),
-                          _buildBulletPoint(
-                              'App is not intended for children under 13 years of age'),
-                          _buildBulletPoint(
-                              'We do not knowingly collect information from children under 13'),
-                          _buildBulletPoint(
-                              'Parents can manage their children\'s health information'),
-                          const SizedBox(height: 20),
-                          _buildSectionTitle('8. International Transfers'),
-                          _buildBulletPoint(
-                              'Data may be transferred to countries with adequate protection'),
-                          _buildBulletPoint(
-                              'We ensure appropriate safeguards for international transfers'),
-                          _buildBulletPoint(
-                              'You will be notified of any significant changes to data location'),
-                          const SizedBox(height: 20),
-                          _buildSectionTitle('9. Policy Updates'),
-                          _buildBulletPoint(
-                              'We may update this policy from time to time'),
-                          _buildBulletPoint(
-                              'Significant changes will be notified via app notification'),
-                          _buildBulletPoint(
-                              'Continued use of the app constitutes acceptance of updates'),
-                          _buildBulletPoint(
-                              'Previous versions are available upon request'),
-                          const SizedBox(height: 20),
-                          _buildSectionTitle('10. Contact Information'),
-                          _buildBulletPoint(
-                              'Privacy Officer: privacy@healthvault.com'),
-                          _buildBulletPoint(
-                              'Data Protection Officer: dpo@healthvault.com'),
-                          _buildBulletPoint(
-                              'General Inquiries: support@healthvault.com'),
-                          _buildBulletPoint('Phone: +1-800-HEALTH-VAULT'),
-                          _buildBulletPoint(
-                              'Address: 123 Healthcare Street, Medical City, MC 12345'),
+                          for (final sectionIndex in sections)
+                            _buildSectionBlock(
+                              context,
+                              l10n,
+                              sectionIndex,
+                            ),
                           const SizedBox(height: 30),
                           Container(
                             padding: const EdgeInsets.all(16),
@@ -276,13 +180,25 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                Text(
+                                  l10n.t('privacyPage.summary'),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.blue.shade700,
+                                      ),
+                                ),
+                                const SizedBox(height: 12),
                                 Row(
                                   children: [
                                     Icon(Icons.info,
                                         color: Colors.blue.shade700),
                                     const SizedBox(width: 8),
                                     Text(
-                                      'Last Updated: $_lastUpdated',
+                                      l10n.format('privacyPage.lastUpdated',
+                                          {'date': _lastUpdated}),
                                       style: TextStyle(
                                         fontWeight: FontWeight.bold,
                                         color: Colors.blue.shade700,
@@ -292,7 +208,8 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Version: $_version',
+                                  l10n.format('privacy.versionLabel',
+                                      {'version': _version}),
                                   style: TextStyle(color: Colors.blue.shade600),
                                 ),
                               ],
@@ -319,7 +236,7 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 16),
                             ),
-                            child: const Text('Accept Privacy Policy'),
+                            child: Text(l10n.t('privacy.acceptButton')),
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -331,8 +248,9 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 16),
                           ),
-                          child: Text(
-                              _hasAcceptedPrivacy ? 'Close' : 'I Understand'),
+                          child: Text(_hasAcceptedPrivacy
+                              ? l10n.t('common.close')
+                              : l10n.t('privacy.understandButton')),
                         ),
                       ),
                     ],
@@ -357,25 +275,7 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
     );
   }
 
-  Widget _buildBulletPoint(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 16, bottom: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('• ', style: TextStyle(fontSize: 16, color: Colors.grey)),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(fontSize: 16, height: 1.4),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPrivacyUpdatesSection() {
+  Widget _buildPrivacyUpdatesSection(AppLocalizations l10n) {
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(16),
@@ -392,7 +292,7 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
               Icon(Icons.update, color: Colors.blue.shade700),
               const SizedBox(width: 8),
               Text(
-                'Recent Privacy Policy Updates',
+                l10n.t('privacy.updatesTitle'),
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Colors.blue.shade700,
@@ -401,13 +301,15 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
             ],
           ),
           const SizedBox(height: 12),
-          ..._privacyUpdates.map((update) => _buildUpdateItem(update)),
+          ..._privacyUpdates
+              .map((update) => _buildUpdateItem(update, l10n)),
         ],
       ),
     );
   }
 
-  Widget _buildUpdateItem(Map<String, dynamic> update) {
+  Widget _buildUpdateItem(
+      Map<String, dynamic> update, AppLocalizations l10n) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -422,18 +324,19 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
           Row(
             children: [
               Text(
-                'Version ${update['version']}',
+                l10n.format('privacy.update.versionLabel',
+                    {'version': l10n.t(update['versionKey'])}),
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               const Spacer(),
               Text(
-                update['date'],
+                l10n.t(update['dateKey']),
                 style: TextStyle(color: Colors.grey.shade600),
               ),
             ],
           ),
           const SizedBox(height: 8),
-          ...(update['changes'] as List).map((change) => Padding(
+          ...(update['changeKeys'] as List).map((key) => Padding(
                 padding: const EdgeInsets.only(left: 8, bottom: 2),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -441,7 +344,7 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
                     const Text('• ', style: TextStyle(color: Colors.grey)),
                     Expanded(
                       child: Text(
-                        change,
+                        l10n.t(key as String),
                         style: const TextStyle(fontSize: 14),
                       ),
                     ),
@@ -450,6 +353,25 @@ class _PrivacyPolicyState extends State<PrivacyPolicy> {
               )),
         ],
       ),
+    );
+  }
+
+  Widget _buildSectionBlock(
+      BuildContext context, AppLocalizations l10n, int index) {
+    final title = l10n.t('privacyPage.section$index.title');
+    final body = l10n.t('privacyPage.section$index.body');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(title),
+        Text(
+          body,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                height: 1.5,
+              ),
+        ),
+        const SizedBox(height: 20),
+      ],
     );
   }
 }

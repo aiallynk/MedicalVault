@@ -1,38 +1,19 @@
 import 'package:flutter/material.dart';
-
-void main() {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Contact Support',
-      theme: ThemeData(
-        primarySwatch: Colors.green,
-        scaffoldBackgroundColor:
-            const Color(0xFFE0F7FA), // Light cyan background
-      ),
-      home: const ContactSupportScreen(),
-    );
-  }
-}
+import '../localization/app_localizations.dart';
 
 class ContactSupportScreen extends StatelessWidget {
   const ContactSupportScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('Contact Support'),
+        title: Text(l10n.t('contactSupport.title')),
         backgroundColor: Colors.transparent,
         elevation: 0,
       ),
@@ -43,17 +24,17 @@ class ContactSupportScreen extends StatelessWidget {
           children: [
             const SizedBox(height: 16),
             // Email Support Section
-            const Text(
-              'Email Support',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Text(
+              l10n.t('contactSupport.emailTitle'),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 4),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'medicalvault@aially.in',
-                  style: TextStyle(fontSize: 16),
+                Text(
+                  l10n.t('contactSupport.emailValue'),
+                  style: const TextStyle(fontSize: 16),
                 ),
                 Container(
                   padding: const EdgeInsets.all(8),
@@ -71,17 +52,17 @@ class ContactSupportScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             // Call Support Section
-            const Text(
-              'Call Support',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Text(
+              l10n.t('contactSupport.phoneTitle'),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 4),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  '+91 98765 43210',
-                  style: TextStyle(fontSize: 16),
+                Text(
+                  l10n.t('contactSupport.phoneValue'),
+                  style: const TextStyle(fontSize: 16),
                 ),
                 Container(
                   padding: const EdgeInsets.all(8),

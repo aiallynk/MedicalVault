@@ -64,7 +64,8 @@ class Doctor {
       id: json['_id'],
       name: json['name'],
       email: json['email'],
-      profilePicture: json['profilePicture'],
+      profilePicture: (json['profilePictureUrl'] ?? json['profilePicture'])
+          ?.toString(),
       experience: json['experience'],
       specialization: json['specialization'],
       memberSince: json['memberSince'] != null
@@ -435,6 +436,9 @@ class _RequestsPageState extends State<RequestsPage> {
                       : null,
                   backgroundColor:
                       Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                  onBackgroundImageError: (exception, stackTrace) {
+                    // Silently handle error - fallback icon will show
+                  },
                   child: doctor.profilePicture == null
                       ? Icon(Icons.person,
                           color: Theme.of(context).colorScheme.primary)

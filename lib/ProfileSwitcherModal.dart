@@ -3,6 +3,7 @@ import 'package:hello/BottomNavigationBar/dashboard1.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'api_service.dart';
+import 'localization/app_localizations.dart';
 // ignore: unused_import
 import 'BottomNavigationBar/MyVault.dart';
 
@@ -49,7 +50,7 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
             child: Row(
               children: [
                 Text(
-                  "Switch Profile",
+                  context.l10n.t('profileSwitcher.title'),
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
@@ -84,6 +85,38 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
     );
   }
 
+  Widget _buildAvatar(
+    dynamic source, {
+    double radius = 28,
+  }) {
+    final photoUrl = (source ?? '').toString();
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: Theme.of(context).primaryColor,
+      child: photoUrl.isNotEmpty
+          ? ClipOval(
+              child: Image.network(
+                photoUrl,
+                width: radius * 2,
+                height: radius * 2,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Icon(
+                    Icons.person,
+                    color: Colors.white,
+                    size: radius,
+                  );
+                },
+              ),
+            )
+          : Icon(
+              Icons.person,
+              color: Colors.white,
+              size: radius,
+            ),
+    );
+  }
+
   Widget _buildCurrentProfileSection() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -98,30 +131,10 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
       ),
       child: Row(
         children: [
-          CircleAvatar(
+          _buildAvatar(
+            widget.currentUser['profilePictureUrl'] ??
+                widget.currentUser['profilePicture'],
             radius: 25,
-            backgroundColor: Theme.of(context).primaryColor,
-            child: widget.currentUser['profilePicture'] != null
-                ? ClipOval(
-                    child: Image.network(
-                      widget.currentUser['profilePicture'],
-                      width: 50,
-                      height: 50,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Icon(
-                          Icons.person,
-                          color: Colors.white,
-                          size: 25,
-                        );
-                      },
-                    ),
-                  )
-                : Icon(
-                    Icons.person,
-                    color: Colors.white,
-                    size: 25,
-                  ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -150,7 +163,7 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
-              "Current",
+              context.l10n.t('profileSwitcher.current'),
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 12,
@@ -175,12 +188,12 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
           ),
           const SizedBox(height: 16),
           Text(
-            "No linked profiles",
+            context.l10n.t('profileSwitcher.empty.title'),
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
           Text(
-            "Add profiles to switch between them",
+            context.l10n.t('profileSwitcher.empty.subtitle'),
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context)
                       .textTheme
@@ -203,33 +216,13 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
           borderRadius: BorderRadius.circular(12),
         ),
         tileColor: Theme.of(context).cardColor,
-        leading: CircleAvatar(
+        leading: _buildAvatar(
+          profile['profilePictureUrl'] ?? profile['profilePicture'],
           radius: 25,
-          backgroundColor: Theme.of(context).primaryColor,
-          child: profile['profilePicture'] != null
-              ? ClipOval(
-                  child: Image.network(
-                    profile['profilePicture'],
-                    width: 50,
-                    height: 50,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Icon(
-                        Icons.person,
-                        color: Colors.white,
-                        size: 25,
-                      );
-                    },
-                  ),
-                )
-              : Icon(
-                  Icons.person,
-                  color: Colors.white,
-                  size: 25,
-                ),
         ),
         title: Text(
-          profile['name'] ?? 'Unknown',
+          profile['name']?.toString() ??
+              context.l10n.t('profileSwitcher.unknown'),
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
@@ -300,15 +293,20 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("✅ Switched to ${profile['name']}"),
+            content: Text(
+              context.l10n.format('profileSwitcher.switchSuccess', {
+                'name': profile['name']?.toString() ??
+                    context.l10n.t('profileSwitcher.unknown')
+              }),
+            ),
             backgroundColor: Colors.green,
           ),
         );
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Failed to switch profile"),
+          SnackBar(
+            content: Text(context.l10n.t('profileSwitcher.switchFailed')),
             backgroundColor: Colors.red,
           ),
         );
@@ -318,7 +316,10 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
       final errorMessage = e.toString().replaceAll('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(errorMessage),
+          content: Text(
+            context.l10n.format('profileSwitcher.switchError',
+                {'error': errorMessage}),
+          ),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 4),
         ),
@@ -344,20 +345,28 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           backgroundColor: Theme.of(context).dialogBackgroundColor,
-          title: Text("Switch to ${profile['name']}",
+          title: Text(
+              context.l10n.format('profileSwitcher.password.title', {
+                'name': profile['name']?.toString() ??
+                    context.l10n.t('profileSwitcher.unknown')
+              }),
               style: Theme.of(context).textTheme.titleLarge),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text("Enter password for ${profile['name']}:",
+              Text(
+                  context.l10n.format('profileSwitcher.password.prompt', {
+                    'name': profile['name']?.toString() ??
+                        context.l10n.t('profileSwitcher.unknown')
+                  }),
                   style: Theme.of(context).textTheme.bodyMedium),
               const SizedBox(height: 16),
               TextField(
                 controller: passwordController,
                 style: Theme.of(context).textTheme.bodyMedium,
                 decoration: InputDecoration(
-                  labelText: "Password",
-                  hintText: "Enter password",
+                  labelText: context.l10n.t('profileSwitcher.password.label'),
+                  hintText: context.l10n.t('profileSwitcher.password.hint'),
                   labelStyle: Theme.of(context).textTheme.bodyMedium,
                   hintStyle: Theme.of(context).textTheme.bodyMedium,
                   border: OutlineInputBorder(),
@@ -384,8 +393,8 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
             TextButton(
               onPressed:
                   isPasswordLoading ? null : () => Navigator.pop(context),
-              child:
-                  Text("Cancel", style: Theme.of(context).textTheme.bodyLarge),
+              child: Text(context.l10n.t('common.cancel'),
+                  style: Theme.of(context).textTheme.bodyLarge),
             ),
             TextButton(
               onPressed: isPasswordLoading
@@ -421,7 +430,11 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
 
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text("✅ Switched to ${profile['name']}"),
+                            content: Text(context.l10n
+                                .format('profileSwitcher.switchSuccess', {
+                              'name': profile['name']?.toString() ??
+                                  context.l10n.t('profileSwitcher.unknown')
+                            })),
                             backgroundColor: Colors.green,
                           ),
                         );
@@ -430,7 +443,10 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
                             e.toString().replaceAll('Exception: ', '');
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text(errorMessage),
+                            content: Text(context.l10n
+                                .format('profileSwitcher.switchError', {
+                              'error': errorMessage
+                            })),
                             backgroundColor: Colors.red,
                             duration: const Duration(seconds: 4),
                           ),
@@ -447,7 +463,7 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text("Switch"),
+                  : Text(context.l10n.t('profileSwitcher.password.switch')),
             ),
           ],
         ),

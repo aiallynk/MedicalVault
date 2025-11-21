@@ -240,8 +240,10 @@ class _ReportLostPageState extends State<ReportLostPage> {
     }
 
     if (_photoSelection == _PhotoSelection.vaultProfile) {
-      final profilePhoto =
-          _selectedProfile?['profilePicture']?.toString().trim();
+      final profilePhoto = (_selectedProfile?['profilePictureUrl'] ??
+              _selectedProfile?['profilePicture'])
+          ?.toString()
+          .trim();
       if (profilePhoto == null || profilePhoto.isEmpty) {
         _showMessage(
           l10n.t('lostReport.profileNeedsPhoto'),
@@ -355,7 +357,10 @@ class _ReportLostPageState extends State<ReportLostPage> {
 
   Widget _buildPhotoSection() {
     final l10n = context.l10n;
-    final profilePhoto = _selectedProfile?['profilePicture']?.toString().trim();
+    final profilePhoto = (_selectedProfile?['profilePictureUrl'] ??
+            _selectedProfile?['profilePicture'])
+        ?.toString()
+        .trim();
     final showVaultOption = _target == _LostReportTarget.profile &&
         (profilePhoto?.isNotEmpty ?? false);
 
@@ -377,6 +382,9 @@ class _ReportLostPageState extends State<ReportLostPage> {
                   child: CircleAvatar(
                     radius: 28,
                     backgroundImage: NetworkImage(profilePhoto),
+                    onBackgroundImageError: (exception, stackTrace) {
+                      // Silently handle error - fallback will show
+                    },
                   ),
                 )
               : null,
@@ -521,7 +529,8 @@ class _ReportLostPageState extends State<ReportLostPage> {
                         }
                       }
                       if (_photoSelection == _PhotoSelection.upload &&
-                          (_selectedProfile?['profilePicture'] != null)) {
+                          (_selectedProfile?['profilePictureUrl'] != null ||
+                              _selectedProfile?['profilePicture'] != null)) {
                         _photoSelection = _PhotoSelection.vaultProfile;
                       }
                     });
