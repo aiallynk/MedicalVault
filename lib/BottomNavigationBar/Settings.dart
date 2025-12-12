@@ -307,7 +307,6 @@ class _SettingsPageState extends State<SettingsPage> {
             _buildTile(
                 Icons.lock, l10n.auto('Password'), '', ChangePasswordScreen()),
             SectionTitle(l10n.auto('QR & Sharing')),
-            _buildTile(Icons.qr_code, l10n.auto('Regenerate QR'), "", QRPage()),
             _buildTile(Icons.share, l10n.auto('Sharing Controls'), "", QRPage()),
             _buildMedicalCardTile(),
             SectionTitle(l10n.auto('Language')),

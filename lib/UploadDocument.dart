@@ -49,11 +49,44 @@ class _UploadDocumentState extends State<UploadDocument> {
     }
   }
 
-  /// Remove selected file
+  /// Remove selected file with confirmation
   void _removeSelectedFile() {
-    setState(() {
-      _selectedFile = null;
-    });
+    final l10n = context.l10n;
+    final fileName = _selectedFile?.path.split('/').last ?? '';
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.t('uploadDocument.deleteFile.title')),
+        content: Text(
+          l10n.format('uploadDocument.deleteFile.message', {'fileName': fileName}),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(l10n.t('common.cancel')),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                _selectedFile = null;
+              });
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: Text(l10n.t('common.delete')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Check if file is an image
+  bool _isImageFile(File file) {
+    final extension = file.path.split('.').last.toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].contains(extension);
   }
 
   Future<void> _pickDate() async {
@@ -208,6 +241,7 @@ class _UploadDocumentState extends State<UploadDocument> {
                 ),
               ),
               const SizedBox(height: 12),
+              // File picker buttons
               Row(
                 children: [
                   Container(
@@ -235,21 +269,10 @@ class _UploadDocumentState extends State<UploadDocument> {
                       onPressed: _pickFromCamera,
                     ),
                   ),
-                  // ✅ Add remove button when file is selected
-                  if (_selectedFile != null) ...[
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.remove, color: Colors.red),
-                      onPressed: _removeSelectedFile,
-                      tooltip: l10n.t('uploadDocument.button.removeFile'),
-                    ),
-                  ],
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      _selectedFile != null
-                          ? _selectedFile!.path.split('/').last
-                          : l10n.t('uploadDocument.field.filePlaceholder'),
+                      l10n.t('uploadDocument.field.filePlaceholder'),
                       style: TextStyle(
                         color: Theme.of(context).brightness == Brightness.dark
                             ? Colors.grey[400]
@@ -259,6 +282,11 @@ class _UploadDocumentState extends State<UploadDocument> {
                   ),
                 ],
               ),
+              // File preview (appears below buttons when file is selected)
+              if (_selectedFile != null) ...[
+                const SizedBox(height: 12),
+                _buildFilePreview(),
+              ],
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
@@ -335,6 +363,112 @@ class _UploadDocumentState extends State<UploadDocument> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildFilePreview() {
+    if (_selectedFile == null) return const SizedBox.shrink();
+
+    final isImage = _isImageFile(_selectedFile!);
+    final fileName = _selectedFile!.path.split('/').last;
+
+    return Container(
+      height: 80,
+      decoration: BoxDecoration(
+        color: Theme.of(context).brightness == Brightness.dark
+            ? Colors.grey[800]
+            : Colors.grey[100],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Theme.of(context).dividerColor,
+          width: 1,
+        ),
+      ),
+      child: Stack(
+        children: [
+          // Preview content
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                // Image preview or file icon
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).brightness == Brightness.dark
+                        ? Colors.grey[700]
+                        : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: isImage
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(
+                            _selectedFile!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Icon(
+                                Icons.broken_image,
+                                color: Theme.of(context).colorScheme.error,
+                                size: 32,
+                              );
+                            },
+                          ),
+                        )
+                      : Icon(
+                          Icons.insert_drive_file,
+                          size: 32,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                ),
+                const SizedBox(width: 12),
+                // File name
+                Expanded(
+                  child: Text(
+                    fileName,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Remove button (cross) on top right
+          Positioned(
+            top: 4,
+            right: 4,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _removeSelectedFile,
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.close,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

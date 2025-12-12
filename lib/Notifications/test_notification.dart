@@ -14,7 +14,6 @@ class _TestNotificationScreenState extends State<TestNotificationScreen> {
   final NotificationManager _notificationManager = NotificationManager();
   final NotificationSettingsService _settingsService =
       NotificationSettingsService();
-  final GlobalNotificationHandler _globalHandler = GlobalNotificationHandler();
 
   @override
   void initState() {

@@ -15,6 +15,7 @@ import 'Notifications/fcm_service.dart';
 import 'Notifications/global_notification_handler.dart';
 import 'localization/app_localizations.dart';
 import 'providers/language_provider.dart';
+import 'screens/splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -101,7 +102,7 @@ class MyApp extends StatelessWidget {
             }
             return supportedLocales.first;
           },
-          home: const NotificationWrapper(),
+          home: const SplashScreenWrapper(),
         );
       },
     );
@@ -495,6 +496,17 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class SplashScreenWrapper extends StatelessWidget {
+  const SplashScreenWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return SplashScreen(
+      child: const NotificationWrapper(),
     );
   }
 }

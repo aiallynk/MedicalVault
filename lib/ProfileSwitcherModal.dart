@@ -89,7 +89,16 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
     dynamic source, {
     double radius = 28,
   }) {
-    final photoUrl = (source ?? '').toString();
+    // Only use profilePictureUrl if it's a valid HTTP URL (signed URL)
+    // Never use profilePicture (S3 key) directly
+    String photoUrl = '';
+    if (source != null) {
+      final urlStr = source.toString().trim();
+      if (urlStr.isNotEmpty && urlStr.startsWith('http')) {
+        photoUrl = urlStr;
+      }
+    }
+    
     return CircleAvatar(
       radius: radius,
       backgroundColor: Theme.of(context).primaryColor,
@@ -101,6 +110,7 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
                 height: radius * 2,
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) {
+                  // Silently handle errors - show fallback icon
                   return Icon(
                     Icons.person,
                     color: Colors.white,

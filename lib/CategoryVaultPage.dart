@@ -442,14 +442,359 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     }
   }
 
-  // ---------------- DELETE ----------------
-  Future<void> _deleteFile(Document document) async {
+  // ---------------- EDIT FILE ----------------
+  Future<void> _editFile(Document document) async {
+    final l10n = context.l10n;
     if (document.id == null || document.id!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.t('common.invalidDocumentId'))),
+        SnackBar(content: Text(l10n.t('common.invalidDocumentId'))),
       );
       return;
     }
+
+    // Get preview URL for the modal
+    String? previewUrl;
+    try {
+      previewUrl = await _getPreviewUrl(document.id!);
+    } catch (e) {
+      debugPrint("⚠️ Could not get preview URL: $e");
+    }
+
+    // Controllers for editing
+    final titleController = TextEditingController(text: document.title ?? '');
+    final descriptionController = TextEditingController(text: document.description ?? '');
+    final notesController = TextEditingController(text: document.notes ?? '');
+    final dateController = TextEditingController(
+      text: document.date != null && document.date!.isNotEmpty
+          ? document.date!.split('T')[0]
+          : '',
+    );
+    // Normalize category to match dropdown values (capitalized)
+    String _normalizeCategory(String? category) {
+      if (category == null || category.isEmpty) return 'Report';
+      final lower = category.toLowerCase().trim();
+      if (lower.contains('report')) return 'Report';
+      if (lower.contains('prescription')) return 'Prescription';
+      if (lower.contains('bill')) return 'Bill';
+      if (lower.contains('insurance')) return 'Insurance';
+      return 'Report'; // Default
+    }
+
+    // Initialize with normalized category
+    String initialCategory = _normalizeCategory(document.category);
+    // Ensure it's one of the valid dropdown values
+    const validCategories = ['Report', 'Prescription', 'Bill', 'Insurance'];
+    if (!validCategories.contains(initialCategory)) {
+      initialCategory = 'Report';
+    }
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        // State variable that persists across rebuilds
+        String selectedCategory = initialCategory;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => Dialog(
+          backgroundColor: Theme.of(context).dialogBackgroundColor,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Container(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.9),
+            width: MediaQuery.of(context).size.width * 0.9,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).primaryColor.withOpacity(0.1),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit, color: Theme.of(context).primaryColor),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          l10n.t('myVault.editDocument.title'),
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.close, color: Theme.of(context).iconTheme.color),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ),
+                // Content
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // File Preview
+                        if (previewUrl != null)
+                          Container(
+                            height: 200,
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 16),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).cardColor,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Theme.of(context).dividerColor,
+                              ),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: (document.fileType ?? '').toLowerCase().contains('image')
+                                  ? Image.network(
+                                      previewUrl,
+                                      fit: BoxFit.contain,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return Center(
+                                          child: Icon(
+                                            Icons.broken_image,
+                                            size: 64,
+                                            color: Theme.of(context).colorScheme.error,
+                                          ),
+                                        );
+                                      },
+                                    )
+                                  : Center(
+                                      child: Icon(
+                                        Icons.insert_drive_file,
+                                        size: 64,
+                                        color: Theme.of(context).primaryColor,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        // Title
+                        TextField(
+                          controller: titleController,
+                          decoration: InputDecoration(
+                            labelText: l10n.t('myVault.editDocument.titleLabel'),
+                            hintText: l10n.t('myVault.editDocument.titleHint'),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            prefixIcon: Icon(Icons.title, color: Theme.of(context).primaryColor),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        // Category
+                        DropdownButtonFormField<String>(
+                          value: validCategories.contains(selectedCategory) 
+                              ? selectedCategory 
+                              : 'Report',
+                          decoration: InputDecoration(
+                            labelText: l10n.t('myVault.editDocument.categoryLabel'),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            prefixIcon: Icon(Icons.category, color: Theme.of(context).primaryColor),
+                          ),
+                          items: validCategories
+                              .map((cat) => DropdownMenuItem(
+                                    value: cat,
+                                    child: Text(_localizedCategoryLabel(cat, l10n)),
+                                  ))
+                              .toList(),
+                          onChanged: (value) {
+                            if (value != null && validCategories.contains(value)) {
+                              selectedCategory = value;
+                              setDialogState(() {});
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        // Date
+                        TextField(
+                          controller: dateController,
+                          readOnly: true,
+                          decoration: InputDecoration(
+                            labelText: l10n.t('myVault.editDocument.dateLabel'),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            prefixIcon: Icon(Icons.calendar_today, color: Theme.of(context).primaryColor),
+                            suffixIcon: Icon(Icons.edit, color: Theme.of(context).iconTheme.color),
+                          ),
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: dateController.text.isNotEmpty
+                                  ? DateTime.tryParse(dateController.text) ?? DateTime.now()
+                                  : DateTime.now(),
+                              firstDate: DateTime(1900),
+                              lastDate: DateTime.now(),
+                            );
+                            if (picked != null) {
+                              setDialogState(() {
+                                dateController.text = picked.toIso8601String().split('T')[0];
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        // Description
+                        TextField(
+                          controller: descriptionController,
+                          decoration: InputDecoration(
+                            labelText: l10n.t('myVault.editDocument.descriptionLabel'),
+                            hintText: l10n.t('myVault.editDocument.descriptionHint'),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            prefixIcon: Icon(Icons.description, color: Theme.of(context).primaryColor),
+                          ),
+                          maxLines: 3,
+                        ),
+                        const SizedBox(height: 16),
+                        // Notes
+                        TextField(
+                          controller: notesController,
+                          decoration: InputDecoration(
+                            labelText: l10n.t('myVault.editDocument.notesLabel'),
+                            hintText: l10n.t('myVault.editDocument.notesHint'),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            prefixIcon: Icon(Icons.note, color: Theme.of(context).primaryColor),
+                          ),
+                          maxLines: 3,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Actions
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(color: Theme.of(context).dividerColor),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: Text(l10n.t('common.cancel')),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: () async {
+                          final updates = {
+                            'title': titleController.text.trim(),
+                            'category': selectedCategory,
+                            'description': descriptionController.text.trim(),
+                            'notes': notesController.text.trim(),
+                            if (dateController.text.isNotEmpty) 'date': dateController.text,
+                          };
+
+                          try {
+                            final result = await ApiService.updateDocument(document.id!, updates);
+                            if (result != null && result['success'] == true) {
+                              // Update local document
+                              final updatedDoc = Document.fromApi(result['document']);
+                              setState(() {
+                                final fileIndex = files.indexWhere((d) => d.id == document.id);
+                                final filteredIndex = filteredFiles.indexWhere((d) => d.id == document.id);
+                                if (fileIndex != -1) {
+                                  files[fileIndex] = updatedDoc;
+                                }
+                                if (filteredIndex != -1) {
+                                  filteredFiles[filteredIndex] = updatedDoc;
+                                }
+                              });
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(l10n.t('myVault.editDocument.success')),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(l10n.t('myVault.editDocument.failed')),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  l10n.format('common.errorWithMessage', {'message': e.toString()}),
+                                ),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        },
+                        child: Text(l10n.t('common.save')),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      },
+    );
+  }
+
+  // ---------------- DELETE ----------------
+  Future<void> _deleteFile(Document document) async {
+    final l10n = context.l10n;
+    if (document.id == null || document.id!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.t('common.invalidDocumentId'))),
+      );
+      return;
+    }
+
+    final fileName = document.title ?? document.fileName ?? l10n.t('documentDetail.untitled');
+    
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.t('myVault.deleteDocument.title')),
+        content: Text(
+          l10n.format('myVault.deleteDocument.message', {'fileName': fileName}),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(l10n.t('common.cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: Text(l10n.t('common.delete')),
+          ),
+        ],
+      ),
+    );
+
+    // If user didn't confirm, return early
+    if (confirmed != true) return;
 
     try {
       debugPrint("🗑 Deleting file with id=${document.id}");
@@ -461,7 +806,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
           filteredFiles.remove(document);
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.t('common.deleteSuccess'))),
+          SnackBar(content: Text(l10n.t('common.deleteSuccess'))),
         );
       } else {
         throw Exception("Server rejected delete for id=${document.id}");
@@ -470,7 +815,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
       debugPrint("❌ Delete error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(context.l10n
+          content: Text(l10n
               .format('common.deleteFailedWithMessage', {'error': '$e'})),
         ),
       );
@@ -734,26 +1079,83 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                                     style:
                                         Theme.of(context).textTheme.bodySmall,
                                   ),
-                                  trailing: Wrap(
-                                    spacing: 8,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.remove_red_eye,
-                                            color: Colors.blue),
-                                        onPressed: () => _openFile(file),
-                                        tooltip: l10n.t('common.preview'),
+                                  trailing: PopupMenuButton<String>(
+                                    icon: Icon(
+                                      Icons.more_vert,
+                                      color: Theme.of(context).iconTheme.color,
+                                    ),
+                                    onSelected: (value) {
+                                      switch (value) {
+                                        case 'edit':
+                                          _editFile(file);
+                                          break;
+                                        case 'preview':
+                                          _openFile(file);
+                                          break;
+                                        case 'download':
+                                          _downloadFile(file);
+                                          break;
+                                        case 'delete':
+                                          _deleteFile(file);
+                                          break;
+                                      }
+                                    },
+                                    itemBuilder: (BuildContext context) => [
+                                      PopupMenuItem<String>(
+                                        value: 'edit',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.edit,
+                                              size: 20,
+                                              color: Theme.of(context).primaryColor,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Text(l10n.t('common.edit')),
+                                          ],
+                                        ),
                                       ),
-                                      IconButton(
-                                        icon: const Icon(Icons.download,
-                                            color: Colors.green),
-                                        onPressed: () => _downloadFile(file),
-                                        tooltip: l10n.t('common.download'),
+                                      PopupMenuItem<String>(
+                                        value: 'preview',
+                                        child: Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.remove_red_eye,
+                                              size: 20,
+                                              color: Colors.green,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Text(l10n.t('common.preview')),
+                                          ],
+                                        ),
                                       ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete,
-                                            color: Colors.red),
-                                        onPressed: () => _deleteFile(file),
-                                        tooltip: l10n.t('common.delete'),
+                                      PopupMenuItem<String>(
+                                        value: 'download',
+                                        child: Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.download,
+                                              size: 20,
+                                              color: Colors.blue,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Text(l10n.t('common.download')),
+                                          ],
+                                        ),
+                                      ),
+                                      PopupMenuItem<String>(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.delete,
+                                              size: 20,
+                                              color: Colors.red,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Text(l10n.t('common.delete')),
+                                          ],
+                                        ),
                                       ),
                                     ],
                                   ),

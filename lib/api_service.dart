@@ -576,6 +576,29 @@ class ApiService {
   }
 
   // ---------------- DELETE ----------------
+  static Future<Map<String, dynamic>?> updateDocument(
+      String docId, Map<String, dynamic> updates) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.put(
+        Uri.parse("$filesUrl/$docId"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode(updates),
+      );
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        return data;
+      } else {
+        print("Update failed: ${res.body}");
+        return null;
+      }
+    } catch (e) {
+      print("Update error: $e");
+      return null;
+    }
+  }
+
   static Future<bool> deleteDocument(String docId) async {
     try {
       final headers = await _authHeaders();

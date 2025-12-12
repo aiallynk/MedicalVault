@@ -9,7 +9,6 @@ import 'package:hello/api_service.dart'; // 👈 Added
 import 'package:hello/SettingPages/ForgotPasswordPage.dart';
 import 'package:hello/Login_Signup/VerifyEmailPage.dart';
 import 'package:hello/Login_Signup/google_login.dart';
-import 'package:hello/Notifications/global_notification_handler.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});

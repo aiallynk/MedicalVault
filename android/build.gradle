@@ -24,6 +24,26 @@ allprojects {
 rootProject.buildDir = "../build"
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
+    
+    // Configure all Kotlin compilation tasks to use JVM target 21
+    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions {
+            jvmTarget = "21"
+        }
+        incremental = false
+    }
+    
+    // Configure Kotlin compilation to handle cross-drive paths
+    afterEvaluate {
+        if (project.hasProperty('android')) {
+            android {
+                compileOptions {
+                    sourceCompatibility = JavaVersion.VERSION_21
+                    targetCompatibility = JavaVersion.VERSION_21
+                }
+            }
+        }
+    }
 }
 subprojects {
     project.evaluationDependsOn(":app")

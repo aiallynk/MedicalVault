@@ -110,6 +110,46 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                       width: 72,
                       height: 72,
                       fit: BoxFit.cover,
+                      headers: const {
+                        'Cache-Control': 'max-age=3600',
+                      },
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surfaceVariant,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              value: loadingProgress.expectedTotalBytes != null
+                                  ? loadingProgress.cumulativeBytesLoaded /
+                                      loadingProgress.expectedTotalBytes!
+                                  : null,
+                              strokeWidth: 2,
+                            ),
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        // Log error for debugging but show fallback UI
+                        debugPrint('Image load error: $error for URL: $photoUrl');
+                        return Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surfaceVariant,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            Icons.person_search,
+                            color: theme.colorScheme.onSurfaceVariant,
+                            size: 36,
+                          ),
+                        );
+                      },
                     ),
                   )
                 else

@@ -133,12 +133,12 @@ class _ProfileNameState extends State<ProfileName> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.camera_alt),
+              leading: Icon(Icons.camera_alt, color: Theme.of(context).iconTheme.color),
               title: Text(l10n.t('profile.photo.camera')),
               onTap: () => Navigator.pop(context, ImageSource.camera),
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library),
+              leading: Icon(Icons.photo_library, color: Theme.of(context).iconTheme.color),
               title: Text(l10n.t('profile.photo.gallery')),
               onTap: () => Navigator.pop(context, ImageSource.gallery),
             ),
@@ -151,7 +151,6 @@ class _ProfileNameState extends State<ProfileName> {
 
   Future<void> _changeProfilePhoto() async {
     if (_isUploadingProfileImage) return;
-    final l10n = context.l10n;
     final source = await _showPhotoSourceSheet();
     if (source == null) return;
 
@@ -192,7 +191,7 @@ class _ProfileNameState extends State<ProfileName> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(l10n.t('profile.photo.updated')),
+          content: Text(context.l10n.t('profile.photo.updated')),
           backgroundColor: Colors.green,
         ),
       );
@@ -200,13 +199,11 @@ class _ProfileNameState extends State<ProfileName> {
       setState(() {
         _pendingProfileImage = null;
       });
-      final message = response == null
-          ? l10n.t('profile.photo.uploadFailed')
-          : (response['message']?.toString() ??
-              l10n.t('profile.photo.updateFailed'));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(message),
+          content: Text(response == null
+              ? context.l10n.t('profile.photo.uploadFailed')
+              : context.l10n.t('profile.photo.updateFailed')),
           backgroundColor: Colors.red,
         ),
       );
@@ -233,10 +230,22 @@ class _ProfileNameState extends State<ProfileName> {
     }
 
     final l10n = context.l10n;
-    final profilePhotoUrl =
-        (user['profilePictureUrl'] ?? user['profilePicture'] ?? '')
-            .toString()
-            .trim();
+    // Always prefer profilePictureUrl (signed URL) over profilePicture (S3 key)
+    // If profilePictureUrl is not available or looks like an S3 key (doesn't start with http),
+    // we should fetch a fresh signed URL from the backend
+    String profilePhotoUrl = '';
+    if (user['profilePictureUrl'] != null && 
+        user['profilePictureUrl'].toString().trim().isNotEmpty &&
+        user['profilePictureUrl'].toString().startsWith('http')) {
+      profilePhotoUrl = user['profilePictureUrl'].toString().trim();
+    } else if (user['profilePicture'] != null && 
+               user['profilePicture'].toString().trim().isNotEmpty) {
+      // If we only have the S3 key, fetch profile to get signed URL
+      if (!_loading && !_hasImageError) {
+        _fetchProfile();
+      }
+      profilePhotoUrl = ''; // Don't use S3 key directly
+    }
     final nameForInitial = (user['name'] ?? '').toString().trim();
     final fallbackInitial =
         nameForInitial.isNotEmpty ? nameForInitial[0].toUpperCase() : '';
@@ -277,6 +286,11 @@ class _ProfileNameState extends State<ProfileName> {
                                       : null),
                               onBackgroundImageError: (exception, stackTrace) {
                                 if (mounted) {
+                                  // If it's a 403 error, refresh the profile to get a new signed URL
+                                  if (exception.toString().contains('403') || 
+                                      exception.toString().contains('Forbidden')) {
+                                    _fetchProfile(); // Refresh to get new signed URL
+                                  }
                                   setState(() {
                                     _hasImageError = true;
                                   });
@@ -362,53 +376,97 @@ class _ProfileNameState extends State<ProfileName> {
                     ),
                   ),
                 ),
-                // Sections
+                // Sections with modern design
                 _sectionTitle(l10n.t('profile.personalInfo')),
                 _infoRow(Icons.phone, l10n.t('profile.mobile'),
-                    user['mobile'] ?? ''),
+                    user['mobile'] ?? '', 'mobile'),
                 _infoRow(Icons.security, l10n.t('profile.aadhaar'),
-                    user['aadhaar'] ?? ''),
+                    user['aadhaar'] ?? '', 'aadhaar'),
                 _infoRow(Icons.calendar_today, l10n.t('profile.dob'),
-                    user['dateOfBirth']?.toString().split("T")[0] ?? ''),
+                    user['dateOfBirth']?.toString().split("T")[0] ?? '', 'dateOfBirth'),
                 _sectionTitle(l10n.t('profile.healthInfo')),
                 _infoRow(Icons.person, l10n.t('profile.gender'),
-                    user['gender'] ?? ''),
+                    user['gender'] ?? '', 'gender'),
                 _infoRow(Icons.water_drop, l10n.t('profile.bloodType'),
-                    user['bloodType'] ?? ''),
+                    user['bloodType'] ?? '', 'bloodType'),
                 _infoRow(Icons.healing, l10n.t('profile.allergies'),
-                    (user['allergies'] ?? '').toString()),
+                    (user['allergies'] ?? '').toString(), 'allergies'),
                 _infoRow(Icons.height, l10n.t('profile.height'),
-                    user['height'] ?? ''),
+                    user['height'] ?? '', 'height'),
                 _infoRow(Icons.monitor_weight, l10n.t('profile.weight'),
-                    user['weight'] ?? ''),
+                    user['weight'] ?? '', 'weight'),
                 _infoRow(Icons.calendar_month, l10n.t('profile.lastVisit'),
-                    user['lastVisit']?.toString().split("T")[0] ?? ''),
+                    user['lastVisit']?.toString().split("T")[0] ?? '', 'lastVisit'),
                 _infoRow(Icons.event, l10n.t('profile.nextAppointment'),
-                    user['nextAppointment']?.toString().split("T")[0] ?? ''),
+                    user['nextAppointment']?.toString().split("T")[0] ?? '', 'nextAppointment'),
                 _sectionTitle(l10n.t('profile.emergencyContact')),
                 _infoRow(Icons.person, l10n.t('profile.emergencyName'),
-                    user['emergencyContact']?['name'] ?? ''),
+                    user['emergencyContact']?['name'] ?? '', 'emergencyContact.name'),
                 _infoRow(Icons.people, l10n.t('profile.emergencyRelationship'),
-                    user['emergencyContact']?['relationship'] ?? ''),
+                    user['emergencyContact']?['relationship'] ?? '', 'emergencyContact.relationship'),
                 _infoRow(Icons.phone, l10n.t('profile.emergencyPhone'),
-                    user['emergencyContact']?['phone'] ?? ''),
+                    user['emergencyContact']?['phone'] ?? '', 'emergencyContact.phone'),
                 _sectionTitle(l10n.t('profile.medicalHistory')),
                 _listSection(
                   user['medicalHistory'] ?? [],
                   (item) =>
-                      "${item['condition']} (${item['status']}) - ${item['diagnosed']}",
+                      "${item['condition']} (${item['status']}) - ${item['diagnosed']?.toString().split("T")[0] ?? ''}",
+                  'medicalHistory',
                 ),
+                if ((user['medicalHistory'] ?? []).isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: OutlinedButton.icon(
+                      onPressed: _addMedicalHistory,
+                      icon: Icon(Icons.add, size: 18, color: Theme.of(context).iconTheme.color),
+                      label: Text(l10n.t('profile.addMedicalHistory')),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                  ),
                 _sectionTitle(l10n.t('profile.medications')),
                 _listSection(
                   user['medications'] ?? [],
                   (item) =>
                       "${item['name']} - ${item['dosage']} (${item['frequency']})",
+                  'medications',
                 ),
+                if ((user['medications'] ?? []).isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: OutlinedButton.icon(
+                      onPressed: _addMedication,
+                      icon: Icon(Icons.add, size: 18, color: Theme.of(context).iconTheme.color),
+                      label: Text(l10n.t('profile.addMedication')),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                  ),
                 _medicalRecordsSection(),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
+                const SizedBox(height: 24),
+                // Modern edit all button
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Theme.of(context).primaryColor,
+                        Theme.of(context).primaryColor.withOpacity(0.8),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Theme.of(context).primaryColor.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ElevatedButton.icon(
                     onPressed: () async {
                       final result = await Navigator.push(
                         context,
@@ -420,18 +478,21 @@ class _ProfileNameState extends State<ProfileName> {
                         setState(() {
                           user = result;
                         });
+                        _fetchProfile(); // Refresh data
                       }
                     },
+                    icon: const Icon(Icons.edit_note, color: Colors.white),
+                    label: Text(
+                      l10n.t('profile.editAll'),
+                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
+                        borderRadius: BorderRadius.circular(16),
                       ),
-                    ),
-                    child: Text(
-                      l10n.t('profile.editButton'),
-                      style: const TextStyle(color: Colors.white, fontSize: 16),
                     ),
                   ),
                 ),
@@ -454,41 +515,124 @@ class _ProfileNameState extends State<ProfileName> {
     );
   }
 
-  Widget _infoRow(IconData icon, String label, String value) {
+  Widget _infoRow(IconData icon, String label, String value, String fieldKey) {
     final l10n = context.l10n;
+    final displayValue = value.isNotEmpty ? value : l10n.t('common.notAvailable');
+    
     return Card(
       color: Theme.of(context).cardColor,
-      margin: const EdgeInsets.symmetric(vertical: 3),
-      child: ListTile(
-        leading: Icon(icon, color: Colors.blue),
-        title: Text(label,
-            style: Theme.of(context)
-                .textTheme
-                .bodyLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
-        subtitle: Text(value.isNotEmpty ? value : l10n.t('common.notAvailable'),
-            style: Theme.of(context).textTheme.bodyMedium),
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: Theme.of(context).dividerColor.withOpacity(0.5),
+          width: 1,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: Theme.of(context).primaryColor, size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).hintColor,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    displayValue,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: Icon(Icons.edit, size: 20, color: Theme.of(context).primaryColor),
+              onPressed: () => _quickEditField(fieldKey, label, value),
+              tooltip: l10n.t('profile.quickEdit'),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _listSection(List items, String Function(dynamic) format) {
+  Widget _listSection(List items, String Function(dynamic) format, String sectionType) {
     final l10n = context.l10n;
     return items.isEmpty
-        ? Text(l10n.t('profile.noData'),
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium
-                ?.copyWith(color: Theme.of(context).hintColor))
+        ? Card(
+            color: Theme.of(context).cardColor,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Center(
+                child: Text(
+                  l10n.t('profile.noData'),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).hintColor,
+                  ),
+                ),
+              ),
+            ),
+          )
         : Column(
-            children: items
-                .map<Widget>((item) => Card(
-                      color: Theme.of(context).cardColor,
-                      child: ListTile(
-                          title: Text(format(item),
-                              style: Theme.of(context).textTheme.bodyMedium)),
-                    ))
-                .toList(),
+            children: items.asMap().entries.map<Widget>((entry) {
+              final index = entry.key;
+              final item = entry.value;
+              return Card(
+                color: Theme.of(context).cardColor,
+                margin: const EdgeInsets.only(bottom: 8),
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(
+                    color: Theme.of(context).dividerColor.withOpacity(0.5),
+                    width: 1,
+                  ),
+                ),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  title: Text(
+                    format(item),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.edit, size: 20, color: Theme.of(context).primaryColor),
+                        onPressed: () => _editListItem(sectionType, index, item),
+                        tooltip: l10n.t('profile.quickEdit'),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                        onPressed: () => _deleteListItem(sectionType, index, item),
+                        tooltip: l10n.t('common.delete'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
           );
   }
 
@@ -549,14 +693,551 @@ class _ProfileNameState extends State<ProfileName> {
   // ✅ Helper method to get appropriate file icon
   Widget _getFileIcon(String fileType) {
     final type = fileType.toLowerCase();
+    final theme = Theme.of(context);
+    final iconColor = theme.iconTheme.color ?? theme.colorScheme.onSurface;
+    
     if (type.contains("pdf")) {
-      return const Icon(Icons.picture_as_pdf, color: Colors.red);
+      return Icon(Icons.picture_as_pdf, color: Colors.red.shade700);
     } else if (type.startsWith("image/")) {
-      return const Icon(Icons.image, color: Colors.blue);
+      return Icon(Icons.image, color: theme.brightness == Brightness.dark 
+          ? Colors.blue.shade300 
+          : Colors.blue.shade700);
     } else if (type.contains("word")) {
-      return const Icon(Icons.description, color: Colors.blue);
+      return Icon(Icons.description, color: theme.brightness == Brightness.dark 
+          ? Colors.blue.shade300 
+          : Colors.blue.shade700);
     } else {
-      return const Icon(Icons.insert_drive_file, color: Colors.grey);
+      return Icon(Icons.insert_drive_file, color: iconColor.withOpacity(0.7));
+    }
+  }
+
+  // Quick edit field dialog
+  Future<void> _quickEditField(String fieldKey, String label, String currentValue) async {
+    final l10n = context.l10n;
+    final controller = TextEditingController(text: currentValue);
+    final isDateField = fieldKey == 'dateOfBirth' || fieldKey == 'lastVisit' || fieldKey == 'nextAppointment';
+    
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(l10n.t('profile.quickEdit.title')),
+        content: isDateField
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(l10n.format('profile.quickEdit.fieldLabel', {'field': label})),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    readOnly: true,
+                    decoration: InputDecoration(
+                      labelText: label,
+                      suffixIcon: Icon(Icons.calendar_today, color: Theme.of(context).iconTheme.color),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.tryParse(controller.text) ?? DateTime.now(),
+                        firstDate: DateTime(1900),
+                        lastDate: DateTime(2100),
+                      );
+                      if (picked != null) {
+                        controller.text = picked.toIso8601String().split("T")[0];
+                      }
+                    },
+                  ),
+                ],
+              )
+            : TextField(
+                controller: controller,
+                decoration: InputDecoration(
+                  labelText: label,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                autofocus: true,
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(l10n.t('common.cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context, {
+                'fieldKey': fieldKey,
+                'value': controller.text,
+              });
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).primaryColor,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: Text(l10n.t('common.save')),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null) {
+      await _updateField(result['fieldKey'], result['value']);
+    }
+  }
+
+  // Update a single field (string value)
+  Future<void> _updateField(String fieldKey, String value) async {
+    try {
+      final updatedUser = Map<String, dynamic>.from(user);
+      
+      if (fieldKey.contains('.')) {
+        // Handle nested fields like emergencyContact.name
+        final parts = fieldKey.split('.');
+        if (parts.length == 2 && parts[0] == 'emergencyContact') {
+          updatedUser['emergencyContact'] = {
+            ...(user['emergencyContact'] as Map? ?? {}),
+            parts[1]: value,
+          };
+        }
+      } else {
+        updatedUser[fieldKey] = value;
+      }
+
+      final response = await ApiService.updateProfile(updatedUser);
+      if (!mounted) return;
+      
+      if (response != null && response['success'] == true) {
+        setState(() {
+          user = response['data'] as Map<String, dynamic>? ?? updatedUser;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.t('profile.updateSuccess')),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _fetchProfile(); // Refresh to get latest data
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.t('profile.updateFailed')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.t('profile.updateFailed')),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  // Edit list item (medical history or medication)
+  Future<void> _editListItem(String sectionType, int index, Map<String, dynamic> item) async {
+    final l10n = context.l10n;
+    
+    if (sectionType == 'medicalHistory') {
+      final conditionController = TextEditingController(text: item['condition'] ?? '');
+      final statusController = TextEditingController(text: item['status'] ?? '');
+
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(l10n.t('profile.medicalHistory.editTitle')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: conditionController,
+                decoration: InputDecoration(
+                  labelText: l10n.t('profile.medicalHistory.condition'),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: statusController,
+                decoration: InputDecoration(
+                  labelText: l10n.t('profile.medicalHistory.status'),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(l10n.t('common.cancel')),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context, {
+                  'condition': conditionController.text,
+                  'status': statusController.text,
+                });
+              },
+              child: Text(l10n.t('common.save')),
+            ),
+          ],
+        ),
+      );
+
+      if (result != null) {
+        final updatedHistory = List<Map<String, dynamic>>.from(user['medicalHistory'] ?? []);
+        updatedHistory[index] = {
+          ...item,
+          'condition': result['condition'],
+          'status': result['status'],
+        };
+        await _updateFieldValue('medicalHistory', updatedHistory);
+      }
+    } else if (sectionType == 'medications') {
+      final nameController = TextEditingController(text: item['name'] ?? '');
+      final dosageController = TextEditingController(text: item['dosage'] ?? '');
+      final freqController = TextEditingController(text: item['frequency'] ?? '');
+
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(l10n.t('profile.medications.editTitle')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: InputDecoration(
+                  labelText: l10n.t('profile.medications.nameLabel'),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: dosageController,
+                decoration: InputDecoration(
+                  labelText: l10n.t('profile.medications.dosageLabel'),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: freqController,
+                decoration: InputDecoration(
+                  labelText: l10n.t('profile.medications.frequencyLabel'),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(l10n.t('common.cancel')),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context, {
+                  'name': nameController.text,
+                  'dosage': dosageController.text,
+                  'frequency': freqController.text,
+                });
+              },
+              child: Text(l10n.t('common.save')),
+            ),
+          ],
+        ),
+      );
+
+      if (result != null) {
+        final updatedMedications = List<Map<String, dynamic>>.from(user['medications'] ?? []);
+        updatedMedications[index] = {
+          ...item,
+          'name': result['name'],
+          'dosage': result['dosage'],
+          'frequency': result['frequency'],
+        };
+        await _updateFieldValue('medications', updatedMedications);
+      }
+    }
+  }
+
+  // Delete list item with confirmation
+  Future<void> _deleteListItem(String sectionType, int index, Map<String, dynamic> item) async {
+    final l10n = context.l10n;
+    final itemName = sectionType == 'medicalHistory'
+        ? item['condition']?.toString() ?? ''
+        : item['name']?.toString() ?? '';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(l10n.t('profile.deleteItem.title')),
+        content: Text(
+          l10n.format('profile.deleteItem.message', {'itemName': itemName}),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(l10n.t('common.cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: Text(l10n.t('common.delete')),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      final updatedList = List<Map<String, dynamic>>.from(
+        user[sectionType] ?? [],
+      );
+      updatedList.removeAt(index);
+      
+      final updatedUser = Map<String, dynamic>.from(user);
+      updatedUser[sectionType] = updatedList;
+      
+      final response = await ApiService.updateProfile(updatedUser);
+      if (!mounted) return;
+      
+      if (response != null && response['success'] == true) {
+        setState(() {
+          user = response['data'] as Map<String, dynamic>? ?? updatedUser;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.t('profile.deleteSuccess')),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _fetchProfile();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.t('profile.deleteFailed')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // Add medical history
+  void _addMedicalHistory() {
+    final l10n = context.l10n;
+    final conditionController = TextEditingController();
+    final statusController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(l10n.t('profile.medicalHistory.dialogTitle')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: conditionController,
+              decoration: InputDecoration(
+                labelText: l10n.t('profile.medicalHistory.condition'),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: statusController,
+              decoration: InputDecoration(
+                labelText: l10n.t('profile.medicalHistory.status'),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(l10n.t('common.cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final updatedHistory = List<Map<String, dynamic>>.from(user['medicalHistory'] ?? []);
+              updatedHistory.add({
+                "condition": conditionController.text,
+                "status": statusController.text,
+                "diagnosed": DateTime.now().toIso8601String(),
+              });
+              
+              final updatedUser = Map<String, dynamic>.from(user);
+              updatedUser['medicalHistory'] = updatedHistory;
+              
+              final response = await ApiService.updateProfile(updatedUser);
+              if (!mounted) return;
+              
+              if (response != null && response['success'] == true) {
+                setState(() {
+                  user = response['data'] as Map<String, dynamic>? ?? updatedUser;
+                });
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(context.l10n.t('profile.addSuccess')),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+                _fetchProfile();
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(context.l10n.t('profile.updateFailed')),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: Text(l10n.t('common.add')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Add medication
+  void _addMedication() {
+    final l10n = context.l10n;
+    final nameController = TextEditingController();
+    final dosageController = TextEditingController();
+    final freqController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(l10n.t('profile.medications.dialogTitle')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: InputDecoration(
+                labelText: l10n.t('profile.medications.nameLabel'),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: dosageController,
+              decoration: InputDecoration(
+                labelText: l10n.t('profile.medications.dosageLabel'),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: freqController,
+              decoration: InputDecoration(
+                labelText: l10n.t('profile.medications.frequencyLabel'),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(l10n.t('common.cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final updatedMedications = List<Map<String, dynamic>>.from(user['medications'] ?? []);
+              updatedMedications.add({
+                "name": nameController.text,
+                "dosage": dosageController.text,
+                "frequency": freqController.text,
+              });
+              
+              final updatedUser = Map<String, dynamic>.from(user);
+              updatedUser['medications'] = updatedMedications;
+              
+              final response = await ApiService.updateProfile(updatedUser);
+              if (!mounted) return;
+              
+              if (response != null && response['success'] == true) {
+                setState(() {
+                  user = response['data'] as Map<String, dynamic>? ?? updatedUser;
+                });
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(context.l10n.t('profile.addSuccess')),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+                _fetchProfile();
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(context.l10n.t('profile.updateFailed')),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: Text(l10n.t('common.add')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Helper to update field that accepts dynamic values (lists, etc.)
+  Future<void> _updateFieldValue(String fieldKey, dynamic value) async {
+    try {
+      final updatedUser = Map<String, dynamic>.from(user);
+      updatedUser[fieldKey] = value;
+
+      final response = await ApiService.updateProfile(updatedUser);
+      if (!mounted) return;
+      
+      if (response != null && response['success'] == true) {
+        setState(() {
+          user = response['data'] as Map<String, dynamic>? ?? updatedUser;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.t('profile.updateSuccess')),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _fetchProfile();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.t('profile.updateFailed')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.t('profile.updateFailed')),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 }
@@ -768,27 +1449,30 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   Future<void> _saveProfile(Map<String, dynamic> updatedUser) async {
-    final l10n = context.l10n;
-    final response = await ApiService.updateProfile(updatedUser);
-    if (!mounted) return;
-    if (response != null && response['success'] == true) {
-      final updatedData =
-          response['data'] as Map<String, dynamic>? ?? <String, dynamic>{};
-      Navigator.pop(
-          context,
-          updatedData.isNotEmpty
-              ? updatedData
-              : Map<String, dynamic>.from(widget.userData));
-    } else {
-      final message =
-          response?['message']?.toString() ?? l10n.t('profile.updateFailed');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+      final response = await ApiService.updateProfile(updatedUser);
+      if (!mounted) return;
+      if (response != null && response['success'] == true) {
+        final updatedData =
+            response['data'] as Map<String, dynamic>? ?? <String, dynamic>{};
+        Navigator.pop(
+            context,
+            updatedData.isNotEmpty
+                ? updatedData
+                : Map<String, dynamic>.from(widget.userData));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.t('profile.updateSuccess')),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.t('profile.updateFailed')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
   }
 
   @override

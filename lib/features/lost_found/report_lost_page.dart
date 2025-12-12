@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:geocoding/geocoding.dart';
 
 import '../../api_service.dart';
 import '../../localization/app_localizations.dart';
@@ -43,6 +45,7 @@ class _ReportLostPageState extends State<ReportLostPage> {
   String _selectedGender = "Unknown";
   DateTime _lastSeenTime = DateTime.now();
   Position? _lastSeenPosition;
+  String? _selectedLocationAddress;
 
   bool _isUploadingPhoto = false;
   bool _isSubmitting = false;
@@ -127,7 +130,7 @@ class _ReportLostPageState extends State<ReportLostPage> {
     final date = await showDatePicker(
       context: context,
       initialDate: current,
-      firstDate: DateTime.now().subtract(const Duration(days: 14)),
+      firstDate: DateTime.now().subtract(const Duration(days: 30)),
       lastDate: DateTime.now(),
     );
     if (date == null) return;
@@ -177,9 +180,160 @@ class _ReportLostPageState extends State<ReportLostPage> {
       }
 
       final position = await Geolocator.getCurrentPosition();
-      setState(() => _lastSeenPosition = position);
+      setState(() {
+        _lastSeenPosition = position;
+      });
+      await _updateLocationAddress(position.latitude, position.longitude);
     } catch (error) {
       _showMessage(l10n.format('sos.locationError', {'error': '$error'}));
+    }
+  }
+
+  Future<void> _openGoogleMapsForSelection() async {
+    final l10n = context.l10n;
+    try {
+      // Open Google Maps with a search interface
+      final url = Uri.parse('https://www.google.com/maps/search/?api=1');
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+        // Show dialog to enter coordinates manually after a delay
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) {
+          _showLocationInputDialog();
+        }
+      } else {
+        _showMessage(l10n.t('lostReport.mapsNotAvailable'));
+      }
+    } catch (error) {
+      _showMessage(l10n.format('sos.locationError', {'error': '$error'}));
+    }
+  }
+
+  Future<void> _showLocationInputDialog() async {
+    final l10n = context.l10n;
+    final latController = TextEditingController();
+    final lngController = TextEditingController();
+    
+    if (_lastSeenPosition != null) {
+      latController.text = _lastSeenPosition!.latitude.toStringAsFixed(6);
+      lngController.text = _lastSeenPosition!.longitude.toStringAsFixed(6);
+    }
+
+    await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.t('lostReport.enterCoordinates')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: latController,
+              decoration: InputDecoration(
+                labelText: l10n.t('lostReport.latitude'),
+                hintText: '28.6139',
+              ),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: lngController,
+              decoration: InputDecoration(
+                labelText: l10n.t('lostReport.longitude'),
+                hintText: '77.2090',
+              ),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(l10n.t('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () {
+              final lat = double.tryParse(latController.text.trim());
+              final lng = double.tryParse(lngController.text.trim());
+              if (lat != null && lng != null && 
+                  lat >= -90 && lat <= 90 && 
+                  lng >= -180 && lng <= 180) {
+                Navigator.pop(context, true);
+                _setLocationFromCoordinates(lat, lng);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(l10n.t('lostReport.invalidCoordinates'))),
+                );
+              }
+            },
+            child: Text(l10n.t('common.confirm')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setLocationFromCoordinates(double lat, double lng) async {
+    setState(() {
+      _lastSeenPosition = Position(
+        latitude: lat,
+        longitude: lng,
+        timestamp: DateTime.now(),
+        accuracy: 0,
+        altitude: 0,
+        altitudeAccuracy: 0,
+        heading: 0,
+        headingAccuracy: 0,
+        speed: 0,
+        speedAccuracy: 0,
+      );
+    });
+    await _updateLocationAddress(lat, lng);
+  }
+
+  Future<void> _updateLocationAddress(double lat, double lng) async {
+    try {
+      final placemarks = await placemarkFromCoordinates(lat, lng);
+      if (placemarks.isNotEmpty) {
+        final place = placemarks.first;
+        final address = [
+          place.street,
+          place.locality,
+          place.administrativeArea,
+          place.country,
+        ].where((e) => e != null && e.isNotEmpty).join(', ');
+        setState(() {
+          _selectedLocationAddress = address.isNotEmpty ? address : null;
+        });
+      }
+    } catch (e) {
+      // Silently fail - address is optional
+    }
+  }
+
+  Future<void> _showMapPicker() async {
+    try {
+      // Open Google Maps app for location selection
+      final currentLat = _lastSeenPosition?.latitude ?? 28.6139;
+      final currentLng = _lastSeenPosition?.longitude ?? 77.2090;
+      
+      // Open Google Maps with current location
+      final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$currentLat,$currentLng');
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+        // After opening maps, show dialog to enter coordinates
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) {
+          _showLocationInputDialog();
+        }
+      } else {
+        // If Google Maps app not available, directly show coordinate input
+        _showLocationInputDialog();
+      }
+    } catch (e) {
+      if (mounted) {
+        // Fallback to coordinate input dialog
+        _showLocationInputDialog();
+      }
     }
   }
 
@@ -463,6 +617,23 @@ class _ReportLostPageState extends State<ReportLostPage> {
               width: 80,
               height: 80,
               fit: BoxFit.cover,
+              headers: const {
+                'Cache-Control': 'max-age=3600',
+              },
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceVariant,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.broken_image,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                );
+              },
             ),
           ),
           const SizedBox(width: 12),
@@ -480,7 +651,116 @@ class _ReportLostPageState extends State<ReportLostPage> {
 
   String _formatLocation(Position? position) {
     if (position == null) return context.l10n.t('common.locationNotSet');
-    return "${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}";
+    final coords = "${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}";
+    if (_selectedLocationAddress != null) {
+      return "$coords\n$_selectedLocationAddress";
+    }
+    return coords;
+  }
+
+  Widget _buildMapPreview() {
+    if (_lastSeenPosition == null) return const SizedBox.shrink();
+    
+    final lat = _lastSeenPosition!.latitude;
+    final lng = _lastSeenPosition!.longitude;
+    
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      height: 200,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Theme.of(context).dividerColor,
+          width: 1,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          children: [
+            // OpenStreetMap preview using WebView alternative - show static map image
+            Container(
+              color: Theme.of(context).colorScheme.surfaceVariant,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.location_on,
+                      size: 48,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (_selectedLocationAddress != null) ...[
+                      const SizedBox(height: 4),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          _selectedLocationAddress!,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            // Tap to open in maps
+            Positioned.fill(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () async {
+                    final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+                    if (await canLaunchUrl(url)) {
+                      await launchUrl(url, mode: LaunchMode.externalApplication);
+                    }
+                  },
+                  child: Container(
+                    alignment: Alignment.bottomRight,
+                    padding: const EdgeInsets.all(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.open_in_new,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.onPrimary,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            context.l10n.t('lostReport.openInMaps'),
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.onPrimary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -643,15 +923,65 @@ class _ReportLostPageState extends State<ReportLostPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(l10n.t('lostReport.lastSeenLocation')),
-                  subtitle: Text(_formatLocation(_lastSeenPosition)),
-                  trailing: ElevatedButton.icon(
-                    onPressed: _useCurrentLocation,
-                    icon: const Icon(Icons.my_location),
-                    label: Text(l10n.t('lostReport.useCurrent')),
+                Text(
+                  l10n.t('lostReport.lastSeenLocation'),
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                if (_lastSeenPosition != null)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _formatLocation(_lastSeenPosition),
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                          _buildMapPreview(),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    l10n.t('common.locationNotSet'),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
                   ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _useCurrentLocation,
+                      icon: const Icon(Icons.my_location, size: 20),
+                      label: Text(l10n.t('lostReport.useCurrentLocation')),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: _showMapPicker,
+                      icon: const Icon(Icons.map, size: 20),
+                      label: Text(l10n.t('lostReport.pickOnMap')),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _openGoogleMapsForSelection,
+                      icon: const Icon(Icons.open_in_new, size: 20),
+                      label: Text(l10n.t('lostReport.searchInMaps')),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 24),
                 SizedBox(
@@ -684,3 +1014,4 @@ class _ReportLostPageState extends State<ReportLostPage> {
     );
   }
 }
+
