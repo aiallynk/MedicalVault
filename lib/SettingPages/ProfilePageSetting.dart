@@ -44,24 +44,31 @@ class _ProfileNameState extends State<ProfileName> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString("authToken");
-      if (token == null) return;
+      if (token == null) {
+        if (!mounted) return;
+        setState(() => _loading = false);
+        return;
+      }
 
       final response = await http.get(
-        Uri.parse("https://backend-medicalvault.onrender.com/api/auth/me"),
+        Uri.parse("${ApiService.authUrl}/me"),
         headers: {"Authorization": "Bearer $token"},
       );
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
+        if (!mounted) return;
         setState(() {
           user = body["data"]["user"];
           _loading = false;
         });
       } else {
+        if (!mounted) return;
         setState(() => _loading = false);
       }
     } catch (e) {
       print("❌ Fetch error: $e");
+      if (!mounted) return;
       setState(() => _loading = false);
     }
   }
@@ -86,6 +93,7 @@ class _ProfileNameState extends State<ProfileName> {
         print("📁 Records structure: $records");
 
         if (records != null) {
+          if (!mounted) return;
           setState(() {
             medicalRecords = {
               "reports":
@@ -113,6 +121,7 @@ class _ProfileNameState extends State<ProfileName> {
       }
     } catch (e) {
       print("❌ Medical Records fetch error: $e");
+      if (!mounted) return;
       setState(() {
         medicalRecords = {
           "reports": [],
@@ -133,12 +142,14 @@ class _ProfileNameState extends State<ProfileName> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(Icons.camera_alt, color: Theme.of(context).iconTheme.color),
+              leading: Icon(Icons.camera_alt,
+                  color: Theme.of(context).iconTheme.color),
               title: Text(l10n.t('profile.photo.camera')),
               onTap: () => Navigator.pop(context, ImageSource.camera),
             ),
             ListTile(
-              leading: Icon(Icons.photo_library, color: Theme.of(context).iconTheme.color),
+              leading: Icon(Icons.photo_library,
+                  color: Theme.of(context).iconTheme.color),
               title: Text(l10n.t('profile.photo.gallery')),
               onTap: () => Navigator.pop(context, ImageSource.gallery),
             ),
@@ -234,12 +245,12 @@ class _ProfileNameState extends State<ProfileName> {
     // If profilePictureUrl is not available or looks like an S3 key (doesn't start with http),
     // we should fetch a fresh signed URL from the backend
     String profilePhotoUrl = '';
-    if (user['profilePictureUrl'] != null && 
+    if (user['profilePictureUrl'] != null &&
         user['profilePictureUrl'].toString().trim().isNotEmpty &&
         user['profilePictureUrl'].toString().startsWith('http')) {
       profilePhotoUrl = user['profilePictureUrl'].toString().trim();
-    } else if (user['profilePicture'] != null && 
-               user['profilePicture'].toString().trim().isNotEmpty) {
+    } else if (user['profilePicture'] != null &&
+        user['profilePicture'].toString().trim().isNotEmpty) {
       // If we only have the S3 key, fetch profile to get signed URL
       if (!_loading && !_hasImageError) {
         _fetchProfile();
@@ -281,23 +292,34 @@ class _ProfileNameState extends State<ProfileName> {
                               backgroundColor: Theme.of(context).primaryColor,
                               backgroundImage: _pendingProfileImage != null
                                   ? FileImage(_pendingProfileImage!)
-                                  : (profilePhotoUrl.isNotEmpty && !_hasImageError
+                                  : (profilePhotoUrl.isNotEmpty &&
+                                          !_hasImageError
                                       ? NetworkImage(profilePhotoUrl)
                                       : null),
-                              onBackgroundImageError: (exception, stackTrace) {
-                                if (mounted) {
-                                  // If it's a 403 error, refresh the profile to get a new signed URL
-                                  if (exception.toString().contains('403') || 
-                                      exception.toString().contains('Forbidden')) {
-                                    _fetchProfile(); // Refresh to get new signed URL
-                                  }
-                                  setState(() {
-                                    _hasImageError = true;
-                                  });
-                                }
-                              },
+                              onBackgroundImageError:
+                                  _pendingProfileImage != null ||
+                                          (profilePhotoUrl.isNotEmpty &&
+                                              !_hasImageError)
+                                      ? (exception, stackTrace) {
+                                          if (mounted) {
+                                            // If it's a 403 error, refresh the profile to get a new signed URL
+                                            if (exception
+                                                    .toString()
+                                                    .contains('403') ||
+                                                exception
+                                                    .toString()
+                                                    .contains('Forbidden')) {
+                                              _fetchProfile(); // Refresh to get new signed URL
+                                            }
+                                            setState(() {
+                                              _hasImageError = true;
+                                            });
+                                          }
+                                        }
+                                      : null,
                               child: _pendingProfileImage == null &&
-                                      (profilePhotoUrl.isEmpty || _hasImageError)
+                                      (profilePhotoUrl.isEmpty ||
+                                          _hasImageError)
                                   ? Text(
                                       fallbackInitial,
                                       style: const TextStyle(
@@ -382,8 +404,11 @@ class _ProfileNameState extends State<ProfileName> {
                     user['mobile'] ?? '', 'mobile'),
                 _infoRow(Icons.security, l10n.t('profile.aadhaar'),
                     user['aadhaar'] ?? '', 'aadhaar'),
-                _infoRow(Icons.calendar_today, l10n.t('profile.dob'),
-                    user['dateOfBirth']?.toString().split("T")[0] ?? '', 'dateOfBirth'),
+                _infoRow(
+                    Icons.calendar_today,
+                    l10n.t('profile.dob'),
+                    user['dateOfBirth']?.toString().split("T")[0] ?? '',
+                    'dateOfBirth'),
                 _sectionTitle(l10n.t('profile.healthInfo')),
                 _infoRow(Icons.person, l10n.t('profile.gender'),
                     user['gender'] ?? '', 'gender'),
@@ -395,17 +420,32 @@ class _ProfileNameState extends State<ProfileName> {
                     user['height'] ?? '', 'height'),
                 _infoRow(Icons.monitor_weight, l10n.t('profile.weight'),
                     user['weight'] ?? '', 'weight'),
-                _infoRow(Icons.calendar_month, l10n.t('profile.lastVisit'),
-                    user['lastVisit']?.toString().split("T")[0] ?? '', 'lastVisit'),
-                _infoRow(Icons.event, l10n.t('profile.nextAppointment'),
-                    user['nextAppointment']?.toString().split("T")[0] ?? '', 'nextAppointment'),
+                _infoRow(
+                    Icons.calendar_month,
+                    l10n.t('profile.lastVisit'),
+                    user['lastVisit']?.toString().split("T")[0] ?? '',
+                    'lastVisit'),
+                _infoRow(
+                    Icons.event,
+                    l10n.t('profile.nextAppointment'),
+                    user['nextAppointment']?.toString().split("T")[0] ?? '',
+                    'nextAppointment'),
                 _sectionTitle(l10n.t('profile.emergencyContact')),
-                _infoRow(Icons.person, l10n.t('profile.emergencyName'),
-                    user['emergencyContact']?['name'] ?? '', 'emergencyContact.name'),
-                _infoRow(Icons.people, l10n.t('profile.emergencyRelationship'),
-                    user['emergencyContact']?['relationship'] ?? '', 'emergencyContact.relationship'),
-                _infoRow(Icons.phone, l10n.t('profile.emergencyPhone'),
-                    user['emergencyContact']?['phone'] ?? '', 'emergencyContact.phone'),
+                _infoRow(
+                    Icons.person,
+                    l10n.t('profile.emergencyName'),
+                    user['emergencyContact']?['name'] ?? '',
+                    'emergencyContact.name'),
+                _infoRow(
+                    Icons.people,
+                    l10n.t('profile.emergencyRelationship'),
+                    user['emergencyContact']?['relationship'] ?? '',
+                    'emergencyContact.relationship'),
+                _infoRow(
+                    Icons.phone,
+                    l10n.t('profile.emergencyPhone'),
+                    user['emergencyContact']?['phone'] ?? '',
+                    'emergencyContact.phone'),
                 _sectionTitle(l10n.t('profile.medicalHistory')),
                 _listSection(
                   user['medicalHistory'] ?? [],
@@ -418,10 +458,12 @@ class _ProfileNameState extends State<ProfileName> {
                     padding: const EdgeInsets.only(top: 8),
                     child: OutlinedButton.icon(
                       onPressed: _addMedicalHistory,
-                      icon: Icon(Icons.add, size: 18, color: Theme.of(context).iconTheme.color),
+                      icon: Icon(Icons.add,
+                          size: 18, color: Theme.of(context).iconTheme.color),
                       label: Text(l10n.t('profile.addMedicalHistory')),
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
                       ),
                     ),
                   ),
@@ -437,10 +479,12 @@ class _ProfileNameState extends State<ProfileName> {
                     padding: const EdgeInsets.only(top: 8),
                     child: OutlinedButton.icon(
                       onPressed: _addMedication,
-                      icon: Icon(Icons.add, size: 18, color: Theme.of(context).iconTheme.color),
+                      icon: Icon(Icons.add,
+                          size: 18, color: Theme.of(context).iconTheme.color),
                       label: Text(l10n.t('profile.addMedication')),
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
                       ),
                     ),
                   ),
@@ -474,7 +518,7 @@ class _ProfileNameState extends State<ProfileName> {
                           builder: (context) => EditProfilePage(userData: user),
                         ),
                       );
-                      if (result != null) {
+                      if (result != null && mounted) {
                         setState(() {
                           user = result;
                         });
@@ -484,7 +528,10 @@ class _ProfileNameState extends State<ProfileName> {
                     icon: const Icon(Icons.edit_note, color: Colors.white),
                     label: Text(
                       l10n.t('profile.editAll'),
-                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600),
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.transparent,
@@ -517,8 +564,9 @@ class _ProfileNameState extends State<ProfileName> {
 
   Widget _infoRow(IconData icon, String label, String value, String fieldKey) {
     final l10n = context.l10n;
-    final displayValue = value.isNotEmpty ? value : l10n.t('common.notAvailable');
-    
+    final displayValue =
+        value.isNotEmpty ? value : l10n.t('common.notAvailable');
+
     return Card(
       color: Theme.of(context).cardColor,
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -540,7 +588,13 @@ class _ProfileNameState extends State<ProfileName> {
                 color: Theme.of(context).primaryColor.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, color: Theme.of(context).primaryColor, size: 22),
+              child: Icon(
+                icon,
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Theme.of(context).iconTheme.color ?? Colors.white70
+                    : Theme.of(context).primaryColor,
+                size: 22,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -550,22 +604,28 @@ class _ProfileNameState extends State<ProfileName> {
                   Text(
                     label,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).hintColor,
-                      fontSize: 12,
-                    ),
+                          color: Theme.of(context).hintColor,
+                          fontSize: 12,
+                        ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     displayValue,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w500,
-                    ),
+                          fontWeight: FontWeight.w500,
+                        ),
                   ),
                 ],
               ),
             ),
             IconButton(
-              icon: Icon(Icons.edit, size: 20, color: Theme.of(context).primaryColor),
+              icon: Icon(
+                Icons.edit,
+                size: 20,
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Theme.of(context).iconTheme.color ?? Colors.white70
+                    : Theme.of(context).primaryColor,
+              ),
               onPressed: () => _quickEditField(fieldKey, label, value),
               tooltip: l10n.t('profile.quickEdit'),
             ),
@@ -575,7 +635,8 @@ class _ProfileNameState extends State<ProfileName> {
     );
   }
 
-  Widget _listSection(List items, String Function(dynamic) format, String sectionType) {
+  Widget _listSection(
+      List items, String Function(dynamic) format, String sectionType) {
     final l10n = context.l10n;
     return items.isEmpty
         ? Card(
@@ -586,8 +647,8 @@ class _ProfileNameState extends State<ProfileName> {
                 child: Text(
                   l10n.t('profile.noData'),
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).hintColor,
-                  ),
+                        color: Theme.of(context).hintColor,
+                      ),
                 ),
               ),
             ),
@@ -608,24 +669,35 @@ class _ProfileNameState extends State<ProfileName> {
                   ),
                 ),
                 child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   title: Text(
                     format(item),
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w500,
-                    ),
+                          fontWeight: FontWeight.w500,
+                        ),
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        icon: Icon(Icons.edit, size: 20, color: Theme.of(context).primaryColor),
-                        onPressed: () => _editListItem(sectionType, index, item),
+                        icon: Icon(
+                          Icons.edit,
+                          size: 20,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Theme.of(context).iconTheme.color ??
+                                  Colors.white70
+                              : Theme.of(context).primaryColor,
+                        ),
+                        onPressed: () =>
+                            _editListItem(sectionType, index, item),
                         tooltip: l10n.t('profile.quickEdit'),
                       ),
                       IconButton(
-                        icon: Icon(Icons.delete_outline, size: 20, color: Colors.red),
-                        onPressed: () => _deleteListItem(sectionType, index, item),
+                        icon: Icon(Icons.delete_outline,
+                            size: 20, color: Colors.red),
+                        onPressed: () =>
+                            _deleteListItem(sectionType, index, item),
                         tooltip: l10n.t('common.delete'),
                       ),
                     ],
@@ -695,28 +767,33 @@ class _ProfileNameState extends State<ProfileName> {
     final type = fileType.toLowerCase();
     final theme = Theme.of(context);
     final iconColor = theme.iconTheme.color ?? theme.colorScheme.onSurface;
-    
+
     if (type.contains("pdf")) {
       return Icon(Icons.picture_as_pdf, color: Colors.red.shade700);
     } else if (type.startsWith("image/")) {
-      return Icon(Icons.image, color: theme.brightness == Brightness.dark 
-          ? Colors.blue.shade300 
-          : Colors.blue.shade700);
+      return Icon(Icons.image,
+          color: theme.brightness == Brightness.dark
+              ? Colors.blue.shade300
+              : Colors.blue.shade700);
     } else if (type.contains("word")) {
-      return Icon(Icons.description, color: theme.brightness == Brightness.dark 
-          ? Colors.blue.shade300 
-          : Colors.blue.shade700);
+      return Icon(Icons.description,
+          color: theme.brightness == Brightness.dark
+              ? Colors.blue.shade300
+              : Colors.blue.shade700);
     } else {
       return Icon(Icons.insert_drive_file, color: iconColor.withOpacity(0.7));
     }
   }
 
   // Quick edit field dialog
-  Future<void> _quickEditField(String fieldKey, String label, String currentValue) async {
+  Future<void> _quickEditField(
+      String fieldKey, String label, String currentValue) async {
     final l10n = context.l10n;
     final controller = TextEditingController(text: currentValue);
-    final isDateField = fieldKey == 'dateOfBirth' || fieldKey == 'lastVisit' || fieldKey == 'nextAppointment';
-    
+    final isDateField = fieldKey == 'dateOfBirth' ||
+        fieldKey == 'lastVisit' ||
+        fieldKey == 'nextAppointment';
+
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => AlertDialog(
@@ -726,14 +803,16 @@ class _ProfileNameState extends State<ProfileName> {
             ? Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(l10n.format('profile.quickEdit.fieldLabel', {'field': label})),
+                  Text(l10n.format(
+                      'profile.quickEdit.fieldLabel', {'field': label})),
                   const SizedBox(height: 16),
                   TextField(
                     controller: controller,
                     readOnly: true,
                     decoration: InputDecoration(
                       labelText: label,
-                      suffixIcon: Icon(Icons.calendar_today, color: Theme.of(context).iconTheme.color),
+                      suffixIcon: Icon(Icons.calendar_today,
+                          color: Theme.of(context).iconTheme.color),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -741,12 +820,14 @@ class _ProfileNameState extends State<ProfileName> {
                     onTap: () async {
                       final picked = await showDatePicker(
                         context: context,
-                        initialDate: DateTime.tryParse(controller.text) ?? DateTime.now(),
+                        initialDate: DateTime.tryParse(controller.text) ??
+                            DateTime.now(),
                         firstDate: DateTime(1900),
                         lastDate: DateTime(2100),
                       );
                       if (picked != null) {
-                        controller.text = picked.toIso8601String().split("T")[0];
+                        controller.text =
+                            picked.toIso8601String().split("T")[0];
                       }
                     },
                   ),
@@ -776,6 +857,7 @@ class _ProfileNameState extends State<ProfileName> {
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Theme.of(context).primaryColor,
+              foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -795,7 +877,7 @@ class _ProfileNameState extends State<ProfileName> {
   Future<void> _updateField(String fieldKey, String value) async {
     try {
       final updatedUser = Map<String, dynamic>.from(user);
-      
+
       if (fieldKey.contains('.')) {
         // Handle nested fields like emergencyContact.name
         final parts = fieldKey.split('.');
@@ -811,7 +893,7 @@ class _ProfileNameState extends State<ProfileName> {
 
       final response = await ApiService.updateProfile(updatedUser);
       if (!mounted) return;
-      
+
       if (response != null && response['success'] == true) {
         setState(() {
           user = response['data'] as Map<String, dynamic>? ?? updatedUser;
@@ -843,17 +925,21 @@ class _ProfileNameState extends State<ProfileName> {
   }
 
   // Edit list item (medical history or medication)
-  Future<void> _editListItem(String sectionType, int index, Map<String, dynamic> item) async {
+  Future<void> _editListItem(
+      String sectionType, int index, Map<String, dynamic> item) async {
     final l10n = context.l10n;
-    
+
     if (sectionType == 'medicalHistory') {
-      final conditionController = TextEditingController(text: item['condition'] ?? '');
-      final statusController = TextEditingController(text: item['status'] ?? '');
+      final conditionController =
+          TextEditingController(text: item['condition'] ?? '');
+      final statusController =
+          TextEditingController(text: item['status'] ?? '');
 
       final result = await showDialog<Map<String, dynamic>>(
         context: context,
         builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text(l10n.t('profile.medicalHistory.editTitle')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -862,7 +948,8 @@ class _ProfileNameState extends State<ProfileName> {
                 controller: conditionController,
                 decoration: InputDecoration(
                   labelText: l10n.t('profile.medicalHistory.condition'),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
               const SizedBox(height: 12),
@@ -870,7 +957,8 @@ class _ProfileNameState extends State<ProfileName> {
                 controller: statusController,
                 decoration: InputDecoration(
                   labelText: l10n.t('profile.medicalHistory.status'),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ],
@@ -887,6 +975,10 @@ class _ProfileNameState extends State<ProfileName> {
                   'status': statusController.text,
                 });
               },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+              ),
               child: Text(l10n.t('common.save')),
             ),
           ],
@@ -894,7 +986,8 @@ class _ProfileNameState extends State<ProfileName> {
       );
 
       if (result != null) {
-        final updatedHistory = List<Map<String, dynamic>>.from(user['medicalHistory'] ?? []);
+        final updatedHistory =
+            List<Map<String, dynamic>>.from(user['medicalHistory'] ?? []);
         updatedHistory[index] = {
           ...item,
           'condition': result['condition'],
@@ -904,13 +997,16 @@ class _ProfileNameState extends State<ProfileName> {
       }
     } else if (sectionType == 'medications') {
       final nameController = TextEditingController(text: item['name'] ?? '');
-      final dosageController = TextEditingController(text: item['dosage'] ?? '');
-      final freqController = TextEditingController(text: item['frequency'] ?? '');
+      final dosageController =
+          TextEditingController(text: item['dosage'] ?? '');
+      final freqController =
+          TextEditingController(text: item['frequency'] ?? '');
 
       final result = await showDialog<Map<String, dynamic>>(
         context: context,
         builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text(l10n.t('profile.medications.editTitle')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -919,7 +1015,8 @@ class _ProfileNameState extends State<ProfileName> {
                 controller: nameController,
                 decoration: InputDecoration(
                   labelText: l10n.t('profile.medications.nameLabel'),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
               const SizedBox(height: 12),
@@ -927,7 +1024,8 @@ class _ProfileNameState extends State<ProfileName> {
                 controller: dosageController,
                 decoration: InputDecoration(
                   labelText: l10n.t('profile.medications.dosageLabel'),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
               const SizedBox(height: 12),
@@ -935,7 +1033,8 @@ class _ProfileNameState extends State<ProfileName> {
                 controller: freqController,
                 decoration: InputDecoration(
                   labelText: l10n.t('profile.medications.frequencyLabel'),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ],
@@ -953,6 +1052,10 @@ class _ProfileNameState extends State<ProfileName> {
                   'frequency': freqController.text,
                 });
               },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+              ),
               child: Text(l10n.t('common.save')),
             ),
           ],
@@ -960,7 +1063,8 @@ class _ProfileNameState extends State<ProfileName> {
       );
 
       if (result != null) {
-        final updatedMedications = List<Map<String, dynamic>>.from(user['medications'] ?? []);
+        final updatedMedications =
+            List<Map<String, dynamic>>.from(user['medications'] ?? []);
         updatedMedications[index] = {
           ...item,
           'name': result['name'],
@@ -973,7 +1077,8 @@ class _ProfileNameState extends State<ProfileName> {
   }
 
   // Delete list item with confirmation
-  Future<void> _deleteListItem(String sectionType, int index, Map<String, dynamic> item) async {
+  Future<void> _deleteListItem(
+      String sectionType, int index, Map<String, dynamic> item) async {
     final l10n = context.l10n;
     final itemName = sectionType == 'medicalHistory'
         ? item['condition']?.toString() ?? ''
@@ -994,7 +1099,9 @@ class _ProfileNameState extends State<ProfileName> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             child: Text(l10n.t('common.delete')),
           ),
         ],
@@ -1006,13 +1113,13 @@ class _ProfileNameState extends State<ProfileName> {
         user[sectionType] ?? [],
       );
       updatedList.removeAt(index);
-      
+
       final updatedUser = Map<String, dynamic>.from(user);
       updatedUser[sectionType] = updatedList;
-      
+
       final response = await ApiService.updateProfile(updatedUser);
       if (!mounted) return;
-      
+
       if (response != null && response['success'] == true) {
         setState(() {
           user = response['data'] as Map<String, dynamic>? ?? updatedUser;
@@ -1053,7 +1160,8 @@ class _ProfileNameState extends State<ProfileName> {
               controller: conditionController,
               decoration: InputDecoration(
                 labelText: l10n.t('profile.medicalHistory.condition'),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
             const SizedBox(height: 12),
@@ -1061,7 +1169,8 @@ class _ProfileNameState extends State<ProfileName> {
               controller: statusController,
               decoration: InputDecoration(
                 labelText: l10n.t('profile.medicalHistory.status'),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ],
@@ -1073,22 +1182,24 @@ class _ProfileNameState extends State<ProfileName> {
           ),
           ElevatedButton(
             onPressed: () async {
-              final updatedHistory = List<Map<String, dynamic>>.from(user['medicalHistory'] ?? []);
+              final updatedHistory =
+                  List<Map<String, dynamic>>.from(user['medicalHistory'] ?? []);
               updatedHistory.add({
                 "condition": conditionController.text,
                 "status": statusController.text,
                 "diagnosed": DateTime.now().toIso8601String(),
               });
-              
+
               final updatedUser = Map<String, dynamic>.from(user);
               updatedUser['medicalHistory'] = updatedHistory;
-              
+
               final response = await ApiService.updateProfile(updatedUser);
               if (!mounted) return;
-              
+
               if (response != null && response['success'] == true) {
                 setState(() {
-                  user = response['data'] as Map<String, dynamic>? ?? updatedUser;
+                  user =
+                      response['data'] as Map<String, dynamic>? ?? updatedUser;
                 });
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1107,6 +1218,10 @@ class _ProfileNameState extends State<ProfileName> {
                 );
               }
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).primaryColor,
+              foregroundColor: Colors.white,
+            ),
             child: Text(l10n.t('common.add')),
           ),
         ],
@@ -1133,7 +1248,8 @@ class _ProfileNameState extends State<ProfileName> {
               controller: nameController,
               decoration: InputDecoration(
                 labelText: l10n.t('profile.medications.nameLabel'),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
             const SizedBox(height: 12),
@@ -1141,7 +1257,8 @@ class _ProfileNameState extends State<ProfileName> {
               controller: dosageController,
               decoration: InputDecoration(
                 labelText: l10n.t('profile.medications.dosageLabel'),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
             const SizedBox(height: 12),
@@ -1149,7 +1266,8 @@ class _ProfileNameState extends State<ProfileName> {
               controller: freqController,
               decoration: InputDecoration(
                 labelText: l10n.t('profile.medications.frequencyLabel'),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ],
@@ -1161,22 +1279,24 @@ class _ProfileNameState extends State<ProfileName> {
           ),
           ElevatedButton(
             onPressed: () async {
-              final updatedMedications = List<Map<String, dynamic>>.from(user['medications'] ?? []);
+              final updatedMedications =
+                  List<Map<String, dynamic>>.from(user['medications'] ?? []);
               updatedMedications.add({
                 "name": nameController.text,
                 "dosage": dosageController.text,
                 "frequency": freqController.text,
               });
-              
+
               final updatedUser = Map<String, dynamic>.from(user);
               updatedUser['medications'] = updatedMedications;
-              
+
               final response = await ApiService.updateProfile(updatedUser);
               if (!mounted) return;
-              
+
               if (response != null && response['success'] == true) {
                 setState(() {
-                  user = response['data'] as Map<String, dynamic>? ?? updatedUser;
+                  user =
+                      response['data'] as Map<String, dynamic>? ?? updatedUser;
                 });
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1195,6 +1315,10 @@ class _ProfileNameState extends State<ProfileName> {
                 );
               }
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).primaryColor,
+              foregroundColor: Colors.white,
+            ),
             child: Text(l10n.t('common.add')),
           ),
         ],
@@ -1210,7 +1334,7 @@ class _ProfileNameState extends State<ProfileName> {
 
       final response = await ApiService.updateProfile(updatedUser);
       if (!mounted) return;
-      
+
       if (response != null && response['success'] == true) {
         setState(() {
           user = response['data'] as Map<String, dynamic>? ?? updatedUser;
@@ -1449,30 +1573,30 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   Future<void> _saveProfile(Map<String, dynamic> updatedUser) async {
-      final response = await ApiService.updateProfile(updatedUser);
-      if (!mounted) return;
-      if (response != null && response['success'] == true) {
-        final updatedData =
-            response['data'] as Map<String, dynamic>? ?? <String, dynamic>{};
-        Navigator.pop(
-            context,
-            updatedData.isNotEmpty
-                ? updatedData
-                : Map<String, dynamic>.from(widget.userData));
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.l10n.t('profile.updateSuccess')),
-            backgroundColor: Colors.green,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.l10n.t('profile.updateFailed')),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+    final response = await ApiService.updateProfile(updatedUser);
+    if (!mounted) return;
+    if (response != null && response['success'] == true) {
+      final updatedData =
+          response['data'] as Map<String, dynamic>? ?? <String, dynamic>{};
+      Navigator.pop(
+          context,
+          updatedData.isNotEmpty
+              ? updatedData
+              : Map<String, dynamic>.from(widget.userData));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.t('profile.updateSuccess')),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.t('profile.updateFailed')),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   @override

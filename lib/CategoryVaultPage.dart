@@ -9,8 +9,8 @@ import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 import 'Document_model.dart';
 import 'api_service.dart';
-import 'main.dart';
 import 'localization/app_localizations.dart';
+import 'UploadDocument.dart';
 
 class CategoryVaultPage extends StatefulWidget {
   final String category;
@@ -54,8 +54,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     'Name Z-A',
   ];
 
-  String _localizedCategoryLabel(
-      String value, AppLocalizations l10n) {
+  String _localizedCategoryLabel(String value, AppLocalizations l10n) {
     switch (value.toLowerCase()) {
       case 'reports':
       case 'report':
@@ -76,8 +75,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     }
   }
 
-  String _localizedTimeFilterLabel(
-      String value, AppLocalizations l10n) {
+  String _localizedTimeFilterLabel(String value, AppLocalizations l10n) {
     switch (value) {
       case 'All':
         return l10n.t('myVault.timeFilter.all');
@@ -425,8 +423,8 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            l10n.format('documentDetail.downloadSuccessPath',
-                {'path': filePath}),
+            l10n.format(
+                'documentDetail.downloadSuccessPath', {'path': filePath}),
           ),
         ),
       );
@@ -462,7 +460,8 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
 
     // Controllers for editing
     final titleController = TextEditingController(text: document.title ?? '');
-    final descriptionController = TextEditingController(text: document.description ?? '');
+    final descriptionController =
+        TextEditingController(text: document.description ?? '');
     final notesController = TextEditingController(text: document.notes ?? '');
     final dateController = TextEditingController(
       text: document.date != null && document.date!.isNotEmpty
@@ -495,264 +494,301 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
         String selectedCategory = initialCategory;
         return StatefulBuilder(
           builder: (context, setDialogState) => Dialog(
-          backgroundColor: Theme.of(context).dialogBackgroundColor,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Container(
-            constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.9),
-            width: MediaQuery.of(context).size.width * 0.9,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Header
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).primaryColor.withOpacity(0.1),
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(16),
-                      topRight: Radius.circular(16),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.edit, color: Theme.of(context).primaryColor),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          l10n.t('myVault.editDocument.title'),
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.close, color: Theme.of(context).iconTheme.color),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
-                  ),
-                ),
-                // Content
-                Flexible(
-                  child: SingleChildScrollView(
+            backgroundColor: Theme.of(context).dialogBackgroundColor,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Container(
+              constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.9),
+              width: MediaQuery.of(context).size.width * 0.9,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header
+                  Container(
                     padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor.withOpacity(0.1),
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(16),
+                        topRight: Radius.circular(16),
+                      ),
+                    ),
+                    child: Row(
                       children: [
-                        // File Preview
-                        if (previewUrl != null)
-                          Container(
-                            height: 200,
-                            width: double.infinity,
-                            margin: const EdgeInsets.only(bottom: 16),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).cardColor,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: Theme.of(context).dividerColor,
-                              ),
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: (document.fileType ?? '').toLowerCase().contains('image')
-                                  ? Image.network(
-                                      previewUrl,
-                                      fit: BoxFit.contain,
-                                      errorBuilder: (context, error, stackTrace) {
-                                        return Center(
-                                          child: Icon(
-                                            Icons.broken_image,
-                                            size: 64,
-                                            color: Theme.of(context).colorScheme.error,
-                                          ),
-                                        );
-                                      },
-                                    )
-                                  : Center(
-                                      child: Icon(
-                                        Icons.insert_drive_file,
-                                        size: 64,
-                                        color: Theme.of(context).primaryColor,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                        // Title
-                        TextField(
-                          controller: titleController,
-                          decoration: InputDecoration(
-                            labelText: l10n.t('myVault.editDocument.titleLabel'),
-                            hintText: l10n.t('myVault.editDocument.titleHint'),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            prefixIcon: Icon(Icons.title, color: Theme.of(context).primaryColor),
+                        Icon(Icons.edit, color: Theme.of(context).primaryColor),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            l10n.t('myVault.editDocument.title'),
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
                           ),
                         ),
-                        const SizedBox(height: 16),
-                        // Category
-                        DropdownButtonFormField<String>(
-                          value: validCategories.contains(selectedCategory) 
-                              ? selectedCategory 
-                              : 'Report',
-                          decoration: InputDecoration(
-                            labelText: l10n.t('myVault.editDocument.categoryLabel'),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            prefixIcon: Icon(Icons.category, color: Theme.of(context).primaryColor),
-                          ),
-                          items: validCategories
-                              .map((cat) => DropdownMenuItem(
-                                    value: cat,
-                                    child: Text(_localizedCategoryLabel(cat, l10n)),
-                                  ))
-                              .toList(),
-                          onChanged: (value) {
-                            if (value != null && validCategories.contains(value)) {
-                              selectedCategory = value;
-                              setDialogState(() {});
-                            }
-                          },
-                        ),
-                        const SizedBox(height: 16),
-                        // Date
-                        TextField(
-                          controller: dateController,
-                          readOnly: true,
-                          decoration: InputDecoration(
-                            labelText: l10n.t('myVault.editDocument.dateLabel'),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            prefixIcon: Icon(Icons.calendar_today, color: Theme.of(context).primaryColor),
-                            suffixIcon: Icon(Icons.edit, color: Theme.of(context).iconTheme.color),
-                          ),
-                          onTap: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: dateController.text.isNotEmpty
-                                  ? DateTime.tryParse(dateController.text) ?? DateTime.now()
-                                  : DateTime.now(),
-                              firstDate: DateTime(1900),
-                              lastDate: DateTime.now(),
-                            );
-                            if (picked != null) {
-                              setDialogState(() {
-                                dateController.text = picked.toIso8601String().split('T')[0];
-                              });
-                            }
-                          },
-                        ),
-                        const SizedBox(height: 16),
-                        // Description
-                        TextField(
-                          controller: descriptionController,
-                          decoration: InputDecoration(
-                            labelText: l10n.t('myVault.editDocument.descriptionLabel'),
-                            hintText: l10n.t('myVault.editDocument.descriptionHint'),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            prefixIcon: Icon(Icons.description, color: Theme.of(context).primaryColor),
-                          ),
-                          maxLines: 3,
-                        ),
-                        const SizedBox(height: 16),
-                        // Notes
-                        TextField(
-                          controller: notesController,
-                          decoration: InputDecoration(
-                            labelText: l10n.t('myVault.editDocument.notesLabel'),
-                            hintText: l10n.t('myVault.editDocument.notesHint'),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            prefixIcon: Icon(Icons.note, color: Theme.of(context).primaryColor),
-                          ),
-                          maxLines: 3,
+                        IconButton(
+                          icon: Icon(Icons.close,
+                              color: Theme.of(context).iconTheme.color),
+                          onPressed: () => Navigator.pop(context),
                         ),
                       ],
                     ),
                   ),
-                ),
-                // Actions
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(color: Theme.of(context).dividerColor),
+                  // Content
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // File Preview
+                          if (previewUrl != null)
+                            Container(
+                              height: 200,
+                              width: double.infinity,
+                              margin: const EdgeInsets.only(bottom: 16),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).cardColor,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Theme.of(context).dividerColor,
+                                ),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: (document.fileType ?? '')
+                                        .toLowerCase()
+                                        .contains('image')
+                                    ? Image.network(
+                                        previewUrl,
+                                        fit: BoxFit.contain,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          return Center(
+                                            child: Icon(
+                                              Icons.broken_image,
+                                              size: 64,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .error,
+                                            ),
+                                          );
+                                        },
+                                      )
+                                    : Center(
+                                        child: Icon(
+                                          Icons.insert_drive_file,
+                                          size: 64,
+                                          color: Theme.of(context).primaryColor,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          // Title
+                          TextField(
+                            controller: titleController,
+                            decoration: InputDecoration(
+                              labelText:
+                                  l10n.t('myVault.editDocument.titleLabel'),
+                              hintText:
+                                  l10n.t('myVault.editDocument.titleHint'),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              prefixIcon: Icon(Icons.title,
+                                  color: Theme.of(context).primaryColor),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          // Category
+                          DropdownButtonFormField<String>(
+                            value: validCategories.contains(selectedCategory)
+                                ? selectedCategory
+                                : 'Report',
+                            decoration: InputDecoration(
+                              labelText:
+                                  l10n.t('myVault.editDocument.categoryLabel'),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              prefixIcon: Icon(Icons.category,
+                                  color: Theme.of(context).primaryColor),
+                            ),
+                            items: validCategories
+                                .map((cat) => DropdownMenuItem(
+                                      value: cat,
+                                      child: Text(
+                                          _localizedCategoryLabel(cat, l10n)),
+                                    ))
+                                .toList(),
+                            onChanged: (value) {
+                              if (value != null &&
+                                  validCategories.contains(value)) {
+                                selectedCategory = value;
+                                setDialogState(() {});
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          // Date
+                          TextField(
+                            controller: dateController,
+                            readOnly: true,
+                            decoration: InputDecoration(
+                              labelText:
+                                  l10n.t('myVault.editDocument.dateLabel'),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              prefixIcon: Icon(Icons.calendar_today,
+                                  color: Theme.of(context).primaryColor),
+                              suffixIcon: Icon(Icons.edit,
+                                  color: Theme.of(context).iconTheme.color),
+                            ),
+                            onTap: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: dateController.text.isNotEmpty
+                                    ? DateTime.tryParse(dateController.text) ??
+                                        DateTime.now()
+                                    : DateTime.now(),
+                                firstDate: DateTime(1900),
+                                lastDate: DateTime.now(),
+                              );
+                              if (picked != null) {
+                                setDialogState(() {
+                                  dateController.text =
+                                      picked.toIso8601String().split('T')[0];
+                                });
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          // Description
+                          TextField(
+                            controller: descriptionController,
+                            decoration: InputDecoration(
+                              labelText: l10n
+                                  .t('myVault.editDocument.descriptionLabel'),
+                              hintText: l10n
+                                  .t('myVault.editDocument.descriptionHint'),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              prefixIcon: Icon(Icons.description,
+                                  color: Theme.of(context).primaryColor),
+                            ),
+                            maxLines: 3,
+                          ),
+                          const SizedBox(height: 16),
+                          // Notes
+                          TextField(
+                            controller: notesController,
+                            decoration: InputDecoration(
+                              labelText:
+                                  l10n.t('myVault.editDocument.notesLabel'),
+                              hintText:
+                                  l10n.t('myVault.editDocument.notesHint'),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              prefixIcon: Icon(Icons.note,
+                                  color: Theme.of(context).primaryColor),
+                            ),
+                            maxLines: 3,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text(l10n.t('common.cancel')),
+                  // Actions
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        top: BorderSide(color: Theme.of(context).dividerColor),
                       ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
-                        onPressed: () async {
-                          final updates = {
-                            'title': titleController.text.trim(),
-                            'category': selectedCategory,
-                            'description': descriptionController.text.trim(),
-                            'notes': notesController.text.trim(),
-                            if (dateController.text.isNotEmpty) 'date': dateController.text,
-                          };
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: Text(l10n.t('common.cancel')),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () async {
+                            final updates = {
+                              'title': titleController.text.trim(),
+                              'category': selectedCategory,
+                              'description': descriptionController.text.trim(),
+                              'notes': notesController.text.trim(),
+                              if (dateController.text.isNotEmpty)
+                                'date': dateController.text,
+                            };
 
-                          try {
-                            final result = await ApiService.updateDocument(document.id!, updates);
-                            if (result != null && result['success'] == true) {
-                              // Update local document
-                              final updatedDoc = Document.fromApi(result['document']);
-                              setState(() {
-                                final fileIndex = files.indexWhere((d) => d.id == document.id);
-                                final filteredIndex = filteredFiles.indexWhere((d) => d.id == document.id);
-                                if (fileIndex != -1) {
-                                  files[fileIndex] = updatedDoc;
-                                }
-                                if (filteredIndex != -1) {
-                                  filteredFiles[filteredIndex] = updatedDoc;
-                                }
-                              });
-                              Navigator.pop(context);
+                            try {
+                              final result = await ApiService.updateDocument(
+                                  document.id!, updates);
+                              if (result != null && result['success'] == true) {
+                                // Update local document
+                                final updatedDoc =
+                                    Document.fromApi(result['document']);
+                                setState(() {
+                                  final fileIndex = files
+                                      .indexWhere((d) => d.id == document.id);
+                                  final filteredIndex = filteredFiles
+                                      .indexWhere((d) => d.id == document.id);
+                                  if (fileIndex != -1) {
+                                    files[fileIndex] = updatedDoc;
+                                  }
+                                  if (filteredIndex != -1) {
+                                    filteredFiles[filteredIndex] = updatedDoc;
+                                  }
+                                });
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                        l10n.t('myVault.editDocument.success')),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                        l10n.t('myVault.editDocument.failed')),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            } catch (e) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text(l10n.t('myVault.editDocument.success')),
-                                  backgroundColor: Colors.green,
-                                ),
-                              );
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(l10n.t('myVault.editDocument.failed')),
+                                  content: Text(
+                                    l10n.format('common.errorWithMessage',
+                                        {'message': e.toString()}),
+                                  ),
                                   backgroundColor: Colors.red,
                                 ),
                               );
                             }
-                          } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  l10n.format('common.errorWithMessage', {'message': e.toString()}),
-                                ),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                          }
-                        },
-                        child: Text(l10n.t('common.save')),
-                      ),
-                    ],
+                          },
+                          child: Text(l10n.t('common.save')),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-      );
+        );
       },
     );
   }
@@ -767,8 +803,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
       return;
     }
 
-    final fileName = document.title ?? document.fileName ?? l10n.t('documentDetail.untitled');
-    
+    final fileName = document.title ??
+        document.fileName ??
+        l10n.t('documentDetail.untitled');
+
     // Show confirmation dialog
     final confirmed = await showDialog<bool>(
       context: context,
@@ -815,15 +853,16 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
       debugPrint("❌ Delete error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(l10n
-              .format('common.deleteFailedWithMessage', {'error': '$e'})),
+          content: Text(
+              l10n.format('common.deleteFailedWithMessage', {'error': '$e'})),
         ),
       );
     }
   }
 
   // ---------------- THUMBNAIL ----------------
-  Widget _buildThumbnail(Document document) {
+  Widget _buildThumbnail(BuildContext context, Document document) {
+    final scheme = Theme.of(context).colorScheme;
     final fileType = (document.fileType ?? "").toLowerCase();
     if (fileType.startsWith("image/")) {
       // For thumbnails, use a simple icon instead of loading the full image
@@ -832,36 +871,63 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
         width: 50,
         height: 50,
         decoration: BoxDecoration(
-          color: Colors.grey[200],
+          color: scheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: const Icon(
+        child: Icon(
           Icons.image,
-          color: Colors.grey,
+          color: scheme.secondary,
           size: 30,
         ),
       );
     } else if (fileType.contains("pdf")) {
-      return const Icon(Icons.picture_as_pdf, color: Colors.red, size: 40);
+      return Icon(Icons.picture_as_pdf, color: scheme.error, size: 40);
     } else if (fileType.contains("word")) {
-      return const Icon(Icons.description, color: Colors.blue, size: 40);
+      return Icon(Icons.description, color: scheme.primary, size: 40);
     }
-    return const Icon(Icons.insert_drive_file, color: Colors.grey, size: 40);
+    return Icon(Icons.insert_drive_file, color: scheme.outline, size: 40);
   }
 
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
-    // Ensure status bar is configured
-    StatusBarHelper.setStatusBarStyle(context);
-
     final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: Text(_localizedCategoryLabel(widget.category, l10n)),
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadFiles),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          // Navigate to upload form with category pre-selected
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => UploadDocument(
+                userId: widget.userId,
+                initialCategory: widget.category,
+              ),
+            ),
+          );
+          // Refresh files if upload was successful
+          if (result == true) {
+            _loadFiles();
+          }
+        },
+        icon: Icon(Icons.add, color: scheme.onPrimaryContainer),
+        label: Text(
+          l10n.t('myVault.uploadDocument'),
+          style: TextStyle(
+            color: scheme.onPrimaryContainer,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        backgroundColor: scheme.primaryContainer,
+        elevation: 4,
       ),
       body: SafeArea(
         child: _isLoading
@@ -874,36 +940,102 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
               )
             : Column(
                 children: [
-                  // Filter & Sort controls (Single Line)
                   Container(
-                    padding: const EdgeInsets.all(16),
+                    margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          scheme.primary.withValues(alpha: 0.16),
+                          scheme.secondary.withValues(alpha: 0.08),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: scheme.primary.withValues(alpha: 0.24),
+                      ),
+                    ),
                     child: Row(
                       children: [
-                        // Time Filter
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            Icons.folder_special_rounded,
+                            color: scheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _localizedCategoryLabel(widget.category, l10n),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${filteredFiles.length} ${l10n.t('myVault.documentsCount')}',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.hintColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: scheme.surface.withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '${filteredFiles.length}/${files.length}',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Filter & Sort controls (Single Line)
+                  Container(
+                    margin: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerLowest,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: scheme.outlineVariant.withValues(alpha: 0.8),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
                         Expanded(
                           child: DropdownButtonFormField<String>(
+                            isExpanded: true,
                             value: selectedTimeFilter,
                             decoration: InputDecoration(
                               labelText: l10n.t('myVault.timeFilterTitle'),
                               contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 12,
-                                vertical: 8,
+                                vertical: 10,
                               ),
                               border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color: Theme.of(context).dividerColor),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color: Theme.of(context).dividerColor),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color:
-                                        Theme.of(context).colorScheme.primary),
+                                borderRadius: BorderRadius.circular(12),
                               ),
                             ),
                             items: timeFilterOptions.map((String option) {
@@ -919,31 +1051,18 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        // Sort By
                         Expanded(
                           child: DropdownButtonFormField<String>(
+                            isExpanded: true,
                             value: _selectedSort,
                             decoration: InputDecoration(
                               labelText: l10n.t('myVault.sortTitle'),
                               contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 12,
-                                vertical: 8,
+                                vertical: 10,
                               ),
                               border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color: Theme.of(context).dividerColor),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color: Theme.of(context).dividerColor),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color:
-                                        Theme.of(context).colorScheme.primary),
+                                borderRadius: BorderRadius.circular(12),
                               ),
                             ),
                             items: sortOptions.map((String option) {
@@ -958,26 +1077,6 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                             onChanged: _onSortChanged,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        // Document count
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 12),
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                                color: Theme.of(context).dividerColor),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '${filteredFiles.length} / ${files.length}',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                          ),
-                        ),
                       ],
                     ),
                   ),
@@ -989,29 +1088,35 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                     child: TextField(
                       controller: _searchController,
                       decoration: InputDecoration(
-                      hintText: l10n.t('categoryVault.searchHint'),
-                        prefixIcon: const Icon(Icons.search),
-                        fillColor: Theme.of(context).cardColor,
+                        hintText: l10n.t('categoryVault.searchHint'),
+                        prefixIcon: Icon(
+                          Icons.search_rounded,
+                          color: scheme.primary,
+                        ),
+                        suffixIcon: _searchController.text.isEmpty
+                            ? null
+                            : IconButton(
+                                onPressed: () {
+                                  _searchController.clear();
+                                  _onSearchChanged();
+                                },
+                                icon: const Icon(Icons.close_rounded),
+                              ),
+                        fillColor: scheme.surfaceContainerLowest,
                         filled: true,
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(
-                            color: Theme.of(context).dividerColor,
-                            width: 1,
-                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: scheme.outlineVariant),
                         ),
                         enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(
-                            color: Theme.of(context).dividerColor,
-                            width: 1,
-                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: scheme.outlineVariant),
                         ),
                         focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide(
-                            color: Theme.of(context).primaryColor,
-                            width: 1.5,
+                            color: scheme.primary,
+                            width: 1.6,
                           ),
                         ),
                       ),
@@ -1022,39 +1127,56 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                   Expanded(
                     child: filteredFiles.isEmpty
                         ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.folder_open,
-                                    size: 64,
-                                    color: Theme.of(context).disabledColor),
-                                const SizedBox(height: 16),
-                                Text(
-                                  files.isEmpty
-                                      ? l10n.t(
-                                          'categoryVault.noDocsUploadedTitle')
-                                      : l10n.t(
-                                          'categoryVault.noDocsFilteredTitle'),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyLarge
-                                      ?.copyWith(
-                                          fontSize: 18,
-                                          color: Theme.of(context).hintColor),
+                            child: Container(
+                              margin:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 24,
+                              ),
+                              decoration: BoxDecoration(
+                                color: scheme.surfaceContainerLowest,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: scheme.outlineVariant
+                                      .withValues(alpha: 0.8),
                                 ),
-                                Text(
-                                  files.isEmpty
-                                      ? l10n.t(
-                                          'categoryVault.noDocsUploadedSubtitle')
-                                      : l10n.t(
-                                          'categoryVault.noDocsFilteredSubtitle'),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyMedium
-                                      ?.copyWith(
-                                          color: Theme.of(context).hintColor),
-                                ),
-                              ],
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.folder_open_rounded,
+                                    size: 60,
+                                    color: scheme.outline,
+                                  ),
+                                  const SizedBox(height: 14),
+                                  Text(
+                                    files.isEmpty
+                                        ? l10n.t(
+                                            'categoryVault.noDocsUploadedTitle')
+                                        : l10n.t(
+                                            'categoryVault.noDocsFilteredTitle'),
+                                    textAlign: TextAlign.center,
+                                    style:
+                                        theme.textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    files.isEmpty
+                                        ? l10n.t(
+                                            'categoryVault.noDocsUploadedSubtitle')
+                                        : l10n.t(
+                                            'categoryVault.noDocsFilteredSubtitle'),
+                                    textAlign: TextAlign.center,
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: theme.hintColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           )
                         : ListView.builder(
@@ -1064,100 +1186,183 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                               final title = file.title ??
                                   file.fileName ??
                                   l10n.t('documentDetail.untitled');
+                              final categoryChip = _localizedCategoryLabel(
+                                  file.category ?? '', l10n);
                               final uploadedLabel =
                                   '${l10n.t('documents.uploadedOnShort')} ${file.date?.isNotEmpty == true ? file.date : l10n.t('common.unknown')}';
-                              return Card(
+                              return Container(
                                 margin: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12)),
-                                child: ListTile(
-                                  leading: _buildThumbnail(file),
-                                  title: Text(title),
-                                  subtitle: Text(
-                                    uploadedLabel,
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                  trailing: PopupMenuButton<String>(
-                                    icon: Icon(
-                                      Icons.more_vert,
-                                      color: Theme.of(context).iconTheme.color,
+                                    horizontal: 12, vertical: 6),
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(14),
+                                    onTap: () => _openFile(file),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: scheme.surfaceContainerLowest,
+                                        borderRadius: BorderRadius.circular(14),
+                                        border: Border.all(
+                                          color: scheme.outlineVariant
+                                              .withValues(alpha: 0.8),
+                                        ),
+                                      ),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          _buildThumbnail(context, file),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  title,
+                                                  maxLines: 2,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: theme
+                                                      .textTheme.titleSmall
+                                                      ?.copyWith(
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                Wrap(
+                                                  spacing: 8,
+                                                  runSpacing: 6,
+                                                  children: [
+                                                    Container(
+                                                      padding: const EdgeInsets
+                                                          .symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 3,
+                                                      ),
+                                                      decoration: BoxDecoration(
+                                                        color: scheme.primary
+                                                            .withValues(
+                                                          alpha: 0.12,
+                                                        ),
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(999),
+                                                      ),
+                                                      child: Text(
+                                                        categoryChip,
+                                                        style: theme.textTheme
+                                                            .labelSmall
+                                                            ?.copyWith(
+                                                          color: scheme.primary,
+                                                          fontWeight:
+                                                              FontWeight.w700,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    Text(
+                                                      uploadedLabel,
+                                                      style: theme
+                                                          .textTheme.bodySmall
+                                                          ?.copyWith(
+                                                        color: theme.hintColor,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          PopupMenuButton<String>(
+                                            icon: Icon(
+                                              Icons.more_vert_rounded,
+                                              color: theme.iconTheme.color,
+                                            ),
+                                            onSelected: (value) {
+                                              switch (value) {
+                                                case 'edit':
+                                                  _editFile(file);
+                                                  break;
+                                                case 'preview':
+                                                  _openFile(file);
+                                                  break;
+                                                case 'download':
+                                                  _downloadFile(file);
+                                                  break;
+                                                case 'delete':
+                                                  _deleteFile(file);
+                                                  break;
+                                              }
+                                            },
+                                            itemBuilder:
+                                                (BuildContext context) => [
+                                              PopupMenuItem<String>(
+                                                value: 'edit',
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                      Icons.edit_rounded,
+                                                      size: 20,
+                                                      color: scheme.primary,
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Text(l10n.t('common.edit')),
+                                                  ],
+                                                ),
+                                              ),
+                                              PopupMenuItem<String>(
+                                                value: 'preview',
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                      Icons
+                                                          .remove_red_eye_rounded,
+                                                      size: 20,
+                                                      color: scheme.secondary,
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Text(l10n
+                                                        .t('common.preview')),
+                                                  ],
+                                                ),
+                                              ),
+                                              PopupMenuItem<String>(
+                                                value: 'download',
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                      Icons.download_rounded,
+                                                      size: 20,
+                                                      color: scheme.tertiary,
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Text(l10n
+                                                        .t('common.download')),
+                                                  ],
+                                                ),
+                                              ),
+                                              PopupMenuItem<String>(
+                                                value: 'delete',
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                      Icons
+                                                          .delete_outline_rounded,
+                                                      size: 20,
+                                                      color: scheme.error,
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Text(l10n
+                                                        .t('common.delete')),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                    onSelected: (value) {
-                                      switch (value) {
-                                        case 'edit':
-                                          _editFile(file);
-                                          break;
-                                        case 'preview':
-                                          _openFile(file);
-                                          break;
-                                        case 'download':
-                                          _downloadFile(file);
-                                          break;
-                                        case 'delete':
-                                          _deleteFile(file);
-                                          break;
-                                      }
-                                    },
-                                    itemBuilder: (BuildContext context) => [
-                                      PopupMenuItem<String>(
-                                        value: 'edit',
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              Icons.edit,
-                                              size: 20,
-                                              color: Theme.of(context).primaryColor,
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Text(l10n.t('common.edit')),
-                                          ],
-                                        ),
-                                      ),
-                                      PopupMenuItem<String>(
-                                        value: 'preview',
-                                        child: Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.remove_red_eye,
-                                              size: 20,
-                                              color: Colors.green,
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Text(l10n.t('common.preview')),
-                                          ],
-                                        ),
-                                      ),
-                                      PopupMenuItem<String>(
-                                        value: 'download',
-                                        child: Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.download,
-                                              size: 20,
-                                              color: Colors.blue,
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Text(l10n.t('common.download')),
-                                          ],
-                                        ),
-                                      ),
-                                      PopupMenuItem<String>(
-                                        value: 'delete',
-                                        child: Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.delete,
-                                              size: 20,
-                                              color: Colors.red,
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Text(l10n.t('common.delete')),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
                                   ),
                                 ),
                               );
@@ -1299,10 +1504,8 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
               icon: const Icon(Icons.refresh),
               label: Text(
                 _retryCount > 0
-                    ? l10n.format('pdf.retryWithCount', {
-                        'current': '$_retryCount',
-                        'total': '$_maxRetries'
-                      })
+                    ? l10n.format('pdf.retryWithCount',
+                        {'current': '$_retryCount', 'total': '$_maxRetries'})
                     : l10n.t('common.retry'),
               ),
             ),
@@ -1320,8 +1523,8 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
           onDocumentLoadFailed: (PdfDocumentLoadFailedDetails details) {
             setState(() {
               _isLoading = false;
-              _error = context.l10n.format('common.errorWithMessage',
-                  {'message': details.error});
+              _error = context.l10n.format(
+                  'common.errorWithMessage', {'message': details.error});
             });
             // ✅ Fallback: open externally if viewer fails
             OpenFile.open(widget.url);
@@ -1433,8 +1636,8 @@ class _ImagePreviewPageState extends State<ImagePreviewPage> {
       }
     } catch (e) {
       setState(() {
-        _error = context.l10n
-            .format('image.errorLoading', {'error': e.toString()});
+        _error =
+            context.l10n.format('image.errorLoading', {'error': e.toString()});
         _isLoading = false;
       });
     }

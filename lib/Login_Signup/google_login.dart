@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hello/BottomNavigationBar/dashboard1.dart';
 import 'package:hello/Notifications/fcm_service.dart';
+import 'package:hello/api_service.dart';
 
 class GoogleLoginScreen extends StatefulWidget {
   const GoogleLoginScreen({super.key});
@@ -14,8 +15,7 @@ class GoogleLoginScreen extends StatefulWidget {
 }
 
 class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
-  static const String backendEndpoint =
-      'https://backend-medicalvault.onrender.com/api/auth/google';
+  static const String backendEndpoint = "${ApiService.authUrl}/google";
 
   // For Android: clientId is null, it reads from google-services.json
   // For iOS: You need to set the iOS client ID from Firebase Console

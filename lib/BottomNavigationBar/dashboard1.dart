@@ -1,19 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:hello/api_service.dart';
 import 'package:hello/AppFooter.dart';
 import 'package:hello/CategoryVaultPage.dart';
+import 'package:hello/core/theme/theme.dart';
 import 'MyVault.dart';
 import 'QR.dart';
 import 'Requests.dart';
 import 'Settings.dart';
 import 'package:hello/ProfileSwitcherModal.dart';
-import 'package:hello/main.dart';
-import '../widgets/ai_floating_button.dart';
+import '../widgets/app_text.dart';
+import '../widgets/custom_bottom_nav_bar.dart';
+import '../widgets/custom_card.dart';
+import '../widgets/doctor_card.dart';
+import 'package:hello/screens/appointments_page.dart';
+import 'package:hello/screens/doctor_detail_screen.dart';
+import 'package:hello/screens/chat_threads_screen.dart';
 import 'package:hello/screens/sos_page.dart';
 import 'package:hello/Notifications/global_notification_handler.dart';
+import 'package:hello/SettingPages/ProfilePageSetting.dart';
 import 'package:hello/localization/app_localizations.dart';
 import '../features/lost_found/report_lost_page.dart';
 import '../features/lost_found/report_found_page.dart';
@@ -29,38 +40,64 @@ class Dashboard1 extends StatefulWidget {
 }
 
 class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
+  static const int _promoInfiniteSeedPage = 10000;
   int _currentIndex = 0;
-  late PageController _pageController;
+  int _promoLoopPage = _promoInfiniteSeedPage;
+  final Set<int> _loadedTabs = {0};
+  final Map<int, Uint8List?> _decodedDataUriBytes = {};
   late PageController _promoPageController;
   Timer? _promoTimer;
-  late int _promoInitialPage;
+  Timer? _uiRefreshTimer;
+  Timer? _alertExpiryTimer;
+  Timer? _publicConfigReconnectTimer;
   late AnimationController _alertController;
+  WebSocketChannel? _publicConfigChannel;
+  StreamSubscription<dynamic>? _publicConfigSubscription;
   late Map<String, dynamic> _userData;
+  String? _storedName;
 
   Map<String, int> _documentCounts = {};
   bool _isLoadingCounts = true;
   List<Map<String, dynamic>> _linkedProfiles = [];
+  List<Map<String, dynamic>> _topDoctors = [];
+  bool _loadingTopDoctors = true;
+  List<Map<String, dynamic>> _dashboardAds = [];
+  List<Map<String, dynamic>> _dashboardCards = [];
+  List<Map<String, dynamic>> _dashboardAlerts = [];
+  bool _lowPerformanceMode = false;
+  int _jankyFrameScore = 0;
+
+  bool get _reduceMotion =>
+      _lowPerformanceMode ||
+      WidgetsBinding
+          .instance.platformDispatcher.accessibilityFeatures.disableAnimations;
 
   @override
   void initState() {
     super.initState();
     _userData = Map<String, dynamic>.from(widget.userData);
-    _pageController = PageController(initialPage: _currentIndex);
-    _promoInitialPage = _promoItems.length * 1000;
     _promoPageController = PageController(
-      initialPage: _promoInitialPage,
+      initialPage: _promoInfiniteSeedPage,
       viewportFraction: 0.9,
     );
     _alertController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 14),
-    )..repeat();
+    );
     _loadDocumentCounts();
     _loadLinkedProfiles();
+    _loadTopDoctors();
+    _loadDashboardAds();
+    _loadDashboardUiConfig();
+    _loadStoredName();
+    _startUiRefreshTimer();
+    _startAlertExpiryTimer();
+    _connectPublicConfigSocket();
+    SchedulerBinding.instance.addTimingsCallback(_handleFrameTimings);
+    _syncTickerAnimation();
 
-    // Set status bar style and global context for notifications
+    // Set global context for notifications
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      StatusBarHelper.setStatusBarStyle(context);
       // Update global context for notifications
       GlobalNotificationHandler.setGlobalContext(context);
       _refreshUserData();
@@ -69,15 +106,28 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     // Auto-scroll promo cards
     _promoTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
       if (!mounted || !_promoPageController.hasClients) return;
-      final int current =
-          _promoPageController.page?.round() ?? _promoInitialPage;
-      final int next = current + 1;
+      if (_reduceMotion) return;
+      if (_dashboardAds.length <= 1) return;
+      final positions = _promoPageController.positions.toList(growable: false);
+      if (positions.length != 1) return;
+      final position = positions.first;
+      if (!position.haveDimensions) return;
+      final currentPage =
+          position is PageMetrics ? (position as PageMetrics).page : null;
+      if (currentPage != null) {
+        _promoLoopPage = currentPage.round();
+      }
+      final int next = _promoLoopPage + 1;
+      _promoLoopPage = next;
       try {
-        _promoPageController.animateToPage(
-          next,
-          duration: const Duration(milliseconds: 500),
-          curve: Curves.easeInOut,
-        );
+        _promoPageController
+            .animateToPage(
+              next,
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeInOut,
+            )
+            .timeout(const Duration(seconds: 2), onTimeout: () {})
+            .catchError((_) {});
       } catch (_) {
         // Ignore transient errors if page view not ready
       }
@@ -86,11 +136,223 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _pageController.dispose();
+    SchedulerBinding.instance.removeTimingsCallback(_handleFrameTimings);
     _promoTimer?.cancel();
+    _uiRefreshTimer?.cancel();
+    _alertExpiryTimer?.cancel();
+    _publicConfigReconnectTimer?.cancel();
+    _publicConfigSubscription?.cancel();
+    _publicConfigSubscription = null;
+    _publicConfigChannel?.sink.close();
+    _publicConfigChannel = null;
     _promoPageController.dispose();
     _alertController.dispose();
     super.dispose();
+  }
+
+  void _handleFrameTimings(List<FrameTiming> timings) {
+    if (!mounted || _lowPerformanceMode) return;
+    var score = _jankyFrameScore;
+
+    for (final timing in timings) {
+      final buildMs = timing.buildDuration.inMilliseconds;
+      final rasterMs = timing.rasterDuration.inMilliseconds;
+      final isJanky = buildMs > 18 || rasterMs > 24;
+      if (isJanky) {
+        score += 1;
+      } else if (score > 0) {
+        score -= 1;
+      }
+
+      if (score >= 6) {
+        setState(() {
+          _lowPerformanceMode = true;
+          _jankyFrameScore = score;
+        });
+        _syncTickerAnimation();
+        return;
+      }
+    }
+
+    _jankyFrameScore = score;
+  }
+
+  Uint8List? _tryDecodeImageDataUri(String imageSource) {
+    final source = imageSource.trim();
+    if (!source.startsWith('data:image/')) return null;
+    final commaIndex = source.indexOf(',');
+    if (commaIndex <= 0 || commaIndex >= source.length - 1) return null;
+    final metadata = source.substring(0, commaIndex).toLowerCase();
+    if (!metadata.contains(';base64')) return null;
+    final base64Part = source.substring(commaIndex + 1).trim();
+    if (base64Part.isEmpty) return null;
+    try {
+      return base64Decode(base64Part);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Uint8List? _decodeImageDataUriCached(String imageSource) {
+    final source = imageSource.trim();
+    if (!source.startsWith('data:image/')) return null;
+    // Very large inline payloads can block the UI thread during decode.
+    if (source.length > 350000) return null;
+    final cacheKey = source.hashCode;
+    if (_decodedDataUriBytes.containsKey(cacheKey)) {
+      return _decodedDataUriBytes[cacheKey];
+    }
+    final decoded = _tryDecodeImageDataUri(source);
+    _decodedDataUriBytes[cacheKey] = decoded;
+    return decoded;
+  }
+
+  Widget _buildRemoteOrEmbeddedImage({
+    required String imageSource,
+    required BoxFit fit,
+    required Widget fallback,
+    double? width,
+    double? height,
+  }) {
+    final source = imageSource.trim();
+    if (source.isEmpty) return fallback;
+    final embeddedBytes = _decodeImageDataUriCached(source);
+    if (embeddedBytes != null) {
+      return Image.memory(
+        embeddedBytes,
+        width: width,
+        height: height,
+        fit: fit,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => fallback,
+      );
+    }
+    if (source.startsWith('data:image/')) {
+      return fallback;
+    }
+    return Image.network(
+      source,
+      width: width,
+      height: height,
+      fit: fit,
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) => fallback,
+    );
+  }
+
+  void _syncTickerAnimation() {
+    if (_reduceMotion) {
+      if (_alertController.isAnimating) {
+        _alertController.stop();
+      }
+      return;
+    }
+    if (!_alertController.isAnimating) {
+      _alertController.repeat();
+    }
+  }
+
+  void _startUiRefreshTimer() {
+    _uiRefreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (!mounted) return;
+      _loadDashboardUiConfig(forceRefresh: true);
+    });
+  }
+
+  void _startAlertExpiryTimer() {
+    _alertExpiryTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted) return;
+      final now = DateTime.now();
+      final active = _activeDashboardAlerts(now);
+      if (active.length != _dashboardAlerts.length) {
+        setState(() {
+          _dashboardAlerts = active;
+        });
+      }
+    });
+  }
+
+  Future<void> _connectPublicConfigSocket() async {
+    _publicConfigReconnectTimer?.cancel();
+    _publicConfigReconnectTimer = null;
+    await _publicConfigSubscription?.cancel();
+    _publicConfigSubscription = null;
+    await _publicConfigChannel?.sink.close();
+    _publicConfigChannel = null;
+
+    try {
+      final uri = ApiService.publicConfigWebSocketUri(
+        platform: "APP",
+        surface: "APP_DASHBOARD",
+      );
+      final channel = WebSocketChannel.connect(uri);
+      try {
+        await channel.ready.timeout(const Duration(seconds: 8));
+      } catch (_) {
+        await channel.sink.close();
+        _schedulePublicConfigReconnect();
+        return;
+      }
+      if (!mounted) {
+        await channel.sink.close();
+        return;
+      }
+      _publicConfigChannel = channel;
+      _publicConfigSubscription = channel.stream.listen(
+        _handlePublicConfigSocketMessage,
+        onDone: _schedulePublicConfigReconnect,
+        onError: (_) => _schedulePublicConfigReconnect(),
+        cancelOnError: true,
+      );
+    } catch (_) {
+      _schedulePublicConfigReconnect();
+    }
+  }
+
+  void _schedulePublicConfigReconnect() {
+    if (!mounted) return;
+    if (_publicConfigReconnectTimer?.isActive == true) return;
+    _publicConfigReconnectTimer = Timer(
+      const Duration(seconds: 5),
+      _connectPublicConfigSocket,
+    );
+  }
+
+  void _handlePublicConfigSocketMessage(dynamic rawMessage) {
+    try {
+      final decoded = jsonDecode(rawMessage.toString());
+      if (decoded is! Map) return;
+      final message = decoded.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      final type = message['type']?.toString().trim().toLowerCase() ?? '';
+      if (type.isEmpty || type == 'connected' || type == 'heartbeat') return;
+
+      final surfaces = _normalizeTargetValues(message['surfaces']);
+      final platforms = _normalizeTargetValues(message['platforms']);
+      final targetsDashboard =
+          surfaces.isEmpty || surfaces.contains('APP_DASHBOARD');
+      final targetsApp = platforms.isEmpty || platforms.contains('APP');
+      if (!targetsDashboard || !targetsApp) return;
+
+      ApiService.invalidatePublicConfigCache();
+      if (type == 'ads.updated' || type == 'ui-config.updated') {
+        _loadDashboardAds(forceRefresh: true);
+      }
+      if (type == 'alerts.updated' || type == 'ui-config.updated') {
+        _loadDashboardUiConfig(forceRefresh: true);
+      }
+    } catch (_) {
+      // Ignore malformed websocket events
+    }
+  }
+
+  Set<String> _normalizeTargetValues(dynamic raw) {
+    if (raw is! List) return <String>{};
+    return raw
+        .map((entry) => entry?.toString().trim().toUpperCase() ?? '')
+        .where((entry) => entry.isNotEmpty)
+        .toSet();
   }
 
   Future<void> _loadLinkedProfiles() async {
@@ -134,6 +396,258 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _loadTopDoctors({bool forceRefresh = false}) async {
+    if (mounted) {
+      setState(() {
+        _loadingTopDoctors = true;
+      });
+    }
+
+    try {
+      final past =
+          await ApiService.fetchPastAppointments(forceRefresh: forceRefresh);
+      final Map<String, Map<String, dynamic>> grouped = {};
+
+      for (final raw in past) {
+        if (raw is! Map<String, dynamic>) continue;
+        final doctorData = raw['doctorId'];
+        final doctorName =
+            (doctorData is Map ? doctorData['name'] : raw['doctorName'])
+                    ?.toString()
+                    .trim() ??
+                '';
+        if (doctorName.isEmpty) continue;
+
+        final key = (doctorData is Map ? doctorData['_id'] : raw['doctorId'])
+                ?.toString() ??
+            doctorName;
+        final specialization = (doctorData is Map
+                    ? doctorData['specialty'] ?? doctorData['specialization']
+                    : raw['doctorSpecialization'])
+                ?.toString() ??
+            '';
+        final image = (doctorData is Map
+                ? doctorData['profilePictureUrl'] ??
+                    doctorData['profilePicture'] ??
+                    doctorData['avatarUrl'] ??
+                    doctorData['avatar']
+                : raw['doctorProfilePicture'])
+            ?.toString();
+
+        final current = grouped.putIfAbsent(
+          key,
+          () => {
+            'id': key,
+            'name': doctorName,
+            'specialization': specialization,
+            'imageUrl': image,
+            'appointments': <Map<String, dynamic>>[],
+            'count': 0,
+            'rating': _estimateRatingFromName(doctorName),
+          },
+        );
+
+        (current['appointments'] as List<Map<String, dynamic>>).add(raw);
+        current['count'] = (current['count'] as int) + 1;
+
+        if ((current['specialization'] as String).isEmpty &&
+            specialization.isNotEmpty) {
+          current['specialization'] = specialization;
+        }
+      }
+
+      final doctors = grouped.values.toList()
+        ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
+
+      if (!mounted) return;
+      setState(() {
+        _topDoctors = doctors.take(8).toList();
+        _loadingTopDoctors = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading top doctors: $e');
+      if (!mounted) return;
+      setState(() {
+        _topDoctors = [];
+        _loadingTopDoctors = false;
+      });
+    }
+  }
+
+  Future<void> _loadDashboardAds({bool forceRefresh = false}) async {
+    try {
+      if (forceRefresh) {
+        ApiService.invalidatePublicConfigCache(ads: true, uiConfig: false);
+      }
+      final ads = await ApiService.fetchAdvertisements(
+        placement: 'APP_DASHBOARD',
+        forceRefresh: forceRefresh,
+      );
+      if (!mounted) return;
+      setState(() {
+        _dashboardAds = ads;
+      });
+    } catch (e) {
+      debugPrint('Error loading dashboard ads: $e');
+    }
+  }
+
+  Future<void> _loadDashboardUiConfig({bool forceRefresh = false}) async {
+    try {
+      if (forceRefresh) {
+        ApiService.invalidatePublicConfigCache(ads: false, uiConfig: true);
+      }
+      final config = await ApiService.fetchUiConfig(forceRefresh: forceRefresh);
+      final cardsRaw = config?['dashboardCards'];
+      final cards = cardsRaw is List
+          ? cardsRaw
+              .whereType<Map>()
+              .map((item) => item.map(
+                    (key, value) => MapEntry(key.toString(), value),
+                  ))
+              .toList(growable: false)
+          : <Map<String, dynamic>>[];
+      final alertsRaw = config?['dashboardAlerts'];
+      final alerts = alertsRaw is List
+          ? alertsRaw
+              .whereType<Map>()
+              .map((item) => item.map(
+                    (key, value) => MapEntry(key.toString(), value),
+                  ))
+              .toList(growable: false)
+          : <Map<String, dynamic>>[];
+      final now = DateTime.now();
+      final activeAlerts = _activeDashboardAlerts(now, source: alerts);
+
+      if (!mounted) return;
+      setState(() {
+        _dashboardCards = cards;
+        _dashboardAlerts = activeAlerts;
+      });
+    } catch (e) {
+      debugPrint('Error loading dashboard UI config: $e');
+    }
+  }
+
+  List<Map<String, dynamic>> _activeDashboardAlerts(
+    DateTime now, {
+    List<Map<String, dynamic>>? source,
+  }) {
+    final input = source ?? _dashboardAlerts;
+    final currentRole =
+        (_userData['role']?.toString().trim().toUpperCase() ?? 'PATIENT');
+    return input.where((alert) {
+      final isActive = alert['isActive'];
+      if (isActive is bool && !isActive) return false;
+
+      final platforms = _normalizeAlertPlatforms(alert);
+      if (platforms.isNotEmpty && !platforms.contains('APP')) {
+        return false;
+      }
+
+      final audience = alert['audience']?.toString().trim().toUpperCase() ?? '';
+      if (audience.isNotEmpty && audience != 'ALL' && audience != currentRole) {
+        return false;
+      }
+
+      final startAt = _parseAlertDate(alert['startAt']);
+      if (startAt != null && startAt.isAfter(now)) return false;
+
+      final endAt = _parseAlertDate(alert['endAt']);
+      if (endAt != null && endAt.isBefore(now)) return false;
+
+      final message = alert['message']?.toString().trim() ?? '';
+      return message.isNotEmpty;
+    }).toList(growable: false);
+  }
+
+  Set<String> _normalizeAlertPlatforms(Map<String, dynamic> alert) {
+    final fromList = alert['platforms'];
+    if (fromList is List) {
+      final values = fromList
+          .map((entry) => entry?.toString().trim().toUpperCase() ?? '')
+          .where((entry) => entry.isNotEmpty && entry != 'ALL')
+          .toSet();
+      if (values.isNotEmpty) return values;
+    }
+
+    final legacy = alert['platform']?.toString().trim().toUpperCase() ?? '';
+    if (legacy.isEmpty || legacy == 'ALL') {
+      return {'APP', 'WEB'};
+    }
+    if (legacy.contains(',')) {
+      return legacy
+          .split(',')
+          .map((entry) => entry.trim())
+          .where((entry) => entry.isNotEmpty)
+          .toSet();
+    }
+    return {legacy};
+  }
+
+  DateTime? _parseAlertDate(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is String) return DateTime.tryParse(raw)?.toLocal();
+    if (raw is Map && raw['\$date'] != null) {
+      final value = raw['\$date'];
+      if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+      if (value is String) return DateTime.tryParse(value)?.toLocal();
+    }
+    return null;
+  }
+
+  Future<void> _openExternalUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.auto('Unable to open the link'))),
+      );
+    }
+  }
+
+  Future<void> _openTrackedAd(
+    Map<String, dynamic> ad, {
+    required String placement,
+  }) async {
+    final fallbackUrl = ad['redirectUrl']?.toString().trim() ?? '';
+    if (fallbackUrl.isEmpty) return;
+
+    String finalUrl = fallbackUrl;
+    final adId =
+        ad['_id']?.toString().trim() ?? ad['id']?.toString().trim() ?? '';
+    if (adId.isNotEmpty) {
+      final trackedUrl = await ApiService.fetchTrackedAdvertisementUrl(
+        adId: adId,
+        placement: placement,
+      );
+      if (trackedUrl != null && trackedUrl.isNotEmpty) {
+        finalUrl = trackedUrl;
+      }
+    }
+
+    if (!mounted) return;
+    await _openExternalUrl(finalUrl);
+  }
+
+  double _estimateRatingFromName(String name) {
+    final hash = name.codeUnits.fold<int>(0, (sum, c) => sum + c);
+    final offset = (hash % 8) / 10;
+    return 4.1 + offset;
+  }
+
+  void _onNavTapped(int index) {
+    if (_currentIndex == index) return;
+    setState(() {
+      _currentIndex = index;
+      _loadedTabs.add(index);
+    });
+    if (index == 0) {
+      _refreshUserData();
+    }
+  }
+
   Future<void> _refreshUserData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -151,551 +665,745 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     }
   }
 
-  Future<String?> _getStoredName() async {
+  Future<void> _loadStoredName() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString("name");
+    if (!mounted) return;
+    setState(() {
+      _storedName = prefs.getString("name");
+    });
   }
-
-  final List<Map<String, String>> _promoItems = const [
-    {
-      'titleKey': 'dashboard.promo.stayHydratedTitle',
-      'subtitleKey': 'dashboard.promo.stayHydratedSubtitle',
-    },
-    {
-      'titleKey': 'dashboard.promo.secureBackupTitle',
-      'subtitleKey': 'dashboard.promo.secureBackupSubtitle',
-    },
-    {
-      'titleKey': 'dashboard.promo.newFeatureTitle',
-      'subtitleKey': 'dashboard.promo.newFeatureSubtitle',
-    },
-  ];
 
   Widget _buildPromoCarousel(BuildContext context) {
     final l10n = context.l10n;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return SizedBox(
-      height: 120,
-      child: PageView.builder(
-        controller: _promoPageController,
-        // infinite carousel, so no need to track index here
-        itemBuilder: (context, index) {
-          final item = _promoItems[index % _promoItems.length];
-          final title = item['titleKey'] != null
-              ? l10n.t(item['titleKey']!)
-              : '';
-          final subtitle = item['subtitleKey'] != null
-              ? l10n.t(item['subtitleKey']!)
-              : '';
-          return AnimatedBuilder(
-            animation: _promoPageController,
-            builder: (context, child) {
-              double value = 1.0;
-              if (_promoPageController.position.haveDimensions) {
-                final currentPage = _promoPageController.page ??
-                    _promoPageController.initialPage.toDouble();
-                value = (currentPage - index.toDouble());
-                value = ((1 - (value.abs() * 0.1)).clamp(0.9, 1.0)).toDouble();
-              }
-              return Transform.scale(
-                scale: value,
-                child: child,
-              );
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6.0),
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: isDark
-                        ? [const Color(0xFF2E2E2E), const Color(0xFF1E1E1E)]
-                        : [const Color(0xFFEEF6FF), const Color(0xFFE3F2FD)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    if (_dashboardAds.isEmpty) return const SizedBox.shrink();
+    final promoGradient = [
+      Color.lerp(
+        scheme.primary,
+        Colors.white,
+        isDark ? 0.08 : 0.24,
+      )!,
+      Color.lerp(
+        scheme.secondary,
+        scheme.primary,
+        isDark ? 0.14 : 0.32,
+      )!,
+    ];
+
+    return RepaintBoundary(
+      child: SizedBox(
+        height: 120,
+        child: PageView.builder(
+          itemCount: null,
+          controller: _promoPageController,
+          onPageChanged: (index) {
+            _promoLoopPage = index;
+          },
+          itemBuilder: (context, index) {
+            final normalizedIndex = index % _dashboardAds.length;
+            final item = _dashboardAds[normalizedIndex];
+            final title = (item['title']?.toString().trim().isNotEmpty ?? false)
+                ? item['title'].toString().trim()
+                : l10n.auto('Medical Vault');
+            final redirectUrl = item['redirectUrl']?.toString().trim() ?? '';
+            final subtitle = redirectUrl.isNotEmpty
+                ? l10n.auto('Tap to learn more')
+                : l10n.auto('Medical Vault update');
+            final imageUrl = item['imageUrl']?.toString().trim() ?? '';
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: redirectUrl.isEmpty
+                    ? null
+                    : () => _openTrackedAd(
+                          item,
+                          placement: 'APP_DASHBOARD',
+                        ),
+                child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: isDark
-                        ? Colors.white12
-                        : Colors.blue.withValues(alpha: 0.15),
-                    width: 1,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    const SizedBox(width: 16),
-                    Icon(
-                      Icons.campaign,
-                      color: isDark ? Colors.lightBlueAccent : Colors.blue,
-                      size: 28,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: isDark ? Colors.white : Colors.black87,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _buildRemoteOrEmbeddedImage(
+                        imageSource: imageUrl,
+                        fit: BoxFit.cover,
+                        fallback: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: promoGradient,
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            subtitle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: isDark ? Colors.white70 : Colors.black54,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 16),
-                  ],
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.45),
+                              Colors.black.withValues(alpha: 0.25),
+                            ],
+                          ),
+                        ),
+                      ),
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Colors.white
+                                .withValues(alpha: isDark ? 0.14 : 0.7),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black
+                                  .withValues(alpha: isDark ? 0.18 : 0.05),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.campaign,
+                              color: Colors.white.withValues(alpha: 0.95),
+                              size: 28,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  AppText(
+                                    title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    variant: AppTextVariant.body,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  AppText(
+                                    subtitle,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    variant: AppTextVariant.caption,
+                                    color: Colors.white.withValues(alpha: 0.9),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (redirectUrl.isNotEmpty)
+                              Icon(
+                                Icons.open_in_new_rounded,
+                                color: Colors.white.withValues(alpha: 0.95),
+                                size: 18,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    // Ensure status bar is configured
-    StatusBarHelper.setStatusBarStyle(context);
-
+    _syncTickerAnimation();
     final l10n = context.l10n;
     final passedName = (_userData['name'] ?? "").toString();
 
-    return FutureBuilder<String?>(
-      future: _getStoredName(),
-      builder: (context, snapshot) {
-        final defaultName = l10n.auto('Patient');
-        final userName = passedName.isNotEmpty
-            ? passedName
-            : (snapshot.data ?? defaultName);
+    final defaultName = l10n.auto('Patient');
+    final userName =
+        passedName.isNotEmpty ? passedName : (_storedName ?? defaultName);
+    final categories = [
+      {
+        'title': l10n.t('documents.category.reports'),
+        'image': 'assets/Reports.png',
+        'category': 'Reports',
+        'count': _documentCounts['Reports'] ?? 0
+      },
+      {
+        'title': l10n.t('documents.category.prescriptions'),
+        'image': 'assets/Prescription.png',
+        'category': 'Prescription',
+        'count': _documentCounts['Prescription'] ?? 0
+      },
+      {
+        'title': l10n.t('documents.category.bills'),
+        'image': 'assets/2851468.png',
+        'category': 'Bill',
+        'count': _documentCounts['Bill'] ?? 0
+      },
+      {
+        'title': l10n.t('documents.category.insurance'),
+        'image': 'assets/Insurance12.png',
+        'category': 'Insurance',
+        'count': _documentCounts['Insurance'] ?? 0
+      },
+    ];
+    final activeDashboardCards = _dashboardCards
+        .where((card) => card['isActive'] == null || card['isActive'] == true)
+        .toList(growable: false);
+    final hasActiveAlerts = _localizedAlertHeadlines(context).isNotEmpty;
 
-        return PopScope(
-          canPop: false,
-          onPopInvokedWithResult: (didPop, result) async {
-            if (didPop) return;
-            // Show confirmation dialog when back button is pressed on dashboard
-            final shouldExit = await showDialog<bool>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: Text(l10n.t('dashboard.exitDialog.title')),
-                content: Text(l10n.t('dashboard.exitDialog.message')),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: Text(l10n.auto('Cancel')),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: Text(l10n.t('dashboard.exitDialog.confirm')),
-                  ),
-                ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        // Show confirmation dialog when back button is pressed on dashboard
+        final shouldExit = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(l10n.t('dashboard.exitDialog.title')),
+            content: Text(l10n.t('dashboard.exitDialog.message')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(l10n.auto('Cancel')),
               ),
-            );
-            if (shouldExit ?? false) {
-              Navigator.of(context).pop();
-            }
-          },
-          child: SafeArea(
-            child: Scaffold(
-              body: Stack(
-                children: [
-                  PageView(
-                    controller: _pageController,
-                    physics: const ClampingScrollPhysics(),
-                    onPageChanged: (index) {
-                      if (!mounted) return;
-                      setState(() {
-                        _currentIndex = index;
-                      });
-                      if (index == 0) {
-                        _refreshUserData();
-                      }
-                    },
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(l10n.t('dashboard.exitDialog.confirm')),
+              ),
+            ],
+          ),
+        );
+        if (!context.mounted) return;
+        if (shouldExit ?? false) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: IndexedStack(
+          index: _currentIndex,
+          children: [
+            // Home tab
+            TickerMode(
+              enabled: _currentIndex == 0,
+              child: SafeArea(
+                bottom: false,
+                child: RefreshIndicator(
+                  onRefresh: () async {
+                    await _loadDocumentCounts();
+                    await _loadTopDoctors(forceRefresh: true);
+                    await _loadDashboardAds(forceRefresh: true);
+                    await _loadDashboardUiConfig(forceRefresh: true);
+                    await _refreshUserData();
+                  },
+                  child: ListView(
+                    key: const PageStorageKey<String>('dashboard-home-scroll'),
+                    cacheExtent: 1600,
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: ClampingScrollPhysics(),
+                    ),
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
                     children: [
-                      // 🏠 Dashboard tab
-                      RefreshIndicator(
-                        onRefresh: _loadDocumentCounts,
-                        child: ListView(
-                          padding:
-                              const EdgeInsets.fromLTRB(30.0, 30.0, 30.0, 20.0),
-                          children: [
-                            Row(
-                              children: [
-                                GestureDetector(
-                                  onTap: () => _showProfileSwitcher(context),
-                                  child: CircleAvatar(
-                                    radius: 20,
-                                    backgroundColor:
-                                        Theme.of(context).primaryColor,
-                                    child: (() {
-                                      final photoUrl = (_userData[
-                                                  'profilePictureUrl'] ??
-                                              _userData['profilePicture'] ??
-                                              '')
-                                          .toString();
-                                      if (photoUrl.isNotEmpty) {
-                                        return ClipOval(
-                                          child: Image.network(
-                                            photoUrl,
-                                            width: 40,
-                                            height: 40,
-                                            fit: BoxFit.cover,
-                                            errorBuilder: (context, error,
-                                                stackTrace) {
-                                              return const Icon(
-                                                Icons.person,
-                                                color: Colors.white,
-                                                size: 20,
-                                              );
-                                            },
-                                          ),
-                                        );
-                                      }
-                                      return const Icon(
-                                        Icons.person,
-                                        color: Colors.white,
-                                        size: 20,
-                                      );
-                                    })(),
+                      _buildGreetingSection(context, userName),
+                      const SizedBox(height: AppSpacing.medium),
+                      if (hasActiveAlerts) ...[
+                        RepaintBoundary(
+                          child: _buildAlertTicker(context),
+                        ),
+                        const SizedBox(height: AppSpacing.medium),
+                      ],
+                      if (_dashboardAds.isNotEmpty) ...[
+                        _buildPromoCarousel(context),
+                        const SizedBox(height: AppSpacing.large),
+                      ],
+                      if (_loadingTopDoctors || _topDoctors.isNotEmpty) ...[
+                        _buildTopDoctorsSection(context),
+                        const SizedBox(height: AppSpacing.large),
+                      ],
+                      AppText(
+                        l10n.t('dashboard.quickActions'),
+                        variant: AppTextVariant.subtitle,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      const SizedBox(height: AppSpacing.medium),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildQuickActionCard(
+                              context,
+                              icon: Icons.qr_code,
+                              title: l10n.t('dashboard.action.generateShareQR'),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => QRPage(),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildQuickActionCard(
+                              context,
+                              icon: Icons.person_add_alt_1,
+                              title: l10n.t('dashboard.action.accessRequests'),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => RequestsPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildQuickActionCard(
+                              context,
+                              icon: Icons.emergency,
+                              title: l10n.t('dashboard.action.emergencySOS'),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        SosPage(userData: _userData),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildQuickActionCard(
+                              context,
+                              icon: Icons.report,
+                              title:
+                                  l10n.t('dashboard.action.reportLostPerson'),
+                              onTap: () async {
+                                await _openReportLost(context);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildQuickActionCard(
+                              context,
+                              icon: Icons.handshake,
+                              title:
+                                  l10n.t('dashboard.action.reportFoundPerson'),
+                              onTap: () async {
+                                await _openReportFound(context);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildQuickActionCard(
+                              context,
+                              icon: Icons.list,
+                              title: l10n.t('dashboard.action.myLostReports'),
+                              onTap: () async {
+                                await _openMyLostReports(context);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (activeDashboardCards.isNotEmpty) ...[
+                        const SizedBox(height: AppSpacing.large),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: AppText(
+                            l10n.auto('Featured'),
+                            variant: AppTextVariant.subtitle,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.medium),
+                        SizedBox(
+                          height: 124,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: activeDashboardCards.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 12),
+                            itemBuilder: (context, index) {
+                              final card = activeDashboardCards[index];
+                              final title = card['title']?.toString().trim();
+                              if (title == null || title.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+                              final subtitle =
+                                  card['subtitle']?.toString().trim() ?? '';
+                              final redirectUrl =
+                                  card['redirectUrl']?.toString().trim() ?? '';
+                              return SizedBox(
+                                width: 220,
+                                child: CustomCard(
+                                  onTap: redirectUrl.isEmpty
+                                      ? null
+                                      : () => _openExternalUrl(redirectUrl),
+                                  radius: AppRadii.medium,
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Text(
-                                        l10n.format('dashboard.greeting',
-                                            {'name': userName}),
-                                        style: const TextStyle(
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.bold),
+                                      AppText(
+                                        title,
+                                        variant: AppTextVariant.body,
+                                        fontWeight: FontWeight.w700,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      if (_linkedProfiles.isNotEmpty)
-                                        Text(
-                                          l10n.format(
-                                              'dashboard.profileCount', {
-                                            'count':
-                                                '${_linkedProfiles.length + 1}'
-                                          }),
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey[600],
-                                          ),
+                                      if (subtitle.isNotEmpty) ...[
+                                        const SizedBox(height: 6),
+                                        AppText(
+                                          subtitle,
+                                          variant: AppTextVariant.caption,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
+                                      ],
+                                      if (redirectUrl.isNotEmpty) ...[
+                                        const SizedBox(height: 10),
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              Icons.open_in_new_rounded,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .primary,
+                                              size: 16,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            AppText(
+                                              l10n.auto('Open'),
+                                              variant: AppTextVariant.caption,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .primary,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ],
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
-                                IconButton(
-                                  onPressed: () =>
-                                      _showProfileSwitcher(context),
-                                  icon: Icon(
-                                    Icons.swap_horiz,
-                                    color: Theme.of(context).iconTheme.color,
-                                  ),
-                                  tooltip: l10n.t('dashboard.switchProfileTooltip'),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            _buildAlertTicker(context),
-                            const SizedBox(height: 16),
-                            // Sliding promo/notification cards
-                            _buildPromoCarousel(context),
-                            const SizedBox(height: 20),
-                            Text(
-                              l10n.t('dashboard.quickActions'),
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                            ),
-                            const SizedBox(height: 16),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: _buildQuickActionCard(
-                                    context,
-                                    icon: Icons.qr_code,
-                                    title: l10n
-                                        .t('dashboard.action.generateShareQR'),
-                                    onTap: () {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                            builder: (context) => QRPage()),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: _buildQuickActionCard(
-                                    context,
-                                    icon: Icons.person_add_alt_1,
-                                    title: l10n
-                                        .t('dashboard.action.accessRequests'),
-                                    onTap: () {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                            builder: (context) =>
-                                                RequestsPage()),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: _buildQuickActionCard(
-                                    context,
-                                    icon: Icons.emergency,
-                                    title:
-                                        l10n.t('dashboard.action.emergencySOS'),
-                                    onTap: () {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (context) => SosPage(
-                                            userData: _userData,
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: _buildQuickActionCard(
-                                    context,
-                                    icon: Icons.report,
-                                    title: l10n.t(
-                                        'dashboard.action.reportLostPerson'),
-                                    onTap: () async {
-                                      await _openReportLost(context);
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 20),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: _buildQuickActionCard(
-                                    context,
-                                    icon: Icons.handshake,
-                                    title: l10n.t(
-                                        'dashboard.action.reportFoundPerson'),
-                                    onTap: () async {
-                                      await _openReportFound(context);
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: _buildQuickActionCard(
-                                    context,
-                                    icon: Icons.list,
-                                    title: l10n
-                                        .t('dashboard.action.myLostReports'),
-                                    onTap: () async {
-                                      await _openMyLostReports(context);
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 20),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(l10n.t('dashboard.documentsTitle'),
-                                    style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold)),
-                                if (!_isLoadingCounts)
-                                  Text(
-                                    l10n.format('dashboard.documentsTotal', {
-                                      'count':
-                                          '${_documentCounts.values.fold(0, (sum, count) => sum + count)}'
-                                    }),
-                                    style: const TextStyle(
-                                        fontSize: 14,
-                                        color: Colors.grey,
-                                        fontWeight: FontWeight.w500),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            Container(
-                              child: GridView.builder(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                itemCount: 4,
-                                gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  crossAxisSpacing: 16,
-                                  mainAxisSpacing: 16,
-                                  childAspectRatio: 1,
-                                ),
-                                itemBuilder: (context, index) {
-                                  final categories = [
-                                    {
-                                      "title":
-                                          l10n.t('documents.category.reports'),
-                                      "image": "assets/Reports.png",
-                                      "category": "Reports",
-                                      "count": _documentCounts["Reports"] ?? 0
-                                    },
-                                    {
-                                      "title": l10n
-                                          .t('documents.category.prescriptions'),
-                                      "image": "assets/Prescription.png",
-                                      "category": "Prescription",
-                                      "count":
-                                          _documentCounts["Prescription"] ?? 0
-                                    },
-                                    {
-                                      "title": l10n
-                                          .t('documents.category.bills'),
-                                      "image": "assets/2851468.png",
-                                      "category": "Bill",
-                                      "count": _documentCounts["Bill"] ?? 0
-                                    },
-                                    {
-                                      "title": l10n
-                                          .t('documents.category.insurance'),
-                                      "image": "assets/Insurance12.png",
-                                      "category": "Insurance",
-                                      "count": _documentCounts["Insurance"] ?? 0
-                                    },
-                                  ];
-
-                                  final item = categories[index];
-                                  return _buildCategoryCard(
-                                    context,
-                                    title: item["title"] as String,
-                                    imagePath: item["image"] as String,
-                                    category: item["category"] as String,
-                                    count: item["count"] as int,
-                                  );
-                                },
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                          ],
-                        ),
-                      ),
-
-                      // 🔐 Vault tab
-                      MyVault(
-                        userId: (_userData["id"] ?? "").toString(),
-                      ),
-
-                      QRPage(),
-                      RequestsPage(),
-                      SettingsPage(userData: _userData),
-                    ],
-                  ),
-                  // Fixed AI Assistant button above footer
-                  Positioned(
-                    right: -2,
-                    bottom: kBottomNavigationBarHeight - 50,
-                    child: const AIFloatingButton(),
-                  ),
-                ],
-              ),
-              bottomNavigationBar: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    height: kBottomNavigationBarHeight,
-                    child: Stack(
-                      children: [
-                        // Bottom Navigation Bar
-                        Positioned(
-                          bottom: 0,
-                          left: 0,
-                          right: 0,
-                          child: BottomNavigationBar(
-                            type: BottomNavigationBarType.fixed,
-                            currentIndex: _currentIndex,
-                            onTap: (index) {
-                              setState(() {
-                                _currentIndex = index;
-                              });
-                              _pageController.animateToPage(index,
-                                  duration: const Duration(milliseconds: 300),
-                                  curve: Curves.easeInOut);
+                              );
                             },
-                            items: [
-                              BottomNavigationBarItem(
-                                  icon: const Icon(Icons.home),
-                                  label: l10n.t('dashboard.nav.home')),
-                              BottomNavigationBarItem(
-                                  icon: const Icon(Icons.lock),
-                                  label: l10n.t('dashboard.nav.vault')),
-                              BottomNavigationBarItem(
-                                  icon: const Icon(Icons.qr_code),
-                                  label: l10n.t('dashboard.nav.qr')),
-                              BottomNavigationBarItem(
-                                  icon: const Icon(Icons.list_alt),
-                                  label: l10n.t('dashboard.nav.requests')),
-                              BottomNavigationBarItem(
-                                  icon: const Icon(Icons.settings),
-                                  label: l10n.t('dashboard.nav.settings')),
-                            ],
-                            selectedItemColor: Theme.of(context)
-                                .bottomNavigationBarTheme
-                                .selectedItemColor,
-                            unselectedItemColor: Theme.of(context)
-                                .bottomNavigationBarTheme
-                                .unselectedItemColor,
                           ),
                         ),
                       ],
-                    ),
+                      const SizedBox(height: AppSpacing.large),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          AppText(
+                            l10n.t('dashboard.documentsTitle'),
+                            variant: AppTextVariant.subtitle,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          if (!_isLoadingCounts)
+                            AppText(
+                              l10n.format('dashboard.documentsTotal', {
+                                'count':
+                                    '${_documentCounts.values.fold(0, (sum, count) => sum + count)}'
+                              }),
+                              variant: AppTextVariant.caption,
+                              fontWeight: FontWeight.w600,
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.medium),
+                      GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: categories.length,
+                        addRepaintBoundaries: true,
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 14,
+                          mainAxisSpacing: 14,
+                          childAspectRatio: 0.98,
+                        ),
+                        itemBuilder: (context, index) {
+                          final item = categories[index];
+                          return _buildCategoryCard(
+                            context,
+                            title: item['title'] as String,
+                            imagePath: item['image'] as String,
+                            category: item['category'] as String,
+                            count: item['count'] as int,
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      const Center(child: AppFooter()),
+                    ],
                   ),
-                  const AppFooter(),
-                ],
+                ),
               ),
             ),
+
+            // 🔐 Vault tab
+            _loadedTabs.contains(1)
+                ? TickerMode(
+                    enabled: _currentIndex == 1,
+                    child: MyVault(
+                      userId: (_userData["id"] ?? "").toString(),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+            _loadedTabs.contains(2)
+                ? TickerMode(
+                    enabled: _currentIndex == 2,
+                    child: QRPage(),
+                  )
+                : const SizedBox.shrink(),
+            _loadedTabs.contains(3)
+                ? TickerMode(
+                    enabled: _currentIndex == 3,
+                    child: RequestsPage(),
+                  )
+                : const SizedBox.shrink(),
+            _loadedTabs.contains(4)
+                ? TickerMode(
+                    enabled: _currentIndex == 4,
+                    child: SettingsPage(userData: _userData),
+                  )
+                : const SizedBox.shrink(),
+          ],
+        ),
+        bottomNavigationBar: CustomBottomNavBar(
+          currentIndex: _currentIndex,
+          onTap: _onNavTapped,
+          reduceMotion: _reduceMotion,
+          items: [
+            BottomNavItemData(
+              icon: Icons.home_rounded,
+              label: l10n.t('dashboard.nav.home'),
+            ),
+            BottomNavItemData(
+              icon: Icons.lock_rounded,
+              label: l10n.t('dashboard.nav.vault'),
+            ),
+            BottomNavItemData(
+              icon: Icons.qr_code_rounded,
+              label: l10n.t('dashboard.nav.qr'),
+            ),
+            BottomNavItemData(
+              icon: Icons.list_alt_rounded,
+              label: l10n.t('dashboard.nav.requests'),
+            ),
+            BottomNavItemData(
+              icon: Icons.settings_rounded,
+              label: l10n.t('dashboard.nav.settings'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGreetingSection(BuildContext context, String userName) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final photoUrl =
+        (_userData['profilePictureUrl'] ?? _userData['profilePicture'] ?? '')
+            .toString();
+
+    return CustomCard(
+      radius: AppRadii.large,
+      gradient: [
+        theme.colorScheme.primary.withValues(alpha: 0.95),
+        theme.colorScheme.secondary.withValues(alpha: 0.94),
+      ],
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () => _openProfileSettings(context),
+            child: CircleAvatar(
+              radius: 24,
+              backgroundColor: Colors.white.withValues(alpha: 0.24),
+              child: photoUrl.isNotEmpty
+                  ? ClipOval(
+                      child: _buildRemoteOrEmbeddedImage(
+                        imageSource: photoUrl,
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
+                        fallback: const Icon(
+                          Icons.person,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    )
+                  : const Icon(
+                      Icons.person,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+            ),
           ),
-        );
-      },
+          const SizedBox(width: AppSpacing.medium),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppText(
+                  l10n.auto('Good to see you'),
+                  variant: AppTextVariant.caption,
+                  color: Colors.white.withValues(alpha: 0.85),
+                ),
+                const SizedBox(height: 2),
+                AppText(
+                  l10n.format('dashboard.greeting', {'name': userName}),
+                  variant: AppTextVariant.subtitle,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (_linkedProfiles.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  AppText(
+                    l10n.format('dashboard.profileCount', {
+                      'count': '${_linkedProfiles.length + 1}',
+                    }),
+                    variant: AppTextVariant.caption,
+                    color: Colors.white.withValues(alpha: 0.8),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                onPressed: () => _openMessagesHub(context),
+                icon: const Icon(
+                  Icons.chat_bubble_outline_rounded,
+                  color: Colors.white,
+                ),
+                tooltip: l10n.auto('Messages'),
+              ),
+              IconButton(
+                onPressed: () => _showProfileSwitcher(context),
+                icon: const Icon(Icons.swap_horiz_rounded, color: Colors.white),
+                tooltip: l10n.t('dashboard.switchProfileTooltip'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopDoctorsSection(BuildContext context) {
+    final l10n = context.l10n;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            AppText(
+              l10n.auto('Top Doctors'),
+              variant: AppTextVariant.subtitle,
+              fontWeight: FontWeight.w700,
+            ),
+            const Spacer(),
+            TextButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  _buildFadeSlideRoute(const AppointmentsPage(initialTab: 0)),
+                );
+              },
+              child: const AppText(
+                'See all',
+                variant: AppTextVariant.caption,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_loadingTopDoctors)
+          const SizedBox(
+            height: 188,
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_topDoctors.isEmpty)
+          CustomCard(
+            glass: true,
+            child: AppText(l10n.auto('No doctor insights available yet.'),
+                variant: AppTextVariant.caption),
+          )
+        else
+          SizedBox(
+            height: 192,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _topDoctors.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final doctor = _topDoctors[index];
+                return SizedBox(
+                  width: 208,
+                  child: DoctorCard(
+                    name: doctor['name']?.toString() ?? 'Doctor',
+                    specialization: doctor['specialization']?.toString() ?? '',
+                    rating: (doctor['rating'] as num?)?.toDouble() ?? 4.5,
+                    imageUrl: doctor['imageUrl']?.toString(),
+                    highlighted: index == 0,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        _buildFadeSlideRoute(
+                          DoctorDetailScreen(
+                            doctor: doctor,
+                            appointments: List<Map<String, dynamic>>.from(
+                              doctor['appointments'] as List? ?? const [],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 
@@ -705,7 +1413,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       required String category,
       required int count}) {
     final l10n = context.l10n;
-    return GestureDetector(
+    return CustomCard(
       onTap: () async {
         await Navigator.push(
           context,
@@ -718,38 +1426,78 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
         );
         _loadDocumentCounts();
       },
-      child: Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              height: 80,
-              width: double.infinity,
-              child: Image.asset(imagePath, fit: BoxFit.contain),
-            ),
-            const SizedBox(height: 8),
-            Text(title, style: const TextStyle(color: Colors.blueGrey)),
-            const SizedBox(height: 4),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.blue.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                '$count ${count == 1 ? l10n.t('dashboard.documentSingular') : l10n.t('dashboard.documentPlural')}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Colors.blue,
-                  fontWeight: FontWeight.w500,
-                ),
+      glass: false,
+      softShadow: false,
+      radius: AppRadii.large,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Center(
+              child: Image.asset(
+                imagePath,
+                fit: BoxFit.contain,
+                height: 74,
               ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 6),
+          AppText(
+            title,
+            variant: AppTextVariant.body,
+            fontWeight: FontWeight.w700,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(
+              color:
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: AppText(
+              '$count ${count == 1 ? l10n.t('dashboard.documentSingular') : l10n.t('dashboard.documentPlural')}',
+              variant: AppTextVariant.caption,
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w700,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Route _buildFadeSlideRoute(Widget page) {
+    final transitionDuration =
+        _reduceMotion ? Duration.zero : const Duration(milliseconds: 220);
+    final reverseTransitionDuration =
+        _reduceMotion ? Duration.zero : const Duration(milliseconds: 160);
+    return PageRouteBuilder(
+      pageBuilder: (_, __, ___) => page,
+      transitionDuration: transitionDuration,
+      reverseTransitionDuration: reverseTransitionDuration,
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        if (_reduceMotion) return child;
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.03, 0.05),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
     );
   }
 
@@ -759,58 +1507,65 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     required String title,
     required VoidCallback onTap,
   }) {
-    final theme = Theme.of(context);
-    final isDarkMode = theme.brightness == Brightness.dark;
-
-    return GestureDetector(
+    final primary = Theme.of(context).colorScheme.primary;
+    return CustomCard(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isDarkMode ? const Color(0xFF2E2E2E) : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isDarkMode ? Colors.white12 : Colors.grey[200]!,
-            width: 1,
+      glass: false,
+      softShadow: false,
+      radius: AppRadii.medium,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(AppRadii.small),
+            ),
+            child: Icon(icon, color: primary, size: 20),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+          const SizedBox(width: 10),
+          Expanded(
+            child: AppText(
+              title,
+              variant: AppTextVariant.caption,
+              fontWeight: FontWeight.w700,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: Colors.blue.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                icon,
-                color: Colors.blue,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  color: isDarkMode ? Colors.white : Colors.black87,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  height: 1.2,
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
+          Icon(
+            Icons.chevron_right_rounded,
+            color: Theme.of(context).textTheme.bodyMedium?.color,
+            size: 18,
+          ),
+        ],
       ),
+    );
+  }
+
+  Future<void> _openProfileSettings(BuildContext context) async {
+    final initialUser = Map<String, dynamic>.from(_userData);
+    final result = await Navigator.push(
+      context,
+      _buildFadeSlideRoute(ProfileName(userData: initialUser)),
+    );
+    if (!mounted) return;
+    if (result is Map<String, dynamic>) {
+      setState(() {
+        _userData = Map<String, dynamic>.from(result);
+      });
+    } else {
+      await _refreshUserData();
+    }
+    await _loadLinkedProfiles();
+  }
+
+  Future<void> _openMessagesHub(BuildContext context) async {
+    await Navigator.push(
+      context,
+      _buildFadeSlideRoute(const ChatThreadsScreen()),
     );
   }
 
@@ -860,37 +1615,40 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   }
 
   List<String> _localizedAlertHeadlines(BuildContext context) {
-    final l10n = context.l10n;
-    return [
-      l10n.t('dashboard.alert.massSOS'),
-      l10n.t('dashboard.alert.waterQuality'),
-      l10n.t('dashboard.alert.unusualActivity'),
-    ];
+    return _activeDashboardAlerts(DateTime.now())
+        .map((alert) => alert['message']?.toString().trim() ?? '')
+        .where((message) => message.isNotEmpty)
+        .toList(growable: false);
   }
 
   Widget _buildAlertTicker(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final alertAccent = scheme.error;
+    final alertBackground = Color.alphaBlend(
+      alertAccent.withValues(alpha: isDark ? 0.16 : 0.09),
+      theme.cardColor,
+    );
     final alerts = _localizedAlertHeadlines(context);
-    final alertText = alerts.join('   •   ');
+    if (alerts.isEmpty) return const SizedBox.shrink();
+    final alertText = alerts.join('   |   ');
     final textStyle = theme.textTheme.bodyMedium?.copyWith(
           fontWeight: FontWeight.w600,
-          color: isDark ? Colors.white : const Color(0xFF7A0C0C),
+          color: alertAccent,
         ) ??
         TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w600,
-          color: isDark ? Colors.white : const Color(0xFF7A0C0C),
+          color: alertAccent,
         );
 
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF3A1B1B) : const Color(0xFFFFF1F1),
+        color: alertBackground,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isDark
-              ? Colors.redAccent.withOpacity(0.25)
-              : Colors.redAccent.withOpacity(0.4),
+          color: alertAccent.withValues(alpha: isDark ? 0.3 : 0.42),
         ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -900,11 +1658,11 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.redAccent.withOpacity(0.18),
+              color: alertAccent.withValues(alpha: 0.16),
             ),
             child: Icon(
               Icons.campaign_outlined,
-              color: isDark ? Colors.orangeAccent : Colors.redAccent,
+              color: alertAccent,
               size: 20,
             ),
           ),
@@ -912,70 +1670,81 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
           Expanded(
             child: SizedBox(
               height: 20,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final painter = TextPainter(
-                    text: TextSpan(text: alertText, style: textStyle),
-                    maxLines: 1,
-                    textDirection: TextDirection.ltr,
-                  )..layout();
+              child: _reduceMotion
+                  ? Text(
+                      alertText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textStyle,
+                    )
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final painter = TextPainter(
+                          text: TextSpan(text: alertText, style: textStyle),
+                          maxLines: 1,
+                          textDirection: TextDirection.ltr,
+                        )..layout();
 
-                  final contentWidth =
-                      painter.width <= 0 ? constraints.maxWidth : painter.width;
-                  final tickerWidth = contentWidth < constraints.maxWidth
-                      ? constraints.maxWidth + 48
-                      : contentWidth + 48;
+                        final contentWidth = painter.width <= 0
+                            ? constraints.maxWidth
+                            : painter.width;
+                        final tickerWidth = contentWidth < constraints.maxWidth
+                            ? constraints.maxWidth + 48
+                            : contentWidth + 48;
 
-                  return ClipRect(
-                    child: AnimatedBuilder(
-                      animation: _alertController,
-                      builder: (context, child) {
-                        final offset =
-                            (_alertController.value * tickerWidth) % tickerWidth;
-                        return Transform.translate(
-                          offset: Offset(-offset, 0),
-                          child: child,
+                        return ClipRect(
+                          child: AnimatedBuilder(
+                            animation: _alertController,
+                            builder: (context, child) {
+                              final offset =
+                                  (_alertController.value * tickerWidth) %
+                                      tickerWidth;
+                              return Transform.translate(
+                                offset: Offset(-offset, 0),
+                                child: child,
+                              );
+                            },
+                            child: OverflowBox(
+                              maxWidth: double.infinity,
+                              alignment: Alignment.centerLeft,
+                              child: SizedBox(
+                                width: tickerWidth * 2,
+                                child: Row(
+                                  children: [
+                                    SizedBox(
+                                      width: tickerWidth,
+                                      child: Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                          alertText,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.clip,
+                                          softWrap: false,
+                                          style: textStyle,
+                                        ),
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: tickerWidth,
+                                      child: Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                          alertText,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.clip,
+                                          softWrap: false,
+                                          style: textStyle,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                         );
                       },
-                      child: OverflowBox(
-                        maxWidth: double.infinity,
-                        alignment: Alignment.centerLeft,
-                        child: SizedBox(
-                          width: tickerWidth * 2,
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: tickerWidth,
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    alertText,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.visible,
-                                    style: textStyle,
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: tickerWidth,
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    alertText,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.visible,
-                                    style: textStyle,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
                     ),
-                  );
-                },
-              ),
             ),
           ),
         ],

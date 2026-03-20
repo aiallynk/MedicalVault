@@ -1,8 +1,8 @@
-name: hello
+﻿name: hello
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.5+5
 
 environment:
   sdk: ^3.6.0
@@ -31,9 +31,13 @@ dependencies:
   http_parser: ^4.0.1
   url_launcher: ^6.1.10
   dio: ^5.2.0
+  crypto: ^3.0.6
   permission_handler: ^10.4.1
   cupertino_icons: ^1.0.5
   provider: ^6.1.4
+  android_package_installer:
+    path: local_plugins/android_package_installer
+  package_info_plus: ^8.3.1
   firebase_messaging: ^16.0.2
   firebase_core: ^4.1.1
   googleapis_auth: ^2.0.0
@@ -41,6 +45,8 @@ dependencies:
   google_sign_in: ^6.1.4
   geolocator: ^10.1.0
   geocoding: ^2.1.1
+  google_fonts: ^6.2.1
+  web_socket_channel: ^3.0.3
 
 dev_dependencies:
   flutter_test:

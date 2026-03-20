@@ -5,13 +5,16 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'api_service.dart';
 import 'localization/app_localizations.dart';
+import 'Document_model.dart';
 
 class UploadDocument extends StatefulWidget {
   final String userId;
+  final String? initialCategory; // Optional pre-selected category
 
   const UploadDocument({
     super.key,
     required this.userId,
+    this.initialCategory,
   });
 
   @override
@@ -26,6 +29,25 @@ class _UploadDocumentState extends State<UploadDocument> {
   final TextEditingController _notesController = TextEditingController();
   bool _isUploading = false;
   double _uploadProgress = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Set initial category if provided
+    if (widget.initialCategory != null) {
+      _selectedCategory = _normalizeCategory(widget.initialCategory!);
+    }
+  }
+
+  // Normalize category to match valid backend categories
+  String _normalizeCategory(String category) {
+    final lower = category.toLowerCase().trim();
+    if (lower.contains('report')) return 'Report';
+    if (lower.contains('prescription')) return 'Prescription';
+    if (lower.contains('bill')) return 'Bill';
+    if (lower.contains('insurance')) return 'Insurance';
+    return 'Report'; // Default
+  }
 
   /// File picker
   Future<void> _pickFile() async {
@@ -123,37 +145,55 @@ class _UploadDocumentState extends State<UploadDocument> {
       return;
     }
 
+    // Initialize progress to 0
     setState(() {
       _isUploading = true;
       _uploadProgress = 0.0;
     });
 
-    final doc = await ApiService.uploadDocument(
-      file: _selectedFile!,
-      title: _titleController.text,
-      category:
-          _selectedCategory == "Reports" ? "Lab Report" : _selectedCategory!,
-      notes: _notesController.text,
-      date:
-          _selectedDate?.toIso8601String() ?? DateTime.now().toIso8601String(),
-      onProgress: (progress) {
-        setState(() {
-          _uploadProgress = progress;
-        });
-      },
-    );
+    // Small delay to ensure UI updates
+    await Future.delayed(const Duration(milliseconds: 50));
 
-    setState(() {
-      _isUploading = false;
-      _uploadProgress = 0.0;
-    });
+    Document? doc;
+    try {
+      doc = await ApiService.uploadDocument(
+        file: _selectedFile!,
+        title: _titleController.text,
+        category:
+            _selectedCategory == "Reports" ? "Lab Report" : _selectedCategory!,
+        notes: _notesController.text,
+        date:
+            _selectedDate?.toIso8601String() ?? DateTime.now().toIso8601String(),
+        onProgress: (progress) {
+          // Ensure state updates happen on the main thread
+          if (mounted) {
+            setState(() {
+              _uploadProgress = progress;
+            });
+          }
+        },
+      );
+    } catch (e) {
+      debugPrint("Upload error: $e");
+    }
+
+    if (mounted) {
+      setState(() {
+        _isUploading = false;
+        _uploadProgress = 0.0;
+      });
+    }
 
     if (doc != null) {
-      Navigator.pop(context, true);
+      if (mounted) {
+        Navigator.pop(context, true);
+      }
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.t('uploadDocument.error.uploadFailed'))),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.t('uploadDocument.error.uploadFailed'))),
+        );
+      }
     }
   }
 

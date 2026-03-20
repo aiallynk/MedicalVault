@@ -11,7 +11,6 @@ import 'package:open_file/open_file.dart';
 import 'package:hello/Document_model.dart';
 import 'package:hello/UploadDocument.dart';
 import 'package:hello/api_service.dart';
-import 'package:hello/main.dart';
 import 'package:hello/localization/app_localizations.dart';
 
 // ================= DOCUMENT DETAIL PAGE =================
@@ -212,17 +211,27 @@ class DocumentDetailPage extends StatelessWidget {
               children: [
                 ElevatedButton.icon(
                   onPressed: () => _previewFile(context),
-                  icon: const Icon(Icons.remove_red_eye, color: Colors.blue),
-                  style:
-                      ElevatedButton.styleFrom(backgroundColor: Colors.white),
+                  icon: Icon(
+                    Icons.remove_red_eye,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.surface,
+                    foregroundColor: Theme.of(context).colorScheme.primary,
+                  ),
                   label: Text(l10n.t('common.preview')),
                 ),
                 const SizedBox(width: 10),
                 ElevatedButton.icon(
                   onPressed: () => _downloadFile(context),
-                  icon: const Icon(Icons.download, color: Colors.blue),
-                  style:
-                      ElevatedButton.styleFrom(backgroundColor: Colors.white),
+                  icon: Icon(
+                    Icons.download,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.surface,
+                    foregroundColor: Theme.of(context).colorScheme.primary,
+                  ),
                   label: Text(l10n.t('common.download')),
                 ),
               ],
@@ -1037,13 +1046,11 @@ class _MyVaultState extends State<MyVault> {
 
   @override
   Widget build(BuildContext context) {
-    // Ensure status bar is configured
-    StatusBarHelper.setStatusBarStyle(context);
-
     final l10n = context.l10n;
     final docs = _filterAndSortDocuments();
 
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -1323,45 +1330,61 @@ class _MyVaultState extends State<MyVault> {
             Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [
-                      Color(0xFF42A5F5),
-                      Color(0xFF26C6DA),
-                      Color(0xFF80DEEA)
-                    ],
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                  ),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => UploadDocument(
-                          userId: widget.userId,
+              child: Builder(
+                builder: (context) {
+                  final scheme = Theme.of(context).colorScheme;
+                  final onPrimary = scheme.onPrimary;
+                  return Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          scheme.primary,
+                          Color.lerp(scheme.primary, scheme.secondary, 0.6)!,
+                        ],
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: scheme.primary.withValues(alpha: 0.28),
+                          blurRadius: 14,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => UploadDocument(
+                              userId: widget.userId,
+                            ),
+                          ),
+                        );
+                        _loadDocumentsFromAPI();
+                      },
+                      icon: Icon(Icons.upload, color: onPrimary),
+                      label: Text(
+                        l10n.t('myVault.uploadDocument'),
+                        style: TextStyle(
+                          color: onPrimary,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    );
-                    _loadDocumentsFromAPI();
-                  },
-                  icon: const Icon(Icons.upload, color: Colors.white),
-                  label: Text(
-                    l10n.t('myVault.uploadDocument'),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.transparent,
-                    shadowColor: Colors.transparent,
-                    minimumSize: const Size(double.infinity, 50),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: onPrimary,
+                        shadowColor: Colors.transparent,
+                        minimumSize: const Size(double.infinity, 52),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
             ),
           ],

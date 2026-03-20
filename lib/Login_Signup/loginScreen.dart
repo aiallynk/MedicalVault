@@ -30,7 +30,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  static const String baseUrl = "https://backend-medicalvault.onrender.com/api";
+  static const String baseUrl = ApiService.baseUrl;
 
   Future<Map<String, dynamic>?> loginUser(String email, String password) async {
     try {
@@ -231,6 +231,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
+                            settings:
+                                const RouteSettings(name: '/forgot_password'),
                             builder: (context) => const ForgotPasswordPage(),
                           ),
                         );
@@ -258,8 +260,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 16),
                 Container(
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF4A90E2), Color(0xFF50E3C2)],
+                    gradient: LinearGradient(
+                      colors: [
+                        Theme.of(context).colorScheme.primary,
+                        Theme.of(context).colorScheme.secondary,
+                      ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
@@ -289,6 +294,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                   final verified = await Navigator.push(
                                     context,
                                     MaterialPageRoute(
+                                      settings:
+                                          const RouteSettings(name: '/verify'),
                                       builder: (_) => const VerifyEmailPage(),
                                     ),
                                   );
@@ -312,6 +319,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 Navigator.pushReplacement(
                                   context,
                                   MaterialPageRoute(
+                                    settings:
+                                        const RouteSettings(name: '/dashboard'),
                                     builder: (_) =>
                                         Dashboard1(userData: userData),
                                   ),
@@ -374,6 +383,8 @@ class _LoginScreenState extends State<LoginScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
+                                settings:
+                                    const RouteSettings(name: '/login/google'),
                                 builder: (_) => const GoogleLoginScreen()),
                           );
                         },
@@ -430,6 +441,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
+                                settings: const RouteSettings(name: '/signup'),
                                 builder: (context) => const SignUpPage()),
                           );
                         },

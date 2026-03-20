@@ -1,20 +1,17 @@
 import 'dart:ui' as ui;
 
-import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:hello/HowQrAcessWorks.dart';
 import 'package:hello/api_service.dart';
-import 'package:hello/main.dart';
 import 'package:hello/localization/app_localizations.dart';
 
 /// 👉 Backend base URL (no trailing slash)
-const String kApiBase = 'https://backend-medicalvault.onrender.com';
-
 class QRPage extends StatefulWidget {
   const QRPage({super.key});
   @override
@@ -27,16 +24,16 @@ class _QRPageState extends State<QRPage> {
   final GlobalKey _repaintKey = GlobalKey();
   final Uuid _uuid = const Uuid();
   bool _loading = false;
+  List<Map<String, dynamic>> _qrAds = [];
+  List<Map<String, dynamic>> _qrActions = [];
+  Color? _remoteButtonColor;
+  Color? _remoteIconColor;
 
   @override
   void initState() {
     super.initState();
     _regenerateQR(); // auto-generate on open
-
-    // Set status bar style
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      StatusBarHelper.setStatusBarStyle(context);
-    });
+    _loadDynamicQrContent();
   }
 
   // Removed unused _readSessionToken
@@ -66,15 +63,152 @@ class _QRPageState extends State<QRPage> {
       if (!mounted) return;
       setState(() {
         _qrData = "DoctorAccess:${_uuid.v4()}"; // fallback
-        _lastError = context.l10n
-            .format('qr.generateError', {'error': e.toString()});
+        _lastError =
+            context.l10n.format('qr.generateError', {'error': e.toString()});
         _loading = false;
       });
     }
   }
 
+  Future<void> _loadDynamicQrContent() async {
+    try {
+      final adsFuture = ApiService.fetchAdvertisements(placement: 'QR_PAGE');
+      final configFuture = ApiService.fetchUiConfig();
+      final results = await Future.wait([adsFuture, configFuture]);
+
+      final ads = (results[0] as List<dynamic>)
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false);
+      final config = results[1] as Map<String, dynamic>?;
+
+      final qrActionsRaw = config?['qrActions'];
+      final qrActions = qrActionsRaw is List
+          ? qrActionsRaw
+              .whereType<Map>()
+              .map((item) => item.map(
+                    (key, value) => MapEntry(key.toString(), value),
+                  ))
+              .toList(growable: false)
+          : <Map<String, dynamic>>[];
+
+      if (!mounted) return;
+      setState(() {
+        _qrAds = ads;
+        _qrActions = qrActions;
+        _remoteButtonColor = _parseHexColor(config?['buttonColor']);
+        _remoteIconColor = _parseHexColor(config?['iconColor']);
+      });
+    } catch (e) {
+      debugPrint('Failed to load QR dynamic content: $e');
+    }
+  }
+
+  Color? _parseHexColor(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    var hex = raw.replaceAll('#', '').replaceAll('0x', '');
+    if (hex.length == 6) hex = 'FF$hex';
+    if (hex.length != 8) return null;
+    final intValue = int.tryParse(hex, radix: 16);
+    if (intValue == null) return null;
+    return Color(intValue);
+  }
+
+  IconData _iconFromName(String value) {
+    switch (value.toLowerCase()) {
+      case 'share':
+        return Icons.share_rounded;
+      case 'refresh':
+      case 'regenerate':
+        return Icons.refresh_rounded;
+      case 'help':
+      case 'info':
+        return Icons.info_outline_rounded;
+      case 'support':
+        return Icons.support_agent_rounded;
+      case 'medical':
+        return Icons.medical_services_rounded;
+      case 'chat':
+        return Icons.chat_bubble_outline_rounded;
+      default:
+        return Icons.bolt_rounded;
+    }
+  }
+
+  Future<void> _openExternalUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.auto('Unable to open the link')),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openTrackedAd(
+    Map<String, dynamic> ad, {
+    required String placement,
+  }) async {
+    final fallbackUrl = ad['redirectUrl']?.toString().trim() ?? '';
+    if (fallbackUrl.isEmpty) return;
+
+    String finalUrl = fallbackUrl;
+    final adId =
+        ad['_id']?.toString().trim() ?? ad['id']?.toString().trim() ?? '';
+    if (adId.isNotEmpty) {
+      final trackedUrl = await ApiService.fetchTrackedAdvertisementUrl(
+        adId: adId,
+        placement: placement,
+      );
+      if (trackedUrl != null && trackedUrl.isNotEmpty) {
+        finalUrl = trackedUrl;
+      }
+    }
+
+    if (!mounted) return;
+    await _openExternalUrl(finalUrl);
+  }
+
+  Future<void> _handleQrAction(Map<String, dynamic> action) async {
+    final label = action['label']?.toString().trim().toLowerCase() ?? '';
+    final actionUrl = action['actionUrl']?.toString().trim() ?? '';
+
+    if (actionUrl.isNotEmpty) {
+      await _openExternalUrl(actionUrl);
+      return;
+    }
+
+    if (label.contains('share')) {
+      await _shareQR();
+      return;
+    }
+
+    if (label.contains('regenerate') || label.contains('refresh')) {
+      await _regenerateQR();
+      return;
+    }
+
+    if (label.contains('help') || label.contains('how')) {
+      if (!mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const QrAccessWorks()),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(context.l10n.auto('Action is not configured.'))),
+    );
+  }
+
   Future<void> _shareQR() async {
     try {
+      final shareText = context.l10n.t('qr.shareText');
       final boundary = _repaintKey.currentContext!.findRenderObject()
           as RenderRepaintBoundary;
       final image = await boundary.toImage(pixelRatio: 3.0);
@@ -84,15 +218,14 @@ class _QRPageState extends State<QRPage> {
           XFile.fromData(pngBytes, name: 'qr_code.png', mimeType: 'image/png');
       await Share.shareXFiles(
         [xfile],
-        text: context.l10n.t('qr.shareText'),
+        text: shareText,
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            context.l10n
-                .format('qr.shareError', {'error': e.toString()}),
+            context.l10n.format('qr.shareError', {'error': e.toString()}),
           ),
         ),
       );
@@ -102,6 +235,17 @@ class _QRPageState extends State<QRPage> {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final primary = _remoteButtonColor ?? Theme.of(context).colorScheme.primary;
+    final secondary =
+        _remoteIconColor ?? Theme.of(context).colorScheme.secondary;
+    final activeActions = _qrActions
+        .where(
+          (action) => action['isActive'] == null || action['isActive'] == true,
+        )
+        .toList(growable: false);
+    final activeAds = _qrAds
+        .where((ad) => ad['isActive'] == null || ad['isActive'] == true)
+        .toList(growable: false);
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
@@ -111,15 +255,16 @@ class _QRPageState extends State<QRPage> {
         ),
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            // Navigate back to previous screen
-            Navigator.pop(context);
-          },
-        ),
+        automaticallyImplyLeading: Navigator.canPop(context),
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              )
+            : null,
       ),
       body: SafeArea(
+        top: false,
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(vertical: 20),
           child: Column(
@@ -192,8 +337,8 @@ class _QRPageState extends State<QRPage> {
                       width: double.infinity,
                       height: 55,
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF2193b0), Color(0xFF6dd5ed)],
+                        gradient: LinearGradient(
+                          colors: [primary, secondary],
                         ),
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -219,8 +364,8 @@ class _QRPageState extends State<QRPage> {
                       width: double.infinity,
                       height: 55,
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF2193b0), Color(0xFF6dd5ed)],
+                        gradient: LinearGradient(
+                          colors: [primary, secondary],
                         ),
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -265,8 +410,8 @@ class _QRPageState extends State<QRPage> {
 
                     // How QR works link
                     ShaderMask(
-                      shaderCallback: (bounds) => const LinearGradient(
-                        colors: [Color(0xFF2193b0), Color(0xFF6dd5ed)],
+                      shaderCallback: (bounds) => LinearGradient(
+                        colors: [primary, secondary],
                       ).createShader(
                         Rect.fromLTWH(0, 0, bounds.width, bounds.height),
                       ),
@@ -288,6 +433,149 @@ class _QRPageState extends State<QRPage> {
                         ),
                       ),
                     ),
+
+                    if (activeActions.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          l10n.auto('Quick actions'),
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      ...activeActions.map((action) {
+                        final label = action['label']?.toString().trim();
+                        if (label == null || label.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        final iconName =
+                            action['icon']?.toString().trim() ?? 'info';
+                        return Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: OutlinedButton.icon(
+                            onPressed: () => _handleQrAction(action),
+                            icon: Icon(_iconFromName(iconName)),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 14,
+                              ),
+                              foregroundColor:
+                                  Theme.of(context).textTheme.bodyLarge?.color,
+                              side: BorderSide(
+                                color: primary.withValues(alpha: 0.3),
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            label: Text(label),
+                          ),
+                        );
+                      }),
+                    ],
+
+                    if (activeAds.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          l10n.auto('Sponsored'),
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      ...activeAds.map((ad) {
+                        final title = ad['title']?.toString().trim();
+                        final imageUrl = ad['imageUrl']?.toString().trim();
+                        final redirectUrl =
+                            ad['redirectUrl']?.toString().trim() ?? '';
+
+                        if (title == null || title.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+
+                        return InkWell(
+                          onTap: redirectUrl.isEmpty
+                              ? null
+                              : () => _openTrackedAd(
+                                    ad,
+                                    placement: 'QR_PAGE',
+                                  ),
+                          borderRadius: BorderRadius.circular(14),
+                          child: Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).cardColor,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: Theme.of(context)
+                                    .dividerColor
+                                    .withValues(alpha: 0.18),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: imageUrl != null && imageUrl.isNotEmpty
+                                      ? Image.network(
+                                          imageUrl,
+                                          width: 56,
+                                          height: 56,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              Container(
+                                            width: 56,
+                                            height: 56,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .surfaceContainerHighest,
+                                            child: const Icon(
+                                              Icons
+                                                  .image_not_supported_outlined,
+                                              size: 20,
+                                            ),
+                                          ),
+                                        )
+                                      : Container(
+                                          width: 56,
+                                          height: 56,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .surfaceContainerHighest,
+                                          child: const Icon(
+                                            Icons.local_hospital_outlined,
+                                            size: 20,
+                                          ),
+                                        ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        Theme.of(context).textTheme.bodyMedium,
+                                  ),
+                                ),
+                                if (redirectUrl.isNotEmpty)
+                                  Icon(
+                                    Icons.open_in_new_rounded,
+                                    color: primary,
+                                    size: 18,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
                   ],
                 ),
               ),
@@ -349,8 +637,8 @@ class _QRZoomPageState extends State<QRZoomPage>
               filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
               child: Container(
                 color: (Theme.of(context).brightness == Brightness.dark)
-                    ? Colors.black.withOpacity(0.6)
-                    : Colors.white.withOpacity(0.6),
+                    ? Colors.black.withValues(alpha: 0.6)
+                    : Colors.white.withValues(alpha: 0.6),
               ),
             ),
             Center(

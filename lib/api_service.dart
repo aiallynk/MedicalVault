@@ -10,13 +10,72 @@ import 'package:dio/dio.dart';
 import 'package:hello/helpers/google_auth_helper.dart';
 
 class ApiService {
-  static const String baseUrl = "https://backend-medicalvault.onrender.com/api";
+  static const String _defaultApiBaseUrl =
+      "https://backend-medicalvault.onrender.com/api";
+  static const String baseUrl =
+      String.fromEnvironment("API_BASE_URL", defaultValue: _defaultApiBaseUrl);
   static const String authUrl = "$baseUrl/auth";
   static const String filesUrl = "$baseUrl/files";
   static const String qrUrl = "$baseUrl/qr";
   static const String aiUrl = "$baseUrl/ai";
   static const String sosUrl = "$baseUrl/sos";
   static const String lostFoundUrl = "$baseUrl/lost-found";
+  static const String patientAppointmentsUrl = "$baseUrl/patient/appointments";
+  static const String publicUrl = "$baseUrl/public";
+
+  static const Duration _publicCacheTtl = Duration(minutes: 5);
+  static const Duration _appointmentsCacheTtl = Duration(minutes: 3);
+  static final Map<String, _TimedCacheEntry<List<Map<String, dynamic>>>>
+      _adsCache = {};
+  static _TimedCacheEntry<Map<String, dynamic>>? _uiConfigCache;
+  static _TimedCacheEntry<List<dynamic>>? _pastAppointmentsCache;
+
+  static void invalidatePublicConfigCache({
+    bool ads = true,
+    bool uiConfig = true,
+  }) {
+    if (ads) {
+      _adsCache.clear();
+    }
+    if (uiConfig) {
+      _uiConfigCache = null;
+    }
+  }
+
+  static Uri publicConfigWebSocketUri({
+    String platform = "APP",
+    String? surface,
+  }) {
+    var parsedBase = Uri.tryParse(baseUrl) ?? Uri.parse(_defaultApiBaseUrl);
+    if (parsedBase.host.isEmpty) {
+      parsedBase = Uri.parse(_defaultApiBaseUrl);
+    }
+
+    final wsScheme = parsedBase.scheme == 'https' ? 'wss' : 'ws';
+    final resolvedPort = parsedBase.hasPort && parsedBase.port > 0
+        ? parsedBase.port
+        : (wsScheme == 'wss' ? 443 : 80);
+    final pathSegments = <String>[
+      ...parsedBase.pathSegments.where((segment) => segment.isNotEmpty),
+      'public',
+      'ws',
+    ];
+
+    final uri = Uri(
+      scheme: wsScheme,
+      host: parsedBase.host,
+      port: resolvedPort,
+      pathSegments: pathSegments,
+    );
+    final query = <String, String>{
+      "platform": platform.trim().toUpperCase(),
+    };
+    final normalizedSurface = (surface ?? "").trim().toUpperCase();
+    if (normalizedSurface.isNotEmpty) {
+      query["surface"] = normalizedSurface;
+    }
+    return uri.replace(queryParameters: query);
+  }
 
   // ---------------- TOKEN ----------------
   static Future<String?> _getToken() async {
@@ -215,7 +274,9 @@ class ApiService {
   static Future<Map<String, dynamic>?> me() async {
     try {
       final headers = await _authHeaders();
-      final res = await http.get(Uri.parse("$authUrl/me"), headers: headers);
+      final res = await http
+          .get(Uri.parse("$authUrl/me"), headers: headers)
+          .timeout(const Duration(seconds: 8));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         return data['data']['user'];
@@ -293,18 +354,34 @@ class ApiService {
       final lowerName = filename.toLowerCase();
       String mimeType = _detectMimeType(lowerName);
 
+      // Get file size for progress tracking
+      final fileSize = await file.length();
+
+      // Notify initial progress (0%)
+      if (onProgress != null) {
+        onProgress(0.0);
+      }
+
+      // Use stream-based approach for better progress tracking
+      final fileStream = file.openRead();
+      final multipartFile = MultipartFile(
+        fileStream,
+        fileSize,
+        filename: filename,
+        contentType: MediaType.parse(mimeType),
+      );
+
       // Prepare form data
       final formData = FormData.fromMap({
-        'file': await MultipartFile.fromFile(
-          file.path,
-          filename: filename,
-          contentType: MediaType.parse(mimeType),
-        ),
+        'file': multipartFile,
         'title': title,
         'category': normalizedCategory,
         if (notes != null) 'notes': notes,
         if (date != null) 'date': date,
       });
+
+      // Track last reported progress to avoid too frequent updates
+      double lastReportedProgress = 0.0;
 
       // Make the upload request with real progress tracking
       final response = await dio.post(
@@ -314,12 +391,27 @@ class ApiService {
           headers: headers,
           sendTimeout: const Duration(minutes: 5), // 5 minute timeout
           receiveTimeout: const Duration(minutes: 5),
+          followRedirects: false,
+          validateStatus: (status) => status! < 500,
         ),
         onSendProgress: (sent, total) {
           // This provides REAL upload progress
           if (onProgress != null && total > 0) {
             final progress = (sent / total) * 100;
-            onProgress(progress.clamp(0.0, 100.0));
+            // Only update if progress changed by at least 0.5% to avoid too frequent updates
+            // But always update for significant milestones (0%, 25%, 50%, 75%, 100%)
+            if ((progress - lastReportedProgress).abs() >= 0.5 ||
+                progress == 0.0 ||
+                progress >= 25.0 && lastReportedProgress < 25.0 ||
+                progress >= 50.0 && lastReportedProgress < 50.0 ||
+                progress >= 75.0 && lastReportedProgress < 75.0 ||
+                progress >= 100.0) {
+              onProgress(progress.clamp(0.0, 100.0));
+              lastReportedProgress = progress;
+              // Debug print to verify progress is being tracked
+              print(
+                  "📤 Upload progress: ${progress.toStringAsFixed(2)}% ($sent/$total bytes)");
+            }
           }
         },
       );
@@ -745,7 +837,8 @@ class ApiService {
   }
 
   // ---------------- USER PROFILE (PUBLIC/SELF) ----------------
-  static Future<Map<String, dynamic>?> fetchUserPublicProfile(String userId) async {
+  static Future<Map<String, dynamic>?> fetchUserPublicProfile(
+      String userId) async {
     try {
       final token = await _getToken();
       final headers = {
@@ -789,14 +882,13 @@ class ApiService {
       final headers = await _authHeaders();
       final res = await http.post(
         Uri.parse(sosUrl),
-        headers: { ...headers, 'Content-Type': 'application/json' },
+        headers: {...headers, 'Content-Type': 'application/json'},
         body: jsonEncode({
           'latitude': latitude,
           'longitude': longitude,
           if (accuracyMeters != null && accuracyMeters.isFinite)
             'accuracyMeters': accuracyMeters,
-          if (notes != null && notes.trim().isNotEmpty)
-            'notes': notes.trim(),
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
           if (allergies != null && allergies.trim().isNotEmpty)
             'allergies': allergies.trim(),
           if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
@@ -982,6 +1074,431 @@ class ApiService {
     }
   }
 
+  // ---------------- APPOINTMENTS ----------------
+  static Future<List<dynamic>> fetchUpcomingAppointments() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.get(
+        Uri.parse("$patientAppointmentsUrl/upcoming"),
+        headers: headers,
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (data['success'] == true && data['appointments'] != null) {
+          return List<dynamic>.from(data['appointments']);
+        }
+      }
+    } catch (e) {
+      print("fetchUpcomingAppointments error: $e");
+    }
+    return [];
+  }
+
+  static Future<List<dynamic>> fetchPastAppointments({
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh &&
+        _pastAppointmentsCache != null &&
+        _pastAppointmentsCache!.isValid) {
+      return _pastAppointmentsCache!.value;
+    }
+
+    try {
+      final headers = await _authHeaders();
+      final res = await http
+          .get(
+            Uri.parse("$patientAppointmentsUrl/past"),
+            headers: headers,
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (data['success'] == true && data['appointments'] != null) {
+          final appointments = List<dynamic>.from(data['appointments']);
+          _pastAppointmentsCache = _TimedCacheEntry(
+            value: appointments,
+            expiresAt: DateTime.now().add(_appointmentsCacheTtl),
+          );
+          return appointments;
+        }
+      }
+    } catch (e) {
+      print("fetchPastAppointments error: $e");
+    }
+    if (_pastAppointmentsCache != null) {
+      return _pastAppointmentsCache!.value;
+    }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>?> fetchAppointmentDetail(String id) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.get(
+        Uri.parse("$patientAppointmentsUrl/$id"),
+        headers: headers,
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (data['success'] == true && data['appointment'] != null) {
+          return data['appointment'] as Map<String, dynamic>;
+        }
+      }
+    } catch (e) {
+      print("fetchAppointmentDetail error: $e");
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> requestReschedule(
+      String id, Map<String, dynamic> body) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("$patientAppointmentsUrl/$id/reschedule-request"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode(body),
+      );
+      if (res.statusCode == 200) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print("requestReschedule error: $e");
+    }
+    return null;
+  }
+
+  static Future<bool> cancelAppointment(String id) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("$patientAppointmentsUrl/$id/cancel"),
+        headers: headers,
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        return data['success'] == true;
+      }
+    } catch (e) {
+      print("cancelAppointment error: $e");
+    }
+    return false;
+  }
+
+  static Future<Map<String, dynamic>?> getAppointmentAISummary(
+      String id) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.get(
+        Uri.parse("$patientAppointmentsUrl/$id/ai-summary"),
+        headers: headers,
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (data['success'] == true) {
+          return data as Map<String, dynamic>;
+        }
+      }
+    } catch (e) {
+      print("getAppointmentAISummary error: $e");
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> generateAppointmentAISummary(
+      String appointmentId) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("$aiUrl/appointment-summary"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({"appointmentId": appointmentId}),
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (data['success'] == true) {
+          return data as Map<String, dynamic>;
+        }
+      }
+    } catch (e) {
+      print("generateAppointmentAISummary error: $e");
+    }
+    return null;
+  }
+
+  static Future<List<dynamic>> fetchNotificationHistory() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.get(
+        Uri.parse("$baseUrl/notifications"),
+        headers: headers,
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final list = data['data']?['notifications'] ?? data['notifications'];
+        if (list != null) return List<dynamic>.from(list);
+      }
+    } catch (e) {
+      print("fetchNotificationHistory error: $e");
+    }
+    return [];
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchChatThreads() async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.get(
+        Uri.parse("$baseUrl/sessions/chat/threads"),
+        headers: headers,
+      );
+      if (response.statusCode != 200) return [];
+      final data = jsonDecode(response.body);
+      if (data["success"] != true || data["threads"] is! List) return [];
+      return (data["threads"] as List)
+          .whereType<Map>()
+          .map((entry) => entry.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ))
+          .toList(growable: false);
+    } catch (e) {
+      print("fetchChatThreads error: $e");
+      return [];
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchChatMessages(
+    String counterpartId, {
+    int limit = 300,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final normalizedId = counterpartId.trim();
+      if (normalizedId.isEmpty) return [];
+      final safeLimit = limit.clamp(1, 500);
+      final uri = Uri.parse(
+          "$baseUrl/sessions/chat/messages/$normalizedId?limit=$safeLimit");
+      final response = await http.get(uri, headers: headers);
+      if (response.statusCode != 200) return [];
+      final data = jsonDecode(response.body);
+      if (data["success"] != true || data["messages"] is! List) return [];
+      return (data["messages"] as List)
+          .whereType<Map>()
+          .map((entry) => entry.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ))
+          .toList(growable: false);
+    } catch (e) {
+      print("fetchChatMessages error: $e");
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>?> sendDirectMessage({
+    required String counterpartId,
+    required String message,
+    String? sessionId,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.post(
+        Uri.parse("$baseUrl/sessions/chat/send"),
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({
+          "counterpartId": counterpartId.trim(),
+          "message": message.trim(),
+          if (sessionId != null && sessionId.trim().isNotEmpty)
+            "sessionId": sessionId.trim(),
+        }),
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return data as Map<String, dynamic>;
+      }
+      return {
+        "success": false,
+        "message": data["message"]?.toString() ?? "Failed to send message",
+      };
+    } catch (e) {
+      print("sendDirectMessage error: $e");
+      return {
+        "success": false,
+        "message": "Network error",
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>?> sendMessageToDoctor({
+    required String doctorId,
+    required String doctorName,
+    required String message,
+    String? sessionId,
+  }) async {
+    return sendDirectMessage(
+      counterpartId: doctorId,
+      message: message,
+      sessionId: sessionId,
+    );
+  }
+
+  // ---------------- PUBLIC CONFIG ----------------
+  static Future<List<Map<String, dynamic>>> fetchAdvertisements({
+    String? placement,
+    bool forceRefresh = false,
+  }) async {
+    final normalizedPlacement = (placement ?? "").trim().toUpperCase();
+    final cacheKey = normalizedPlacement.isEmpty ? "ALL" : normalizedPlacement;
+
+    if (!forceRefresh) {
+      final cached = _adsCache[cacheKey];
+      if (cached != null && cached.isValid) {
+        return cached.value;
+      }
+    }
+
+    try {
+      final uri = Uri.parse("$publicUrl/ads").replace(
+        queryParameters: normalizedPlacement.isEmpty
+            ? null
+            : {"placement": normalizedPlacement},
+      );
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return [];
+      final data = jsonDecode(response.body);
+      final adsRaw = data["ads"];
+      if (adsRaw is! List) return [];
+
+      final ads = adsRaw
+          .whereType<Map>()
+          .map((item) => item.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ))
+          .toList(growable: false);
+
+      _adsCache[cacheKey] = _TimedCacheEntry(
+        value: ads,
+        expiresAt: DateTime.now().add(_publicCacheTtl),
+      );
+      return ads;
+    } catch (e) {
+      print("fetchAdvertisements error: $e");
+      return [];
+    }
+  }
+
+  static Future<String?> fetchTrackedAdvertisementUrl({
+    required String adId,
+    required String placement,
+    String platform = "app",
+    String sourceApp = "healthvault_flutter",
+  }) async {
+    try {
+      final normalizedAdId = adId.trim();
+      if (normalizedAdId.isEmpty) return null;
+
+      final prefs = await SharedPreferences.getInstance();
+      final userId = (prefs.getString("userId") ?? "").trim();
+
+      String userType = "anonymous";
+      final rawUserData = prefs.getString("userData");
+      if (rawUserData != null && rawUserData.isNotEmpty) {
+        try {
+          final parsed = jsonDecode(rawUserData);
+          if (parsed is Map<String, dynamic>) {
+            userType = (parsed["role"]?.toString().trim().toLowerCase() ?? "");
+            if (userType.isEmpty) {
+              userType = "patient";
+            }
+          }
+        } catch (_) {
+          // ignore malformed user data
+        }
+      }
+
+      final response = await http
+          .post(
+            Uri.parse("$publicUrl/ads/$normalizedAdId/click"),
+            headers: {"Content-Type": "application/json"},
+            body: jsonEncode({
+              "platform": platform,
+              "surface": placement.trim().toUpperCase(),
+              "userId": userId,
+              "userType": userType,
+              "sourceApp": sourceApp,
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body);
+      final trackedUrl = data["trackedUrl"]?.toString().trim();
+      if (trackedUrl == null || trackedUrl.isEmpty) return null;
+      return trackedUrl;
+    } catch (e) {
+      print("fetchTrackedAdvertisementUrl error: $e");
+      return null;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> fetchUiConfig({
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh && _uiConfigCache != null && _uiConfigCache!.isValid) {
+      return _uiConfigCache!.value;
+    }
+
+    try {
+      final response = await http
+          .get(Uri.parse("$publicUrl/ui-config"))
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body);
+      final config = data["config"];
+      if (config is! Map) return null;
+
+      final map = config.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      _uiConfigCache = _TimedCacheEntry(
+        value: map,
+        expiresAt: DateTime.now().add(_publicCacheTtl),
+      );
+      return map;
+    } catch (e) {
+      print("fetchUiConfig error: $e");
+      return null;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchPublicProducts({
+    String? category,
+  }) async {
+    try {
+      final normalizedCategory = (category ?? "").trim();
+      final uri = Uri.parse("$publicUrl/products").replace(
+        queryParameters: normalizedCategory.isEmpty
+            ? null
+            : {"category": normalizedCategory},
+      );
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return [];
+      final data = jsonDecode(response.body);
+      final productsRaw = data["products"];
+      if (productsRaw is! List) return [];
+      return productsRaw
+          .whereType<Map>()
+          .map((item) => item.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ))
+          .toList(growable: false);
+    } catch (e) {
+      print("fetchPublicProducts error: $e");
+      return [];
+    }
+  }
+
   // ---------------- AI ASSISTANT ----------------
   static Future<Map<String, dynamic>?> askAI(String prompt) async {
     try {
@@ -1035,4 +1552,16 @@ class ApiService {
       return false;
     }
   }
+}
+
+class _TimedCacheEntry<T> {
+  final T value;
+  final DateTime expiresAt;
+
+  const _TimedCacheEntry({
+    required this.value,
+    required this.expiresAt,
+  });
+
+  bool get isValid => DateTime.now().isBefore(expiresAt);
 }

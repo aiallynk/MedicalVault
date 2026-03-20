@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hello/BottomNavigationBar/dashboard1.dart';
 import 'package:hello/Login_Signup/VerifyEmailPage.dart';
 import 'package:hello/Notifications/fcm_service.dart';
+import 'package:hello/api_service.dart';
 import 'google_login.dart';
 import 'package:hello/TermsAndConditions.dart';
 import 'package:hello/PrivacyPolicy.dart';
@@ -41,7 +42,7 @@ class _SignUpPageState extends State<SignUpPage> {
 
     try {
       final response = await http.post(
-        Uri.parse("https://backend-medicalvault.onrender.com/api/auth/signup"),
+        Uri.parse("${ApiService.authUrl}/signup"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "name": _nameController.text.trim(),
@@ -77,6 +78,7 @@ class _SignUpPageState extends State<SignUpPage> {
         final verified = await Navigator.push(
           context,
           MaterialPageRoute(
+            settings: const RouteSettings(name: '/verify'),
             builder: (_) => const VerifyEmailPage(),
           ),
         );
@@ -85,6 +87,7 @@ class _SignUpPageState extends State<SignUpPage> {
           Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
+                settings: const RouteSettings(name: '/dashboard'),
                 builder: (_) =>
                     Dashboard1(userData: Map<String, dynamic>.from(user))),
             (route) => false,
@@ -277,6 +280,8 @@ class _SignUpPageState extends State<SignUpPage> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
+                                  settings: const RouteSettings(
+                                      name: '/login/google'),
                                   builder: (_) => const GoogleLoginScreen()),
                             );
                           },
@@ -343,6 +348,8 @@ class _SignUpPageState extends State<SignUpPage> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
+                                    settings:
+                                        const RouteSettings(name: '/terms'),
                                     builder: (context) =>
                                         const TermsAndConditionsPage(),
                                   ),
@@ -386,6 +393,8 @@ class _SignUpPageState extends State<SignUpPage> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
+                                    settings: const RouteSettings(
+                                        name: '/privacy_policy'),
                                     builder: (context) =>
                                         const PrivacyPolicyPage(),
                                   ),
@@ -433,8 +442,11 @@ class _SignUpPageState extends State<SignUpPage> {
                     width: double.infinity,
                     child: Container(
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF4A90E2), Color(0xFF50E3C2)],
+                        gradient: LinearGradient(
+                          colors: [
+                            Theme.of(context).colorScheme.primary,
+                            Theme.of(context).colorScheme.secondary,
+                          ],
                         ),
                         borderRadius: BorderRadius.circular(8),
                       ),

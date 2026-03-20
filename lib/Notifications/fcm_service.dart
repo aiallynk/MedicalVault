@@ -3,10 +3,11 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hello/api_service.dart';
 import 'global_notification_handler.dart';
 
 class FCMService {
-  static const String baseUrl = "https://backend-medicalvault.onrender.com/api";
+  static const String baseUrl = ApiService.baseUrl;
 
   // Singleton pattern
   static final FCMService _instance = FCMService._internal();
@@ -148,33 +149,29 @@ class FCMService {
     _handleNotificationMessage(message);
   }
 
-  // Handle background messages (when app is in background)
+  // Handle background messages (when user tapped notification, app was in background)
   void _handleBackgroundMessage(RemoteMessage message) {
     if (kDebugMode) {
-      print('📱 Received background message: ${message.messageId}');
-      print('  - Title: ${message.notification?.title}');
-      print('  - Body: ${message.notification?.body}');
+      print('📱 User tapped notification (background): ${message.messageId}');
       print('  - Data: ${message.data}');
-      print('  - Type: ${message.data['type']}');
     }
 
-    // Handle the notification based on user settings
-    _handleNotificationMessage(message);
+    // Navigate to appointment detail if applicable
+    _notificationHandler.handleNotificationTap(message);
   }
 
-  // Handle terminated app messages
+  // Handle terminated app messages (when user tapped notification, app was terminated)
   void _handleTerminatedMessage(RemoteMessage message) {
     if (kDebugMode) {
       print(
-          '📱 App opened from terminated state by notification: ${message.messageId}');
-      print('  - Title: ${message.notification?.title}');
-      print('  - Body: ${message.notification?.body}');
+          '📱 User tapped notification (terminated): ${message.messageId}');
       print('  - Data: ${message.data}');
-      print('  - Type: ${message.data['type']}');
     }
 
-    // Handle the notification based on user settings
-    _handleNotificationMessage(message);
+    // Navigate to appointment detail when context is available (app may still be loading)
+    Future.delayed(const Duration(seconds: 2), () {
+      _notificationHandler.handleNotificationTap(message);
+    });
   }
 
   // Handle notification message based on user settings

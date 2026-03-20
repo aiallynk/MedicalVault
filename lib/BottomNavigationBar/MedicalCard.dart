@@ -6,7 +6,6 @@ import 'package:flutter/rendering.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hello/main.dart';
 import 'package:hello/localization/app_localizations.dart';
 
 /// Medical Card URL base (update with your actual domain)
@@ -30,10 +29,6 @@ class _MedicalCardPageState extends State<MedicalCardPage> {
   void initState() {
     super.initState();
     _loadUserId();
-    // Set status bar style
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      StatusBarHelper.setStatusBarStyle(context);
-    });
     // Suppress image loading errors for this page
     _suppressImageErrors();
   }
@@ -101,7 +96,7 @@ class _MedicalCardPageState extends State<MedicalCardPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            context.l10n.auto('Failed to share QR code: ${e.toString()}'),
+            '${context.l10n.auto('Failed to share QR code:')} ${e.toString()}',
           ),
         ),
       );

@@ -5,31 +5,38 @@ class AppFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+    final theme = Theme.of(context);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
       decoration: BoxDecoration(
-        color: Theme.of(context).bottomNavigationBarTheme.backgroundColor ??
-            Theme.of(context).cardColor,
-        border: Border(
-          top: BorderSide(color: Theme.of(context).dividerColor, width: 0.1),
+        color: theme.cardColor.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.16),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            "Powered by ",
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontSize: 14,
-                ),
+            'Powered by ',
+            style: theme.textTheme.bodySmall?.copyWith(fontSize: 12),
           ),
           Image.asset(
-            Theme.of(context).brightness == Brightness.dark
-                ? "assets/AiAllyLogoWhite.png"
-                : "assets/AiAllyLogo.png",
-            height: 30,
+            theme.brightness == Brightness.dark
+                ? 'assets/AiAllyLogoWhite.png'
+                : 'assets/AiAllyLogo.png',
+            height: 22,
           ),
-          const SizedBox(width: 8),
         ],
       ),
     );

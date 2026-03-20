@@ -21,6 +21,23 @@ allprojects {
     }
 }
 
+def resolveNamespaceFor(Project project) {
+    def manifestFile = project.file("src/main/AndroidManifest.xml")
+    if (manifestFile.exists()) {
+        def matcher = manifestFile.getText("UTF-8") =~ /package\s*=\s*"([^"]+)"/
+        if (matcher.find()) {
+            return matcher.group(1)
+        }
+    }
+
+    def groupValue = project.group?.toString()
+    if (groupValue != null && !groupValue.trim().isEmpty() && groupValue != "unspecified") {
+        return groupValue
+    }
+
+    return "com.example.${project.name.replace('-', '_')}"
+}
+
 rootProject.buildDir = "../build"
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
@@ -37,6 +54,10 @@ subprojects {
     afterEvaluate {
         if (project.hasProperty('android')) {
             android {
+                if (hasProperty("namespace") &&
+                        (namespace == null || namespace.toString().trim().isEmpty())) {
+                    namespace resolveNamespaceFor(project)
+                }
                 compileOptions {
                     sourceCompatibility = JavaVersion.VERSION_21
                     targetCompatibility = JavaVersion.VERSION_21

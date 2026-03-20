@@ -821,10 +821,14 @@ class AppLocalizations {
       'gu': 'પસંદ કરેલ',
     },
     'lostReport.invalidCoordinates': {
-      'en': 'Invalid coordinates. Please enter valid latitude (-90 to 90) and longitude (-180 to 180).',
-      'hi': 'अमान्य निर्देशांक। कृपया वैध अक्षांश (-90 से 90) और देशांतर (-180 से 180) दर्ज करें।',
-      'mr': 'अवैध निर्देशांक. कृपया वैध अक्षांश (-90 ते 90) आणि रेखांश (-180 ते 180) प्रविष्ट करा.',
-      'gu': 'અમાન્ય કોઓર્ડિનેટ્સ. કૃપા કરીને માન્ય અક્ષાંશ (-90 થી 90) અને રેખાંશ (-180 થી 180) દાખલ કરો.',
+      'en':
+          'Invalid coordinates. Please enter valid latitude (-90 to 90) and longitude (-180 to 180).',
+      'hi':
+          'अमान्य निर्देशांक। कृपया वैध अक्षांश (-90 से 90) और देशांतर (-180 से 180) दर्ज करें।',
+      'mr':
+          'अवैध निर्देशांक. कृपया वैध अक्षांश (-90 ते 90) आणि रेखांश (-180 ते 180) प्रविष्ट करा.',
+      'gu':
+          'અમાન્ય કોઓર્ડિનેટ્સ. કૃપા કરીને માન્ય અક્ષાંશ (-90 થી 90) અને રેખાંશ (-180 થી 180) દાખલ કરો.',
     },
     'lostReport.selectLocation': {
       'en': 'Select Location',
@@ -922,6 +926,12 @@ class AppLocalizations {
       'mr': 'कोणतीही कागदपत्रे सापडली नाहीत',
       'gu': 'કોઈ દસ્તાવેજ મળ્યા નથી',
     },
+    'myVault.documentsCount': {
+      'en': 'files',
+      'hi': 'फाइलें',
+      'mr': 'फाइल्स',
+      'gu': 'ફાઈલો',
+    },
     'myVault.uploadDocument': {
       'en': 'Upload Document',
       'hi': 'दस्तावेज़ अपलोड करें',
@@ -941,10 +951,14 @@ class AppLocalizations {
       'gu': 'દસ્તાવેજ કાઢી નાખો',
     },
     'myVault.deleteDocument.message': {
-      'en': 'Are you sure you want to delete "{fileName}"? This action cannot be undone.',
-      'hi': 'क्या आप वाकई "{fileName}" को हटाना चाहते हैं? यह कार्रवाई पूर्ववत नहीं की जा सकती।',
-      'mr': 'तुम्हाला खरोखर "{fileName}" हटवायची आहे का? ही क्रिया पૂर्ववत करता येत नाही.',
-      'gu': 'શું તમે ખરેખર "{fileName}" કાઢી નાખવા માંગો છો? આ ક્રિયા પૂર્વવત્ કરી શકાતી નથી.',
+      'en':
+          'Are you sure you want to delete "{fileName}"? This action cannot be undone.',
+      'hi':
+          'क्या आप वाकई "{fileName}" को हटाना चाहते हैं? यह कार्रवाई पूर्ववत नहीं की जा सकती।',
+      'mr':
+          'तुम्हाला खरोखर "{fileName}" हटवायची आहे का? ही क्रिया पૂर्ववत करता येत नाही.',
+      'gu':
+          'શું તમે ખરેખર "{fileName}" કાઢી નાખવા માંગો છો? આ ક્રિયા પૂર્વવત્ કરી શકાતી નથી.',
     },
     'myVault.editDocument.title': {
       'en': 'Edit Document',
@@ -1528,10 +1542,14 @@ class AppLocalizations {
       'gu': 'ફાઇલ કાઢી નાખો',
     },
     'uploadDocument.deleteFile.message': {
-      'en': 'Are you sure you want to delete "{fileName}"? This action cannot be undone.',
-      'hi': 'क्या आप वाकई "{fileName}" को हटाना चाहते हैं? यह कार्रवाई पूर्ववत नहीं की जा सकती।',
-      'mr': 'तुम्हाला खरोखर "{fileName}" हटवायची आहे का? ही क्रिया पूर्ववत करता येत नाही.',
-      'gu': 'શું તમે ખરેખર "{fileName}" કાઢી નાખવા માંગો છો? આ ક્રિયા પૂર્વવત્ કરી શકાતી નથી.',
+      'en':
+          'Are you sure you want to delete "{fileName}"? This action cannot be undone.',
+      'hi':
+          'क्या आप वाकई "{fileName}" को हटाना चाहते हैं? यह कार्रवाई पूर्ववत नहीं की जा सकती।',
+      'mr':
+          'तुम्हाला खरोखर "{fileName}" हटवायची आहे का? ही क्रिया पूर्ववत करता येत नाही.',
+      'gu':
+          'શું તમે ખરેખર "{fileName}" કાઢી નાખવા માંગો છો? આ ક્રિયા પૂર્વવત્ કરી શકાતી નથી.',
     },
     'uploadDocument.button.upload': {
       'en': 'Upload Document',
@@ -3023,10 +3041,14 @@ class AppLocalizations {
       'gu': 'આઇટમ કાઢી નાખો',
     },
     'profile.deleteItem.message': {
-      'en': 'Are you sure you want to delete "{itemName}"? This action cannot be undone.',
-      'hi': 'क्या आप वाकई "{itemName}" को हटाना चाहते हैं? यह कार्रवाई पूर्ववत नहीं की जा सकती।',
-      'mr': 'तुम्हाला खरोखर "{itemName}" हटवायची आहे का? ही क्रिया पूर्ववत करता येत नाही.',
-      'gu': 'શું તમે ખરેખર "{itemName}" કાઢી નાખવા માંગો છો? આ ક્રિયા પૂર્વવત્ કરી શકાતી નથી.',
+      'en':
+          'Are you sure you want to delete "{itemName}"? This action cannot be undone.',
+      'hi':
+          'क्या आप वाकई "{itemName}" को हटाना चाहते हैं? यह कार्रवाई पूर्ववत नहीं की जा सकती।',
+      'mr':
+          'तुम्हाला खरोखर "{itemName}" हटवायची आहे का? ही क्रिया पूर्ववत करता येत नाही.',
+      'gu':
+          'શું તમે ખરેખર "{itemName}" કાઢી નાખવા માંગો છો? આ ક્રિયા પૂર્વવત્ કરી શકાતી નથી.',
     },
     'profile.updateSuccess': {
       'en': 'Profile updated successfully',
@@ -3564,6 +3586,170 @@ class AppLocalizations {
       'mr': '{name} वर स्विच करा',
       'gu': '{name} પર સ્વિચ કરો',
     },
+    'update.dialog.requiredTitle': {
+      'en': 'Update Required',
+      'hi': 'Update Required',
+      'mr': 'Update Required',
+      'gu': 'Update Required',
+    },
+    'update.dialog.availableTitle': {
+      'en': 'Update Available',
+      'hi': 'Update Available',
+      'mr': 'Update Available',
+      'gu': 'Update Available',
+    },
+    'update.dialog.current': {
+      'en': 'Current',
+      'hi': 'Current',
+      'mr': 'Current',
+      'gu': 'Current',
+    },
+    'update.dialog.latest': {
+      'en': 'Latest',
+      'hi': 'Latest',
+      'mr': 'Latest',
+      'gu': 'Latest',
+    },
+    'update.dialog.minimum': {
+      'en': 'Minimum supported',
+      'hi': 'Minimum supported',
+      'mr': 'Minimum supported',
+      'gu': 'Minimum supported',
+    },
+    'update.dialog.whatsNew': {
+      'en': "What's new",
+      'hi': "What's new",
+      'mr': "What's new",
+      'gu': "What's new",
+    },
+    'update.dialog.downloading': {
+      'en': 'Downloading {progress}%',
+      'hi': 'Downloading {progress}%',
+      'mr': 'Downloading {progress}%',
+      'gu': 'Downloading {progress}%',
+    },
+    'update.dialog.checksumVerified': {
+      'en': 'Checksum verified',
+      'hi': 'Checksum verified',
+      'mr': 'Checksum verified',
+      'gu': 'Checksum verified',
+    },
+    'update.action.updateNow': {
+      'en': 'Update Now',
+      'hi': 'Update Now',
+      'mr': 'Update Now',
+      'gu': 'Update Now',
+    },
+    'update.action.skip': {
+      'en': 'Skip',
+      'hi': 'Skip',
+      'mr': 'Skip',
+      'gu': 'Skip',
+    },
+    'about.title': {
+      'en': 'About App',
+      'hi': 'About App',
+      'mr': 'About App',
+      'gu': 'About App',
+    },
+    'about.checkLatest': {
+      'en': 'Check Latest Update',
+      'hi': 'Check Latest Update',
+      'mr': 'Check Latest Update',
+      'gu': 'Check Latest Update',
+    },
+    'about.upToDate': {
+      'en': 'You are using the latest version.',
+      'hi': 'You are using the latest version.',
+      'mr': 'You are using the latest version.',
+      'gu': 'You are using the latest version.',
+    },
+    'about.releaseNotes': {
+      'en': 'Release Notes',
+      'hi': 'Release Notes',
+      'mr': 'Release Notes',
+      'gu': 'Release Notes',
+    },
+    'about.pageSubtitle': {
+      'en':
+          'View the installed version, compare the latest release, and trigger in-app updates.',
+      'hi':
+          'View the installed version, compare the latest release, and trigger in-app updates.',
+      'mr':
+          'View the installed version, compare the latest release, and trigger in-app updates.',
+      'gu':
+          'View the installed version, compare the latest release, and trigger in-app updates.',
+    },
+    'about.identitySectionTitle': {
+      'en': 'App Identity',
+      'hi': 'App Identity',
+      'mr': 'App Identity',
+      'gu': 'App Identity',
+    },
+    'about.identitySectionSubtitle': {
+      'en': 'Basic package and version metadata for this installation.',
+      'hi': 'Basic package and version metadata for this installation.',
+      'mr': 'Basic package and version metadata for this installation.',
+      'gu': 'Basic package and version metadata for this installation.',
+    },
+    'about.field.appName': {
+      'en': 'App Name',
+      'hi': 'App Name',
+      'mr': 'App Name',
+      'gu': 'App Name',
+    },
+    'about.field.package': {
+      'en': 'Package',
+      'hi': 'Package',
+      'mr': 'Package',
+      'gu': 'Package',
+    },
+    'about.field.version': {
+      'en': 'Version',
+      'hi': 'Version',
+      'mr': 'Version',
+      'gu': 'Version',
+    },
+    'about.updatesSectionTitle': {
+      'en': 'Updates',
+      'hi': 'Updates',
+      'mr': 'Updates',
+      'gu': 'Updates',
+    },
+    'about.updatesSectionSubtitle': {
+      'en':
+          'Check the latest release, review notes, and install when available.',
+      'hi':
+          'Check the latest release, review notes, and install when available.',
+      'mr':
+          'Check the latest release, review notes, and install when available.',
+      'gu':
+          'Check the latest release, review notes, and install when available.',
+    },
+    'update.field.current': {
+      'en': 'Current',
+      'hi': 'Current',
+      'mr': 'Current',
+      'gu': 'Current',
+    },
+    'update.field.latest': {
+      'en': 'Latest',
+      'hi': 'Latest',
+      'mr': 'Latest',
+      'gu': 'Latest',
+    },
+    'update.field.minimumSupported': {
+      'en': 'Minimum Supported',
+      'hi': 'Minimum Supported',
+      'mr': 'Minimum Supported',
+      'gu': 'Minimum Supported',
+    },
+    'update.dialog.defaultNotes': {
+      'en': 'Performance improvements and bug fixes.',
+      'hi': 'Performance improvements and bug fixes.',
+      'mr': 'Performance improvements and bug fixes.',
+      'gu': 'Performance improvements and bug fixes.',
+    },
   };
 
   static final Map<String, Map<String, String>> _autoTranslations = {
@@ -3921,11 +4107,60 @@ class AppLocalizations {
       'mr': '{name} साठी पासवर्ड टाका:',
       'gu': '{name} માટે પાસવર્ડ દાખલ કરો:',
     },
+    'Medical Card': {
+      'hi': 'चिकित्सा कार्ड',
+      'mr': 'वैद्यकीय कार्ड',
+      'gu': 'મેડિકલ કાર્ડ',
+    },
+    'View your permanent medical card QR code': {
+      'hi': 'अपना स्थायी चिकित्सा कार्ड QR कोड देखें',
+      'mr': 'तुमचा कायमस्वरूपी वैद्यकीय कार्ड QR कोड पहा',
+      'gu': 'તમારો કાયમી મેડિકલ કાર્ડ QR કોડ જુઓ',
+    },
+    'My Medical Card QR Code': {
+      'hi': 'मेरा चिकित्सा कार्ड QR कोड',
+      'mr': 'माझा वैद्यकीय कार्ड QR कोड',
+      'gu': 'મારો મેડિકલ કાર્ડ QR કોડ',
+    },
+    'Medical Card QR Code': {
+      'hi': 'चिकित्सा कार्ड QR कोड',
+      'mr': 'वैद्यकीय कार्ड QR कोड',
+      'gu': 'મેડિકલ કાર્ડ QR કોડ',
+    },
+    'Scan to view medical card': {
+      'hi': 'चिकित्सा कार्ड देखने के लिए स्कैन करें',
+      'mr': 'वैद्यकीय कार्ड पाहण्यासाठी स्कॅन करा',
+      'gu': 'મેડિકલ કાર્ડ જોવા માટે સ્કેન કરો',
+    },
+    'Share QR Code': {
+      'hi': 'QR कोड साझा करें',
+      'mr': 'QR कोड शेअर करा',
+      'gu': 'QR કોડ શેર કરો',
+    },
+    'About Medical Card': {
+      'hi': 'चिकित्सा कार्ड के बारे में',
+      'mr': 'वैद्यकीय कार्ड बद्दल',
+      'gu': 'મેડિકલ કાર્ડ વિશે',
+    },
+    'This QR code provides permanent access to your medical card. Anyone can scan it to view your essential medical information in case of emergency.':
+        {
+      'hi':
+          'यह QR कोड आपके चिकित्सा कार्ड तक स्थायी पहुंच प्रदान करता है। कोई भी इसे स्कैन करके आपातकाल की स्थिति में आपकी आवश्यक चिकित्सा जानकारी देख सकता है।',
+      'mr':
+          'हा QR कोड तुमच्या वैद्यकीय कार्डला कायमस्वरूपी प्रवेश प्रदान करतो. कोणीही आपत्कालीन परिस्थितीत तुमची आवश्यक वैद्यकीय माहिती पाहण्यासाठी ते स्कॅन करू शकतो.',
+      'gu':
+          'આ QR કોડ તમારા મેડિકલ કાર્ડ સુધી કાયમી પ્રવેશ પ્રદાન કરે છે. કોઈપણ કટોકટીની સ્થિતિમાં તમારી આવશ્યક તબીબી માહિતી જોવા માટે તેને સ્કેન કરી શકે છે.',
+    },
+    'Failed to share QR code:': {
+      'hi': 'QR कोड साझा करने में विफल:',
+      'mr': 'QR कोड शेअर करण्यात अयशस्वी:',
+      'gu': 'QR કોડ શેર કરવામાં નિષ્ફળ:',
+    },
   };
 
   String t(String key) {
     final languageCode = locale.languageCode;
-    final values = _keyedTranslations[key];
+    final values = _keyedTranslations[key] ?? _autoTranslations[key];
     if (values == null) return key;
     return values[languageCode] ?? values['en'] ?? key;
   }
@@ -3933,13 +4168,19 @@ class AppLocalizations {
   String format(String key, Map<String, String> params) {
     var value = t(key);
     params.forEach((placeholder, replacement) {
-      value = value.replaceAll('{${placeholder}}', replacement);
+      value = value.replaceAll('{$placeholder}', replacement);
     });
     return value;
   }
 
   String auto(String sourceText) {
     final normalized = sourceText.trim();
+    final keyedValues = _keyedTranslations[normalized];
+    if (keyedValues != null) {
+      return keyedValues[locale.languageCode] ??
+          keyedValues['en'] ??
+          sourceText;
+    }
     final map = _autoTranslations[normalized];
     if (map == null) return sourceText;
     return map[locale.languageCode] ?? sourceText;
