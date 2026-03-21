@@ -8,6 +8,7 @@ import 'package:lottie/lottie.dart';
 import '../Document_model.dart';
 import '../api_service.dart';
 import '../localization/app_localizations.dart';
+import '../services/secure_token_storage.dart';
 
 class ProfileName extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -42,8 +43,7 @@ class _ProfileNameState extends State<ProfileName> {
 
   Future<void> _fetchProfile() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString("authToken");
+      final token = await SecureTokenStorage.getToken();
       if (token == null) {
         if (!mounted) return;
         setState(() => _loading = false);

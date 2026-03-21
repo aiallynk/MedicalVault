@@ -1,4 +1,6 @@
 import 'dart:ui' as ui;
+import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -6,6 +8,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:hello/HowQrAcessWorks.dart';
 import 'package:hello/api_service.dart';
@@ -26,17 +29,30 @@ class _QRPageState extends State<QRPage> {
   bool _loading = false;
   List<Map<String, dynamic>> _qrAds = [];
   List<Map<String, dynamic>> _qrActions = [];
-  Color? _remoteButtonColor;
-  Color? _remoteIconColor;
+  Timer? _publicConfigReconnectTimer;
+  WebSocketChannel? _publicConfigChannel;
+  StreamSubscription<dynamic>? _publicConfigSubscription;
 
   @override
   void initState() {
     super.initState();
     _regenerateQR(); // auto-generate on open
     _loadDynamicQrContent();
+    _connectPublicConfigSocket();
   }
 
   // Removed unused _readSessionToken
+
+  @override
+  void dispose() {
+    _publicConfigReconnectTimer?.cancel();
+    _publicConfigReconnectTimer = null;
+    _publicConfigSubscription?.cancel();
+    _publicConfigSubscription = null;
+    _publicConfigChannel?.sink.close();
+    _publicConfigChannel = null;
+    super.dispose();
+  }
 
   Future<void> _regenerateQR() async {
     setState(() {
@@ -70,10 +86,16 @@ class _QRPageState extends State<QRPage> {
     }
   }
 
-  Future<void> _loadDynamicQrContent() async {
+  Future<void> _loadDynamicQrContent({bool forceRefresh = false}) async {
     try {
-      final adsFuture = ApiService.fetchAdvertisements(placement: 'QR_PAGE');
-      final configFuture = ApiService.fetchUiConfig();
+      if (forceRefresh) {
+        ApiService.invalidatePublicConfigCache();
+      }
+      final adsFuture = ApiService.fetchAdvertisements(
+        placement: 'QR_PAGE',
+        forceRefresh: forceRefresh,
+      );
+      final configFuture = ApiService.fetchUiConfig(forceRefresh: forceRefresh);
       final results = await Future.wait([adsFuture, configFuture]);
 
       final ads = (results[0] as List<dynamic>)
@@ -95,23 +117,88 @@ class _QRPageState extends State<QRPage> {
       setState(() {
         _qrAds = ads;
         _qrActions = qrActions;
-        _remoteButtonColor = _parseHexColor(config?['buttonColor']);
-        _remoteIconColor = _parseHexColor(config?['iconColor']);
       });
     } catch (e) {
       debugPrint('Failed to load QR dynamic content: $e');
     }
   }
 
-  Color? _parseHexColor(dynamic value) {
-    final raw = value?.toString().trim() ?? '';
-    if (raw.isEmpty) return null;
-    var hex = raw.replaceAll('#', '').replaceAll('0x', '');
-    if (hex.length == 6) hex = 'FF$hex';
-    if (hex.length != 8) return null;
-    final intValue = int.tryParse(hex, radix: 16);
-    if (intValue == null) return null;
-    return Color(intValue);
+  Future<void> _connectPublicConfigSocket() async {
+    _publicConfigReconnectTimer?.cancel();
+    _publicConfigReconnectTimer = null;
+    await _publicConfigSubscription?.cancel();
+    _publicConfigSubscription = null;
+    await _publicConfigChannel?.sink.close();
+    _publicConfigChannel = null;
+
+    try {
+      final uri = ApiService.publicConfigWebSocketUri(
+        platform: "APP",
+        surface: "QR_PAGE",
+      );
+      final channel = WebSocketChannel.connect(uri);
+      try {
+        await channel.ready.timeout(const Duration(seconds: 8));
+      } catch (_) {
+        await channel.sink.close();
+        _schedulePublicConfigReconnect();
+        return;
+      }
+      if (!mounted) {
+        await channel.sink.close();
+        return;
+      }
+      _publicConfigChannel = channel;
+      _publicConfigSubscription = channel.stream.listen(
+        _handlePublicConfigSocketMessage,
+        onDone: _schedulePublicConfigReconnect,
+        onError: (_) => _schedulePublicConfigReconnect(),
+        cancelOnError: true,
+      );
+    } catch (_) {
+      _schedulePublicConfigReconnect();
+    }
+  }
+
+  void _schedulePublicConfigReconnect() {
+    if (!mounted) return;
+    if (_publicConfigReconnectTimer?.isActive == true) return;
+    _publicConfigReconnectTimer = Timer(
+      const Duration(seconds: 5),
+      _connectPublicConfigSocket,
+    );
+  }
+
+  void _handlePublicConfigSocketMessage(dynamic rawMessage) {
+    try {
+      final decoded = jsonDecode(rawMessage.toString());
+      if (decoded is! Map) return;
+      final message = decoded.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      final type = message['type']?.toString().trim().toLowerCase() ?? '';
+      if (type.isEmpty || type == 'connected' || type == 'heartbeat') return;
+
+      final surfaces = _normalizeTargetValues(message['surfaces']);
+      final platforms = _normalizeTargetValues(message['platforms']);
+      final targetsQr = surfaces.isEmpty || surfaces.contains('QR_PAGE');
+      final targetsApp = platforms.isEmpty || platforms.contains('APP');
+      if (!targetsQr || !targetsApp) return;
+
+      if (type == 'ads.updated' || type == 'ui-config.updated') {
+        _loadDynamicQrContent(forceRefresh: true);
+      }
+    } catch (_) {
+      // Ignore malformed websocket events.
+    }
+  }
+
+  Set<String> _normalizeTargetValues(dynamic raw) {
+    if (raw is! List) return <String>{};
+    return raw
+        .map((entry) => entry?.toString().trim().toUpperCase() ?? '')
+        .where((entry) => entry.isNotEmpty)
+        .toSet();
   }
 
   IconData _iconFromName(String value) {
@@ -232,12 +319,57 @@ class _QRPageState extends State<QRPage> {
     }
   }
 
+  Widget _buildGradientActionButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    required Color primary,
+    required Color secondary,
+  }) {
+    final enabled = onPressed != null;
+
+    return SizedBox(
+      width: double.infinity,
+      height: 55,
+      child: Opacity(
+        opacity: enabled ? 1 : 0.55,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          child: Ink(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(colors: [primary, secondary]),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, color: Colors.white),
+                  const SizedBox(width: 10),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final primary = _remoteButtonColor ?? Theme.of(context).colorScheme.primary;
-    final secondary =
-        _remoteIconColor ?? Theme.of(context).colorScheme.secondary;
+    final primary = Theme.of(context).colorScheme.primary;
+    final secondary = Theme.of(context).colorScheme.secondary;
     final activeActions = _qrActions
         .where(
           (action) => action['isActive'] == null || action['isActive'] == true,
@@ -333,55 +465,23 @@ class _QRPageState extends State<QRPage> {
                 child: Column(
                   children: [
                     // Share QR
-                    Container(
-                      width: double.infinity,
-                      height: 55,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [primary, secondary],
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: ElevatedButton.icon(
-                        onPressed: _qrData.isEmpty ? null : _shareQR,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        icon: const Icon(Icons.share, color: Colors.white),
-                        label: Text(l10n.t('qr.share')),
-                      ),
+                    _buildGradientActionButton(
+                      label: l10n.t('qr.share'),
+                      icon: Icons.share_rounded,
+                      onPressed: _qrData.isEmpty ? null : _shareQR,
+                      primary: primary,
+                      secondary: secondary,
                     ),
 
                     const SizedBox(height: 16),
 
                     // Regenerate QR
-                    Container(
-                      width: double.infinity,
-                      height: 55,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [primary, secondary],
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: ElevatedButton.icon(
-                        onPressed: _loading ? null : _regenerateQR,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        icon: const Icon(Icons.refresh, color: Colors.white),
-                        label: Text(l10n.t('qr.regenerate')),
-                      ),
+                    _buildGradientActionButton(
+                      label: l10n.t('qr.regenerate'),
+                      icon: Icons.refresh_rounded,
+                      onPressed: _loading ? null : _regenerateQR,
+                      primary: primary,
+                      secondary: secondary,
                     ),
 
                     const SizedBox(height: 16),

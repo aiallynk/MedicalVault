@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
 import 'package:hello/api_service.dart';
+import 'package:hello/services/secure_token_storage.dart';
 import '../Notifications/notification_manager.dart';
 import 'package:hello/localization/app_localizations.dart';
 import '../screens/appointments_page.dart';
@@ -144,16 +145,17 @@ class Doctor {
   });
 
   factory Doctor.fromJson(Map<String, dynamic> json) {
+    final rawProfilePicture = (json['profilePictureUrl'] ??
+            json['profilePicture'] ??
+            json['avatarUrl'] ??
+            json['avatar'])
+        ?.toString();
     return Doctor(
       id: (json['_id'] ?? '').toString(),
       name: (json['name'] ?? 'Doctor').toString(),
       email: (json['email'] ?? '').toString(),
       phone: (json['mobile'] ?? json['phone'])?.toString(),
-      profilePicture: (json['profilePictureUrl'] ??
-              json['profilePicture'] ??
-              json['avatarUrl'] ??
-              json['avatar'])
-          ?.toString(),
+      profilePicture: ApiService.resolveMediaUrl(rawProfilePicture),
       experience: json['experience']?.toString(),
       specialization: (json['specialization'] ?? json['specialty'])?.toString(),
       chatUrl:
@@ -338,8 +340,7 @@ class _RequestsPageState extends State<RequestsPage> {
 
   // Get auth token from SharedPreferences
   Future<String?> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('authToken');
+    return SecureTokenStorage.getToken();
   }
 
   // Fetch session requests from API
@@ -610,6 +611,7 @@ class _RequestsPageState extends State<RequestsPage> {
           counterpartId: request.doctor.id,
           counterpartName: "Dr. ${request.doctor.name}",
           counterpartRole: "doctor",
+          counterpartAvatarUrl: request.doctor.profilePicture,
           sessionId: request.id,
         ),
       ),
@@ -802,7 +804,7 @@ class _RequestsPageState extends State<RequestsPage> {
                       ? NetworkImage(doctor.profilePicture!)
                       : null,
                   child: doctor.profilePicture == null
-                      ? const Icon(Icons.access_time_rounded)
+                      ? const Icon(Icons.medical_services_outlined)
                       : null,
                 ),
                 const SizedBox(width: 12),
@@ -947,7 +949,7 @@ class _RequestsPageState extends State<RequestsPage> {
                         }
                       : null,
                   child: doctor.profilePicture == null
-                      ? Icon(Icons.person,
+                      ? Icon(Icons.medical_services_rounded,
                           color: Theme.of(context).colorScheme.primary)
                       : null,
                 ),

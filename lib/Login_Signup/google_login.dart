@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hello/BottomNavigationBar/dashboard1.dart';
 import 'package:hello/Notifications/fcm_service.dart';
 import 'package:hello/api_service.dart';
+import 'package:hello/Login_Signup/login_success_screen.dart';
+import 'package:hello/services/secure_token_storage.dart';
 
 class GoogleLoginScreen extends StatefulWidget {
   const GoogleLoginScreen({super.key});
@@ -30,6 +31,41 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   bool _isLoading = false;
   String? _statusMessage;
   Map<String, dynamic>? _backendResponse;
+
+  Future<void> _animateGoogleLoginSuccessAndNavigate(
+    Map<String, dynamic> userData,
+  ) async {
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      PageRouteBuilder(
+        settings: const RouteSettings(name: '/login_success'),
+        transitionDuration: const Duration(milliseconds: 320),
+        pageBuilder: (_, __, ___) => LoginSuccessScreen(
+          userData: userData,
+          title: 'Google Login Successful',
+          subtitle: 'Securing your vault and loading dashboard...',
+          clearStackOnComplete: true,
+        ),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          );
+          return FadeTransition(
+            opacity: curved,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.03),
+                end: Offset.zero,
+              ).animate(curved),
+              child: child,
+            ),
+          );
+        },
+      ),
+      (route) => false,
+    );
+  }
 
   Future<void> _handleGoogleSignIn() async {
     setState(() {
@@ -92,12 +128,14 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
           final user = data['user'] ?? <String, dynamic>{};
           final token = data['token'] ?? '';
 
-          await prefs.setString('authToken', token);
+          await SecureTokenStorage.saveToken(token.toString());
           await prefs.setString('userId', (user['id'] ?? '').toString());
           await prefs.setString('email', (user['email'] ?? '').toString());
           await prefs.setString('name', (user['name'] ?? 'Patient').toString());
-          final Map<String, dynamic> mergedUser = Map<String, dynamic>.from(user);
-          if ((mergedUser['age'] == null || mergedUser['age'].toString().isEmpty) &&
+          final Map<String, dynamic> mergedUser =
+              Map<String, dynamic>.from(user);
+          if ((mergedUser['age'] == null ||
+                  mergedUser['age'].toString().isEmpty) &&
               googleAge != null) {
             mergedUser['age'] = googleAge;
           }
@@ -107,16 +145,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
           await FCMService().registerToken();
 
           if (!mounted) return;
-
-          // Navigate to Dashboard
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(
-              builder: (_) =>
-                  Dashboard1(userData: Map<String, dynamic>.from(jsonDecode(prefs.getString('userData')!))),
-            ),
-            (route) => false,
-          );
+          await _animateGoogleLoginSuccessAndNavigate(mergedUser);
         } else {
           setState(() {
             _statusMessage = data['message'] ?? 'Login failed';
@@ -166,16 +195,21 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
 
     Map<String, dynamic>? chosen;
     for (final entry in birthdays) {
-      final date = (entry as Map<String, dynamic>)['date'] as Map<String, dynamic>?;
+      final date =
+          (entry as Map<String, dynamic>)['date'] as Map<String, dynamic>?;
       if (date == null) continue;
-      if (date.containsKey('year') && date.containsKey('month') && date.containsKey('day')) {
+      if (date.containsKey('year') &&
+          date.containsKey('month') &&
+          date.containsKey('day')) {
         chosen = date;
         break;
       }
     }
     chosen ??= birthdays.first['date'] as Map<String, dynamic>?;
-    if (chosen == null) return null;
-    if (!chosen.containsKey('year') || !chosen.containsKey('month') || !chosen.containsKey('day')) {
+    if (chosen == null ||
+        !chosen.containsKey('year') ||
+        !chosen.containsKey('month') ||
+        !chosen.containsKey('day')) {
       return null;
     }
 
@@ -186,7 +220,8 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
     );
     final now = DateTime.now();
     int age = now.year - dob.year;
-    if (now.month < dob.month || (now.month == dob.month && now.day < dob.day)) {
+    if (now.month < dob.month ||
+        (now.month == dob.month && now.day < dob.day)) {
       age--;
     }
     return age;
@@ -234,66 +269,64 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       appBar: AppBar(
         title: const Text('Log in with Google'),
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: ListView(
-            children: [
-              const SizedBox(height: 24),
-              Text(
-                'Authenticate using your Google account',
-                style: textTheme.titleMedium,
-                textAlign: TextAlign.center,
+      body: Stack(
+        children: [
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: ListView(
+                children: [
+                  const SizedBox(height: 24),
+                  Text(
+                    'Authenticate using your Google account',
+                    style: textTheme.titleMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  _buildGoogleButton(context),
+                  const SizedBox(height: 24),
+                  if (_statusMessage != null)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Theme.of(context).dividerColor,
+                          width: 1,
+                        ),
+                      ),
+                      child: Text(
+                        _statusMessage!,
+                        style: textTheme.bodyMedium,
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  if (_backendResponse != null)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Theme.of(context).dividerColor,
+                          width: 1,
+                        ),
+                      ),
+                      child: Text(
+                        const JsonEncoder.withIndent('  ')
+                            .convert(_backendResponse),
+                        style: textTheme.bodySmall,
+                      ),
+                    ),
+                ],
               ),
-              const SizedBox(height: 24),
-
-              // Sign in button (supports light/dark)
-              _buildGoogleButton(context),
-
-              const SizedBox(height: 24),
-
-              // Status
-              if (_statusMessage != null)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color:
-                        Theme.of(context).colorScheme.primary.withOpacity(0.06),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: Theme.of(context).dividerColor,
-                      width: 1,
-                    ),
-                  ),
-                  child: Text(
-                    _statusMessage!,
-                    style: textTheme.bodyMedium,
-                  ),
-                ),
-
-              const SizedBox(height: 16),
-
-              // Backend response
-              if (_backendResponse != null)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: Theme.of(context).dividerColor,
-                      width: 1,
-                    ),
-                  ),
-                  child: Text(
-                    const JsonEncoder.withIndent('  ')
-                        .convert(_backendResponse),
-                    style: textTheme.bodySmall,
-                  ),
-                ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

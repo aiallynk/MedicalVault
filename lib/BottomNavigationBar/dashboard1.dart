@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -29,20 +30,26 @@ import 'package:hello/localization/app_localizations.dart';
 import '../features/lost_found/report_lost_page.dart';
 import '../features/lost_found/report_found_page.dart';
 import '../features/lost_found/my_lost_reports_page.dart';
+import '../providers/dashboard_prefetch_provider.dart';
 
 class Dashboard1 extends StatefulWidget {
   final Map<String, dynamic> userData;
+  final DashboardPrefetchData? prefetchedData;
 
-  const Dashboard1({super.key, required this.userData});
+  const Dashboard1({
+    super.key,
+    required this.userData,
+    this.prefetchedData,
+  });
 
   @override
   State<Dashboard1> createState() => _Dashboard1State();
 }
 
 class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
-  static const int _promoInfiniteSeedPage = 10000;
+  static const int _promoPageSeed = 10000;
   int _currentIndex = 0;
-  int _promoLoopPage = _promoInfiniteSeedPage;
+  int _promoPageIndex = 0;
   final Set<int> _loadedTabs = {0};
   final Map<int, Uint8List?> _decodedDataUriBytes = {};
   late PageController _promoPageController;
@@ -66,6 +73,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _dashboardAlerts = [];
   bool _lowPerformanceMode = false;
   int _jankyFrameScore = 0;
+  bool _hydratedFromPrefetch = false;
 
   bool get _reduceMotion =>
       _lowPerformanceMode ||
@@ -77,18 +85,24 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     super.initState();
     _userData = Map<String, dynamic>.from(widget.userData);
     _promoPageController = PageController(
-      initialPage: _promoInfiniteSeedPage,
+      initialPage: _promoPageSeed,
       viewportFraction: 0.9,
     );
     _alertController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 14),
     );
-    _loadDocumentCounts();
-    _loadLinkedProfiles();
-    _loadTopDoctors();
-    _loadDashboardAds();
-    _loadDashboardUiConfig();
+    _tryHydrateFromPrefetch();
+    if (!_hydratedFromPrefetch) {
+      _loadDocumentCounts();
+      _loadLinkedProfiles();
+      _loadTopDoctors();
+      _loadDashboardAds();
+      _loadDashboardUiConfig();
+    } else {
+      _isLoadingCounts = false;
+      _loadingTopDoctors = false;
+    }
     _loadStoredName();
     _startUiRefreshTimer();
     _startAlertExpiryTimer();
@@ -108,17 +122,9 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       if (!mounted || !_promoPageController.hasClients) return;
       if (_reduceMotion) return;
       if (_dashboardAds.length <= 1) return;
-      final positions = _promoPageController.positions.toList(growable: false);
-      if (positions.length != 1) return;
-      final position = positions.first;
-      if (!position.haveDimensions) return;
-      final currentPage =
-          position is PageMetrics ? (position as PageMetrics).page : null;
-      if (currentPage != null) {
-        _promoLoopPage = currentPage.round();
-      }
-      final int next = _promoLoopPage + 1;
-      _promoLoopPage = next;
+      final int currentPage =
+          _promoPageController.page?.round() ?? _promoPageSeed;
+      final int next = currentPage + 1;
       try {
         _promoPageController
             .animateToPage(
@@ -132,6 +138,51 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
         // Ignore transient errors if page view not ready
       }
     });
+  }
+
+  void _tryHydrateFromPrefetch() {
+    final explicit = widget.prefetchedData;
+    final userId =
+        (_userData['id']?.toString() ?? _userData['_id']?.toString() ?? '')
+            .trim();
+
+    final providerCached =
+        context.read<DashboardPrefetchProvider>().takeCachedForUser(userId);
+    final source = explicit ?? providerCached;
+    if (source == null) return;
+    _applyPrefetchedData(source);
+  }
+
+  void _applyPrefetchedData(DashboardPrefetchData data) {
+    _hydratedFromPrefetch = true;
+    _userData = Map<String, dynamic>.from(data.userData);
+    _documentCounts = Map<String, int>.from(data.documentCounts);
+    _linkedProfiles = data.linkedProfiles
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    _topDoctors = data.topDoctors
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    _dashboardAds = data.dashboardAds
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    _dashboardCards = data.dashboardCards
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    _dashboardAlerts = _activeDashboardAlerts(
+      DateTime.now(),
+      source: data.dashboardAlerts
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false),
+    );
+
+    _promoPageIndex = 0;
+    if (_dashboardAds.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_promoPageController.hasClients) return;
+        _promoPageController.jumpToPage(_promoPageSeed);
+      });
+    }
   }
 
   @override
@@ -484,9 +535,19 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
         forceRefresh: forceRefresh,
       );
       if (!mounted) return;
+      final previousIndex = _promoPageIndex;
+      final maxIndex = ads.isEmpty ? 0 : ads.length - 1;
+      final nextIndex = previousIndex.clamp(0, maxIndex).toInt();
       setState(() {
         _dashboardAds = ads;
+        _promoPageIndex = nextIndex;
       });
+      if (ads.isNotEmpty && previousIndex != nextIndex) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_promoPageController.hasClients) return;
+          _promoPageController.jumpToPage(_promoPageSeed + nextIndex);
+        });
+      }
     } catch (e) {
       debugPrint('Error loading dashboard ads: $e');
     }
@@ -692,130 +753,144 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       )!,
     ];
 
-    return RepaintBoundary(
-      child: SizedBox(
-        height: 120,
-        child: PageView.builder(
-          itemCount: null,
-          controller: _promoPageController,
-          onPageChanged: (index) {
-            _promoLoopPage = index;
-          },
-          itemBuilder: (context, index) {
-            final normalizedIndex = index % _dashboardAds.length;
-            final item = _dashboardAds[normalizedIndex];
-            final title = (item['title']?.toString().trim().isNotEmpty ?? false)
-                ? item['title'].toString().trim()
-                : l10n.auto('Medical Vault');
-            final redirectUrl = item['redirectUrl']?.toString().trim() ?? '';
-            final subtitle = redirectUrl.isNotEmpty
-                ? l10n.auto('Tap to learn more')
-                : l10n.auto('Medical Vault update');
-            final imageUrl = item['imageUrl']?.toString().trim() ?? '';
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: redirectUrl.isEmpty
-                    ? null
-                    : () => _openTrackedAd(
-                          item,
-                          placement: 'APP_DASHBOARD',
-                        ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      _buildRemoteOrEmbeddedImage(
-                        imageSource: imageUrl,
-                        fit: BoxFit.cover,
-                        fallback: DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: promoGradient,
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                          ),
-                        ),
-                      ),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.centerLeft,
-                            end: Alignment.centerRight,
-                            colors: [
-                              Colors.black.withValues(alpha: 0.45),
-                              Colors.black.withValues(alpha: 0.25),
-                            ],
-                          ),
-                        ),
-                      ),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Colors.white
-                                .withValues(alpha: isDark ? 0.14 : 0.7),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black
-                                  .withValues(alpha: isDark ? 0.18 : 0.05),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.campaign,
-                              color: Colors.white.withValues(alpha: 0.95),
-                              size: 28,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  AppText(
-                                    title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    variant: AppTextVariant.body,
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                  const SizedBox(height: 4),
-                                  AppText(
-                                    subtitle,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    variant: AppTextVariant.caption,
-                                    color: Colors.white.withValues(alpha: 0.9),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            if (redirectUrl.isNotEmpty)
-                              Icon(
-                                Icons.open_in_new_rounded,
-                                color: Colors.white.withValues(alpha: 0.95),
-                                size: 18,
-                              ),
-                          ],
-                        ),
-                      ),
+    Widget buildPromoItem(Map<String, dynamic> item) {
+      final title = (item['title']?.toString().trim().isNotEmpty ?? false)
+          ? item['title'].toString().trim()
+          : l10n.auto('Medical Vault');
+      final redirectUrl = item['redirectUrl']?.toString().trim() ?? '';
+      final subtitle = redirectUrl.isNotEmpty
+          ? l10n.auto('Tap to learn more')
+          : l10n.auto('Medical Vault update');
+      final imageUrl = item['imageUrl']?.toString().trim() ?? '';
+
+      return InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: redirectUrl.isEmpty
+            ? null
+            : () => _openTrackedAd(
+                  item,
+                  placement: 'APP_DASHBOARD',
+                ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _buildRemoteOrEmbeddedImage(
+                imageSource: imageUrl,
+                fit: BoxFit.cover,
+                fallback: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: promoGradient,
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                ),
+              ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.45),
+                      Colors.black.withValues(alpha: 0.25),
                     ],
                   ),
                 ),
               ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: isDark ? 0.14 : 0.7),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color:
+                          Colors.black.withValues(alpha: isDark ? 0.18 : 0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.campaign,
+                      color: Colors.white.withValues(alpha: 0.95),
+                      size: 28,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          AppText(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            variant: AppTextVariant.body,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          const SizedBox(height: 4),
+                          AppText(
+                            subtitle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            variant: AppTextVariant.caption,
+                            color: Colors.white.withValues(alpha: 0.9),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (redirectUrl.isNotEmpty)
+                      Icon(
+                        Icons.open_in_new_rounded,
+                        color: Colors.white.withValues(alpha: 0.95),
+                        size: 18,
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_dashboardAds.length == 1) {
+      return RepaintBoundary(
+        child: SizedBox(
+          height: 120,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: buildPromoItem(_dashboardAds.first),
+          ),
+        ),
+      );
+    }
+
+    return RepaintBoundary(
+      child: SizedBox(
+        height: 120,
+        child: PageView.builder(
+          controller: _promoPageController,
+          onPageChanged: (index) {
+            _promoPageIndex = index % _dashboardAds.length;
+          },
+          itemBuilder: (context, index) {
+            final item = _dashboardAds[index % _dashboardAds.length];
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: buildPromoItem(item),
             );
           },
         ),

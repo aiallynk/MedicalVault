@@ -75,13 +75,14 @@ class _UploadDocumentState extends State<UploadDocument> {
   void _removeSelectedFile() {
     final l10n = context.l10n;
     final fileName = _selectedFile?.path.split('/').last ?? '';
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(l10n.t('uploadDocument.deleteFile.title')),
         content: Text(
-          l10n.format('uploadDocument.deleteFile.message', {'fileName': fileName}),
+          l10n.format(
+              'uploadDocument.deleteFile.message', {'fileName': fileName}),
         ),
         actions: [
           TextButton(
@@ -138,9 +139,7 @@ class _UploadDocumentState extends State<UploadDocument> {
         _titleController.text.isEmpty ||
         _selectedCategory == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content:
-                Text(l10n.t('uploadDocument.error.missingFields'))),
+        SnackBar(content: Text(l10n.t('uploadDocument.error.missingFields'))),
       );
       return;
     }
@@ -162,8 +161,8 @@ class _UploadDocumentState extends State<UploadDocument> {
         category:
             _selectedCategory == "Reports" ? "Lab Report" : _selectedCategory!,
         notes: _notesController.text,
-        date:
-            _selectedDate?.toIso8601String() ?? DateTime.now().toIso8601String(),
+        date: _selectedDate?.toIso8601String() ??
+            DateTime.now().toIso8601String(),
         onProgress: (progress) {
           // Ensure state updates happen on the main thread
           if (mounted) {
@@ -200,6 +199,11 @@ class _UploadDocumentState extends State<UploadDocument> {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+    final isDark = theme.brightness == Brightness.dark;
+    final pickerBackground = theme.colorScheme.surfaceContainerHighest
+        .withValues(alpha: isDark ? 0.42 : 0.55);
     final categories = [
       {'value': 'Report', 'label': l10n.t('documents.category.reports')},
       {
@@ -219,7 +223,10 @@ class _UploadDocumentState extends State<UploadDocument> {
               TextField(
                 controller: _titleController,
                 decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.title, color: Colors.blue),
+                  prefixIcon: Icon(
+                    Icons.description_outlined,
+                    color: primary,
+                  ),
                   labelText: l10n.t('uploadDocument.field.titleLabel'),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -230,7 +237,10 @@ class _UploadDocumentState extends State<UploadDocument> {
               DropdownButtonFormField<String>(
                 value: _selectedCategory,
                 decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.category, color: Colors.blue),
+                  prefixIcon: Icon(
+                    Icons.folder_open_rounded,
+                    color: primary,
+                  ),
                   labelText: l10n.t('uploadDocument.field.categoryLabel'),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -257,8 +267,10 @@ class _UploadDocumentState extends State<UploadDocument> {
                           : "",
                     ),
                     decoration: InputDecoration(
-                      prefixIcon:
-                          const Icon(Icons.calendar_today, color: Colors.blue),
+                      prefixIcon: Icon(
+                        Icons.event_available_rounded,
+                        color: primary,
+                      ),
                       labelText: l10n.t('uploadDocument.field.dateLabel'),
                       hintText: l10n.t('uploadDocument.field.dateHint'),
                       border: OutlineInputBorder(
@@ -273,7 +285,10 @@ class _UploadDocumentState extends State<UploadDocument> {
                 controller: _notesController,
                 maxLines: 3,
                 decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.notes, color: Colors.blue),
+                  prefixIcon: Icon(
+                    Icons.sticky_note_2_outlined,
+                    color: primary,
+                  ),
                   labelText: l10n.t('uploadDocument.field.notesLabel'),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -286,26 +301,22 @@ class _UploadDocumentState extends State<UploadDocument> {
                 children: [
                   Container(
                     decoration: BoxDecoration(
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? Colors.grey[800]
-                          : Colors.grey[200],
+                      color: pickerBackground,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: IconButton(
-                      icon: const Icon(Icons.attach_file, color: Colors.blue),
+                      icon: Icon(Icons.attach_file_rounded, color: primary),
                       onPressed: _pickFile,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Container(
                     decoration: BoxDecoration(
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? Colors.grey[800]
-                          : Colors.grey[200],
+                      color: pickerBackground,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: IconButton(
-                      icon: const Icon(Icons.camera_alt, color: Colors.blue),
+                      icon: Icon(Icons.photo_camera_outlined, color: primary),
                       onPressed: _pickFromCamera,
                     ),
                   ),
@@ -314,9 +325,7 @@ class _UploadDocumentState extends State<UploadDocument> {
                     child: Text(
                       l10n.t('uploadDocument.field.filePlaceholder'),
                       style: TextStyle(
-                        color: Theme.of(context).brightness == Brightness.dark
-                            ? Colors.grey[400]
-                            : Colors.black54,
+                        color: theme.textTheme.bodyMedium?.color,
                       ),
                     ),
                   ),
@@ -333,8 +342,8 @@ class _UploadDocumentState extends State<UploadDocument> {
                 child: _isUploading
                     ? Container(
                         decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF4A90E2), Color(0xFF50E3C2)],
+                          gradient: LinearGradient(
+                            colors: [primary, theme.colorScheme.secondary],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
@@ -359,7 +368,8 @@ class _UploadDocumentState extends State<UploadDocument> {
                                 const SizedBox(width: 12),
                                 Text(
                                   l10n.format('uploadDocument.progressLabel', {
-                                    'percent': _uploadProgress.toInt().toString()
+                                    'percent':
+                                        _uploadProgress.toInt().toString()
                                   }),
                                   style: const TextStyle(
                                     color: Colors.white,
@@ -381,22 +391,17 @@ class _UploadDocumentState extends State<UploadDocument> {
                           ],
                         ),
                       )
-                    : ElevatedButton.icon(
-                        icon:
-                            const Icon(Icons.cloud_upload, color: Colors.blue),
+                    : FilledButton.icon(
+                        icon: const Icon(Icons.cloud_upload_outlined),
                         label: Text(
                           l10n.t('uploadDocument.button.upload'),
-                          style: const TextStyle(color: Colors.blue),
                         ),
                         onPressed: _uploadDocument,
-                        style: ElevatedButton.styleFrom(
-                          foregroundColor: Colors.blue,
-                          backgroundColor:
-                              Theme.of(context).brightness == Brightness.dark
-                                  ? Colors.grey[800]
-                                  : Colors.grey[100],
-                          side: const BorderSide(color: Colors.blue),
+                        style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                       ),
               )

@@ -66,18 +66,27 @@ class _ChatThreadsScreenState extends State<ChatThreadsScreen> {
     final counterpartId = (thread["counterpartId"] ?? "").toString().trim();
     if (counterpartId.isEmpty) return;
 
-    final counterpartName =
-        (thread["counterpartName"] ?? "Conversation").toString().trim();
+    final counterpartNameRaw =
+        (thread["counterpartName"] ?? "Doctor").toString().trim();
+    final counterpartName = counterpartNameRaw.isEmpty
+        ? "Doctor"
+        : counterpartNameRaw.toLowerCase().startsWith("dr.")
+            ? counterpartNameRaw
+            : "Dr. $counterpartNameRaw";
+    final counterpartAvatar = ApiService.resolveMediaUrl(
+          (thread["counterpartAvatar"] ?? "").toString(),
+        ) ??
+        "";
 
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => DirectChatScreen(
           counterpartId: counterpartId,
-          counterpartName:
-              counterpartName.isEmpty ? "Conversation" : counterpartName,
+          counterpartName: counterpartName,
           // Flutter app is patient-side. Counterpart in direct chat is doctor.
           counterpartRole: "doctor",
+          counterpartAvatarUrl: counterpartAvatar,
         ),
       ),
     ).then((_) => _loadThreads(silent: true));
@@ -138,16 +147,23 @@ class _ChatThreadsScreenState extends State<ChatThreadsScreen> {
                     ),
                     itemBuilder: (context, index) {
                       final thread = _threads[index];
-                      final name = (thread["counterpartName"] ?? "Conversation")
-                          .toString();
                       final message =
                           (thread["lastMessage"] ?? "No messages yet")
                               .toString();
                       final unread = int.tryParse(
                               (thread["unreadCount"] ?? "0").toString()) ??
                           0;
-                      final avatar =
-                          (thread["counterpartAvatar"] ?? "").toString().trim();
+                      final avatar = ApiService.resolveMediaUrl(
+                            (thread["counterpartAvatar"] ?? "").toString(),
+                          ) ??
+                          "";
+                      final rawName =
+                          (thread["counterpartName"] ?? "Doctor").toString();
+                      final displayName = rawName.trim().isEmpty
+                          ? "Doctor"
+                          : rawName.toLowerCase().startsWith("dr.")
+                              ? rawName
+                              : "Dr. $rawName";
 
                       return ListTile(
                         onTap: () => _openThread(thread),
@@ -160,11 +176,11 @@ class _ChatThreadsScreenState extends State<ChatThreadsScreen> {
                           backgroundImage:
                               avatar.isNotEmpty ? NetworkImage(avatar) : null,
                           child: avatar.isEmpty
-                              ? const Icon(Icons.person_outline_rounded)
+                              ? const Icon(Icons.medical_services_rounded)
                               : null,
                         ),
                         title: Text(
-                          name,
+                          displayName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontWeight: FontWeight.w600),

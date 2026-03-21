@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hello/api_service.dart';
+import 'package:hello/services/secure_token_storage.dart';
 import 'global_notification_handler.dart';
 
 class FCMService {
@@ -83,7 +84,7 @@ class FCMService {
   Future<void> _saveTokenToBackend(String token) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final authToken = prefs.getString('authToken');
+      final authToken = await SecureTokenStorage.getToken();
       final userId = prefs.getString('userId');
 
       if (kDebugMode) {

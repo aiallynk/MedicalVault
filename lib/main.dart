@@ -17,8 +17,10 @@ import 'core/navigation/app_route_observer.dart';
 import 'core/theme/theme.dart';
 import 'firebase_options.dart';
 import 'localization/app_localizations.dart';
+import 'providers/dashboard_prefetch_provider.dart';
 import 'providers/language_provider.dart';
 import 'screens/splash_screen.dart';
+import 'screens/welcome_screen.dart';
 import 'widgets/ai_floating_button.dart';
 
 export 'core/theme/app_theme.dart';
@@ -97,6 +99,7 @@ void main() async {
             customSecondaryColorValue: themeConfig.customSecondaryColorValue,
           ),
         ),
+        ChangeNotifierProvider(create: (_) => DashboardPrefetchProvider()),
         ChangeNotifierProvider(create: (_) => LanguageProvider(initialLocale)),
       ],
       child: const MyApp(),
@@ -147,19 +150,7 @@ class MyApp extends StatelessWidget {
               value: systemUiStyle,
               child: DraggableAIAssistantOverlay(
                 routeNameListenable: appRouteObserver.currentRouteName,
-                hiddenRouteNames: const {
-                  '/',
-                  '/splash',
-                  '/welcome',
-                  '/login',
-                  '/signup',
-                  '/verify',
-                  '/verify_email',
-                  '/forgot_password',
-                  '/terms',
-                  '/privacy_policy',
-                  '/login/google',
-                },
+                visibleRouteNames: const {'/dashboard'},
                 child: child ?? const SizedBox.shrink(),
               ),
             );
@@ -393,6 +384,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (_pendingToken != null) {
       return VerifyEmailPage(incomingToken: _pendingToken);
     }
-    return const WelcomeScreen();
+    return const PremiumWelcomeScreen();
   }
 }

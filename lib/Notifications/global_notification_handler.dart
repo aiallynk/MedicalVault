@@ -427,10 +427,14 @@ class GlobalNotificationHandler {
           data['counterpartId']?.toString().trim() ??
           '';
       final counterpartName = data['senderName']?.toString().trim() ?? '';
+      final counterpartAvatar = data['senderAvatar']?.toString().trim() ??
+          data['counterpartAvatar']?.toString().trim() ??
+          '';
       final sessionId = data['sessionId']?.toString().trim() ?? '';
       return () => _openMessages(
             counterpartId: counterpartId,
             counterpartName: counterpartName,
+            counterpartAvatarUrl: counterpartAvatar,
             sessionId: sessionId,
           );
     }
@@ -474,6 +478,7 @@ class GlobalNotificationHandler {
   void _openMessages({
     String counterpartId = '',
     String counterpartName = '',
+    String counterpartAvatarUrl = '',
     String sessionId = '',
   }) {
     if (_globalContext == null || !_globalContext!.mounted) return;
@@ -495,6 +500,7 @@ class GlobalNotificationHandler {
               counterpartName.isEmpty ? 'Conversation' : counterpartName,
           // Flutter app is patient-side. Direct-chat counterpart is doctor.
           counterpartRole: 'doctor',
+          counterpartAvatarUrl: counterpartAvatarUrl,
           sessionId: sessionId.isEmpty ? null : sessionId,
         ),
       ),

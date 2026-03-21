@@ -22,7 +22,7 @@ class AIFloatingButton extends StatelessWidget {
   const AIFloatingButton({
     super.key,
     this.onPressed,
-    this.size = 84,
+    this.size = 112,
   });
 
   @override
@@ -50,12 +50,14 @@ class DraggableAIAssistantOverlay extends StatefulWidget {
   final Widget child;
   final ValueListenable<String?>? routeNameListenable;
   final Set<String> hiddenRouteNames;
+  final Set<String> visibleRouteNames;
 
   const DraggableAIAssistantOverlay({
     super.key,
     required this.child,
     this.routeNameListenable,
     this.hiddenRouteNames = const <String>{},
+    this.visibleRouteNames = const <String>{},
   });
 
   @override
@@ -65,7 +67,7 @@ class DraggableAIAssistantOverlay extends StatefulWidget {
 
 class _DraggableAIAssistantOverlayState
     extends State<DraggableAIAssistantOverlay> {
-  static const double _fabSize = 84;
+  static const double _fabSize = 112;
   static const double _padding = 8;
   static const double _dragThreshold = 8;
 
@@ -143,8 +145,15 @@ class _DraggableAIAssistantOverlayState
 
   Offset _defaultOffset(Size size, EdgeInsets insets) {
     final x = size.width - _fabSize - 12;
-    final y = size.height - _fabSize - insets.bottom - 110;
+    final y = size.height - _fabSize - insets.bottom - 130;
     return _clampOffset(Offset(x, y), size, insets);
+  }
+
+  bool _shouldShowFabForRoute(String? routeName) {
+    if (widget.visibleRouteNames.isNotEmpty) {
+      return routeName != null && widget.visibleRouteNames.contains(routeName);
+    }
+    return routeName == null || !widget.hiddenRouteNames.contains(routeName);
   }
 
   Widget _buildOverlay({
@@ -225,13 +234,14 @@ class _DraggableAIAssistantOverlayState
         }
 
         if (widget.routeNameListenable == null) {
-          return _buildOverlay(size: size, insets: insets, showFab: true);
+          final showFab = widget.visibleRouteNames.isEmpty;
+          return _buildOverlay(size: size, insets: insets, showFab: showFab);
         }
 
         return ValueListenableBuilder<String?>(
           valueListenable: widget.routeNameListenable!,
           builder: (context, routeName, child) {
-            final showFab = !widget.hiddenRouteNames.contains(routeName);
+            final showFab = _shouldShowFabForRoute(routeName);
             return _buildOverlay(size: size, insets: insets, showFab: showFab);
           },
         );

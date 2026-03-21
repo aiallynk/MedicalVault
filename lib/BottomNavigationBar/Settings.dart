@@ -1641,6 +1641,7 @@ class _SettingsPageState extends State<SettingsPage> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
+            settings: const RouteSettings(name: '/dashboard'),
             builder: (context) => Dashboard1(userData: userData),
           ),
         );
@@ -1762,6 +1763,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(
+                            settings: const RouteSettings(name: '/dashboard'),
                             builder: (context) =>
                                 Dashboard1(userData: userData),
                           ),

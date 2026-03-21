@@ -1,206 +1,179 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hello/api_service.dart';
-import 'package:hello/BottomNavigationBar/dashboard1.dart';
+import 'package:hello/Login_Signup/login_success_screen.dart';
 import 'package:hello/Notifications/fcm_service.dart';
+import 'package:hello/api_service.dart';
 import 'package:hello/core/theme/status_bar_helper.dart';
 import 'package:hello/localization/app_localizations.dart';
 import 'package:hello/services/app_update_service.dart';
+import 'package:hello/services/secure_token_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class SplashScreen extends StatefulWidget {
-  final Widget child;
-
   const SplashScreen({
     super.key,
     required this.child,
   });
+
+  final Widget child;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
+  static const Duration _minSplashDuration = Duration(milliseconds: 2700);
+
   final AppUpdateService _appUpdateService = AppUpdateService();
-  late AnimationController _fadeController;
-  late AnimationController _scaleController;
-  late AnimationController _gradientController;
-  late Animation<double> _fadeAnimation;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _gradientAnimation;
+
+  late final AnimationController _timelineController = AnimationController(
+    vsync: this,
+    duration: _minSplashDuration,
+  )..forward();
 
   bool _isDisposed = false;
   bool _didNavigate = false;
-  String _loadingText = 'Loading...';
+  String _statusText = 'Preparing secure experience...';
 
   @override
   void initState() {
     super.initState();
-
-    // Fade animation for text
-    _fadeController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    );
-
-    // Scale animation for logo
-    _scaleController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    );
-
-    // Gradient animation
-    _gradientController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2000),
-    )..repeat(reverse: true);
-
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _fadeController,
-        curve: Curves.easeInOut,
-      ),
-    );
-
-    _scaleAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _scaleController,
-        curve: Curves.elasticOut,
-      ),
-    );
-
-    _gradientAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _gradientController,
-        curve: Curves.easeInOut,
-      ),
-    );
-
-    _startAnimations();
+    _startSplashFlow();
   }
 
-  Future<bool> _checkAuthAndPrefetch() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('authToken');
-
-      if (token == null || token.isEmpty) {
-        // No token, go to welcome screen
-        return false;
-      }
-
-      // Update loading text
-      _setLoadingText('Checking authentication...');
-
-      // Validate token by calling /me endpoint
-      final userData = await ApiService.me();
-
-      if (userData != null && mounted) {
-        await prefs.setString('userData', jsonEncode(userData));
-        await prefs.setString(
-          'userId',
-          userData['id']?.toString() ?? userData['_id']?.toString() ?? '',
-        );
-        await prefs.setString('email', userData['email']?.toString() ?? '');
-        await prefs.setString(
-            'name', userData['name']?.toString() ?? 'Patient');
-
-        _setLoadingText('Loading doctors, alerts and ads...');
-        await _warmupDashboardContent(userData);
-
-        // Register FCM token in parallel so navigation is not delayed.
-        FCMService().registerToken().catchError((e) {
-          debugPrint('FCM registration error: $e');
-        });
-
-        if (!_isDisposed && mounted) {
-          await Future.delayed(const Duration(milliseconds: 250));
-          if (!_isDisposed && mounted) {
-            _navigateToDashboard(userData);
-            return true;
-          }
-        }
-      } else {
-        // Token invalid, clear auth data
-        await prefs.remove('authToken');
-        await prefs.remove('userData');
-        await prefs.remove('userId');
-      }
-    } catch (e) {
-      debugPrint('Auth check error: $e');
-      // Clear potentially corrupted auth data
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('authToken');
-      await prefs.remove('userData');
-      await prefs.remove('userId');
-    }
-    return false;
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _timelineController.dispose();
+    super.dispose();
   }
 
-  Future<void> _warmupDashboardContent(Map<String, dynamic> userData) async {
-    final userId =
-        userData['id']?.toString() ?? userData['_id']?.toString() ?? '';
+  Future<void> _startSplashFlow() async {
+    final minimumDurationFuture = Future<void>.delayed(_minSplashDuration);
+    final bootstrapFuture = _bootstrapInParallel();
+    final updateGateFuture = _handleUpdateGate();
 
-    final warmupTasks = <Future<void>>[
-      _runWarmupTask('doctors', () => ApiService.fetchPastAppointments()),
-      _runWarmupTask(
-        'advertisements',
-        () => ApiService.fetchAdvertisements(placement: 'APP_DASHBOARD'),
-      ),
-      _runWarmupTask('alerts', () => ApiService.fetchUiConfig()),
-    ];
+    await minimumDurationFuture;
 
-    if (userId.isNotEmpty) {
-      warmupTasks.add(
-        _runWarmupTask('documents', () => ApiService.fetchMyDocs(userId)),
-      );
+    final canContinue = await updateGateFuture;
+    if (!canContinue || !mounted || _isDisposed || _didNavigate) {
+      return;
     }
 
+    _SplashBootstrapResult bootstrap;
     try {
-      await Future.wait(warmupTasks, eagerError: false).timeout(
-        const Duration(milliseconds: 1400),
-        onTimeout: () => <void>[],
+      bootstrap = await bootstrapFuture.timeout(
+        const Duration(milliseconds: 900),
+        onTimeout: () => const _SplashBootstrapResult.unauthenticated(),
       );
     } catch (_) {
-      // Continue to dashboard even if warmup misses SLA.
+      bootstrap = const _SplashBootstrapResult.unauthenticated();
+    }
+
+    if (!mounted || _isDisposed || _didNavigate) {
+      return;
+    }
+
+    if (bootstrap.isAuthenticated && bootstrap.userData != null) {
+      _navigateToLoginSuccess(bootstrap.userData!);
+    } else {
+      _navigateToWelcome();
     }
   }
 
-  Future<void> _runWarmupTask(
-    String label,
-    Future<dynamic> Function() task,
-  ) async {
+  Future<_SplashBootstrapResult> _bootstrapInParallel() async {
+    final configFuture =
+        ApiService.fetchUiConfig(forceRefresh: false).catchError((_) {
+      return null;
+    });
+
     try {
-      await task().timeout(const Duration(seconds: 7));
-      debugPrint('Warmup complete: $label');
+      final prefs = await SharedPreferences.getInstance();
+      final token = await SecureTokenStorage.getToken();
+      if (token == null || token.isEmpty) {
+        await configFuture;
+        return const _SplashBootstrapResult.unauthenticated();
+      }
+
+      _setStatus('Validating secure session...');
+
+      final userData = await ApiService.me().timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => null,
+      );
+
+      await configFuture;
+
+      if (userData == null || userData.isEmpty) {
+        await SecureTokenStorage.clearToken();
+        await prefs.remove('userData');
+        await prefs.remove('userId');
+        return const _SplashBootstrapResult.unauthenticated();
+      }
+
+      await prefs.setString('userData', jsonEncode(userData));
+      await prefs.setString(
+        'userId',
+        userData['id']?.toString() ?? userData['_id']?.toString() ?? '',
+      );
+      await prefs.setString('email', userData['email']?.toString() ?? '');
+      await prefs.setString('name', userData['name']?.toString() ?? 'Patient');
+
+      _setStatus('Warming up your vault...');
+
+      unawaited(
+        FCMService().registerToken().catchError((e) {
+          debugPrint('FCM registration error: $e');
+        }),
+      );
+
+      return _SplashBootstrapResult.authenticated(
+        Map<String, dynamic>.from(userData),
+      );
     } catch (e) {
-      debugPrint('Warmup skipped ($label): $e');
+      debugPrint('Splash bootstrap failed: $e');
+      return const _SplashBootstrapResult.unauthenticated();
     }
   }
 
-  void _setLoadingText(String value) {
+  void _setStatus(String value) {
     if (!mounted || _isDisposed) return;
     setState(() {
-      _loadingText = value;
+      _statusText = value;
     });
   }
 
-  void _navigateToDashboard(Map<String, dynamic> userData) {
+  void _navigateToLoginSuccess(Map<String, dynamic> userData) {
     if (_didNavigate || !mounted || _isDisposed) return;
     _didNavigate = true;
+
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
-        settings: const RouteSettings(name: '/dashboard'),
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            Dashboard1(userData: userData),
-        transitionDuration: const Duration(milliseconds: 600),
+        settings: const RouteSettings(name: '/login_success'),
+        transitionDuration: const Duration(milliseconds: 460),
+        pageBuilder: (_, __, ___) => LoginSuccessScreen(
+          userData: userData,
+          title: 'Welcome Back',
+          subtitle: 'Securing your dashboard...',
+          clearStackOnComplete: true,
+        ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          );
+
           return FadeTransition(
-            opacity: animation,
-            child: child,
+            opacity: curved,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.96, end: 1).animate(curved),
+              child: child,
+            ),
           );
         },
       ),
@@ -210,15 +183,24 @@ class _SplashScreenState extends State<SplashScreen>
   void _navigateToWelcome() {
     if (_didNavigate || !mounted || _isDisposed) return;
     _didNavigate = true;
+
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         settings: const RouteSettings(name: '/welcome'),
-        pageBuilder: (context, animation, secondaryAnimation) => widget.child,
-        transitionDuration: const Duration(milliseconds: 600),
+        transitionDuration: const Duration(milliseconds: 460),
+        pageBuilder: (_, __, ___) => widget.child,
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          );
+
           return FadeTransition(
-            opacity: animation,
-            child: child,
+            opacity: curved,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.97, end: 1).animate(curved),
+              child: child,
+            ),
           );
         },
       ),
@@ -226,7 +208,6 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<bool> _handleUpdateGate() async {
-    _setLoadingText('Checking for updates...');
     final checkResult =
         await _appUpdateService.checkForUpdate(ignoreSkipWindow: true);
 
@@ -349,7 +330,7 @@ class _SplashScreenState extends State<SplashScreen>
                               await _appUpdateService.skipVersionFor24Hours(
                                 info.latestVersion,
                               );
-                              if (!mounted) return;
+                              if (!mounted || !dialogContext.mounted) return;
                               Navigator.of(dialogContext).pop(true);
                             },
                       child: Text(l10n.t('update.action.skip')),
@@ -371,7 +352,7 @@ class _SplashScreenState extends State<SplashScreen>
                               onProgress: (value) {
                                 if (!mounted) return;
                                 setDialogState(() {
-                                  progress = value;
+                                  progress = _clampUnit(value);
                                 });
                               },
                             );
@@ -386,6 +367,7 @@ class _SplashScreenState extends State<SplashScreen>
 
                             if (installResult.isSuccess) {
                               if (installResult.installCompleted) {
+                                if (!dialogContext.mounted) return;
                                 Navigator.of(dialogContext).pop(true);
                                 await Future.delayed(
                                   const Duration(milliseconds: 250),
@@ -397,14 +379,17 @@ class _SplashScreenState extends State<SplashScreen>
                               }
 
                               if (forceUpdate) {
+                                if (!dialogContext.mounted) return;
                                 Navigator.of(dialogContext).pop(false);
                                 await Future.delayed(
-                                    const Duration(milliseconds: 250));
+                                  const Duration(milliseconds: 250),
+                                );
                                 if (!_isDisposed) {
                                   SystemNavigator.pop();
                                 }
                                 return;
                               }
+                              if (!dialogContext.mounted) return;
                               Navigator.of(dialogContext).pop(true);
                             }
                           },
@@ -428,46 +413,13 @@ class _SplashScreenState extends State<SplashScreen>
     return proceed ?? true;
   }
 
-  void _startAnimations() async {
-    // Start scale animation
-    await Future.delayed(const Duration(milliseconds: 100));
-    if (!_isDisposed) {
-      _scaleController.forward();
-    }
-
-    // Start fade animation
-    await Future.delayed(const Duration(milliseconds: 300));
-    if (!_isDisposed) {
-      _fadeController.forward();
-    }
-
-    final canContinue = await _handleUpdateGate();
-    if (!canContinue || _isDisposed || !mounted) {
-      return;
-    }
-
-    // Check authentication and prefetch data
-    final isAuthenticated = await _checkAuthAndPrefetch();
-    if (isAuthenticated || _didNavigate) return;
-
-    // If not authenticated, navigate to welcome screen after minimum splash duration
-    if (!_isDisposed && mounted) {
-      await Future.delayed(
-          const Duration(milliseconds: 1500)); // Minimum splash duration
-      if (!_isDisposed && mounted) {
-        _navigateToWelcome();
-      }
-    }
+  double _segment(double value, double start, double end) {
+    if (value <= start) return 0;
+    if (value >= end) return 1;
+    return (value - start) / (end - start);
   }
 
-  @override
-  void dispose() {
-    _isDisposed = true;
-    _fadeController.dispose();
-    _scaleController.dispose();
-    _gradientController.dispose();
-    super.dispose();
-  }
+  double _clampUnit(double value) => value.clamp(0.0, 1.0).toDouble();
 
   @override
   Widget build(BuildContext context) {
@@ -482,218 +434,274 @@ class _SplashScreenState extends State<SplashScreen>
       ),
       child: Scaffold(
         body: AnimatedBuilder(
-          animation: _gradientAnimation,
+          animation: _timelineController,
           builder: (context, child) {
-            return Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: isDark
-                      ? [
-                          // Dark theme gradient
-                          Color.lerp(
-                            const Color(0xFF0A0E27),
-                            const Color(0xFF1A1F3A),
-                            _gradientAnimation.value,
-                          )!,
-                          Color.lerp(
-                            const Color(0xFF1A1F3A),
-                            const Color(0xFF2D3561),
-                            _gradientAnimation.value,
-                          )!,
-                          Color.lerp(
-                            const Color(0xFF2D3561),
-                            const Color(0xFF1A1F3A),
-                            _gradientAnimation.value,
-                          )!,
-                        ]
-                      : [
-                          // Light theme gradient
-                          Color.lerp(
-                            const Color(0xFF4A90E2),
-                            const Color(0xFF5BA3F5),
-                            _gradientAnimation.value,
-                          )!,
-                          Color.lerp(
-                            const Color(0xFF50E3C2),
-                            const Color(0xFF6EF4D8),
-                            _gradientAnimation.value,
-                          )!,
-                          Color.lerp(
-                            const Color(0xFF6EF4D8),
-                            const Color(0xFF50E3C2),
-                            _gradientAnimation.value,
-                          )!,
-                        ],
-                  stops: const [0.0, 0.5, 1.0],
-                ),
-              ),
-              child: SafeArea(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Animated Logo/Icon with glow effect
-                      ScaleTransition(
-                        scale: _scaleAnimation,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            // Outer glow
-                            Container(
-                              width: 140,
-                              height: 140,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.white.withOpacity(0.1),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.white.withOpacity(0.3),
-                                    blurRadius: 30,
-                                    spreadRadius: 10,
-                                  ),
-                                ],
-                              ),
+            final t = _timelineController.value;
+
+            final phaseOne =
+                _clampUnit(Curves.easeOut.transform(_segment(t, 0.0, 0.30)));
+            final phaseTwoRaw =
+                Curves.easeOutBack.transform(_segment(t, 0.26, 0.70));
+            final phaseTwoOpacity = _clampUnit(phaseTwoRaw);
+            final phaseThree =
+                _clampUnit(Curves.easeOut.transform(_segment(t, 0.66, 0.96)));
+
+            final glowPulse = 0.94 + (math.sin(t * math.pi * 4) * 0.06);
+
+            final topColor = Color.lerp(
+              isDark ? const Color(0xFF060B1A) : const Color(0xFFECF5FF),
+              isDark ? const Color(0xFF112244) : const Color(0xFFDCEEFF),
+              0.45 + (math.sin(t * math.pi * 2) * 0.18),
+            )!;
+            final bottomColor = Color.lerp(
+              isDark ? const Color(0xFF0B1732) : const Color(0xFFCEE8FF),
+              isDark ? const Color(0xFF0E2649) : const Color(0xFFBFDFFF),
+              0.5 + (math.cos(t * math.pi * 2) * 0.2),
+            )!;
+
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final width = constraints.maxWidth;
+                final sweepProgress = Curves.easeInOut.transform(
+                  _segment(t, 0.02, 0.36),
+                );
+
+                return Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Opacity(
+                        opacity: phaseOne,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [topColor, bottomColor],
                             ),
-                            // Main container
-                            Container(
-                              width: 120,
-                              height: 120,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [
-                                    Colors.white.withOpacity(0.3),
-                                    Colors.white.withOpacity(0.1),
-                                  ],
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.3),
-                                    blurRadius: 20,
-                                    spreadRadius: 5,
-                                  ),
-                                ],
-                              ),
-                              child: Center(
-                                child: Icon(
-                                  Icons.medical_services_rounded,
-                                  size: 70,
-                                  color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                      color: Colors.black.withOpacity(0.3),
-                                      blurRadius: 10,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 40),
-
-                      // Animated "Medical Vault" Text
-                      FadeTransition(
-                        opacity: _fadeAnimation,
-                        child: Column(
-                          children: [
-                            // Text with gradient and shadow
-                            ShaderMask(
-                              shaderCallback: (bounds) => LinearGradient(
+                    ),
+                    Positioned.fill(
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: _SplashParticlesPainter(
+                            progress: t,
+                            isDark: isDark,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 0,
+                      bottom: 0,
+                      left: -200 + ((width + 280) * sweepProgress),
+                      child: IgnorePointer(
+                        child: Opacity(
+                          opacity: 0.17 * phaseOne,
+                          child: Container(
+                            width: 180,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.centerLeft,
+                                end: Alignment.centerRight,
                                 colors: [
-                                  Colors.white,
-                                  Colors.white.withOpacity(0.9),
-                                  Colors.white.withOpacity(0.8),
+                                  Colors.white.withValues(alpha: 0),
+                                  Colors.white.withValues(alpha: 0.60),
+                                  Colors.white.withValues(alpha: 0),
                                 ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                stops: const [0.0, 0.5, 1.0],
-                              ).createShader(bounds),
-                              child: const Text(
-                                'Medical Vault',
-                                style: TextStyle(
-                                  fontSize: 42,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                  letterSpacing: 1.5,
-                                  shadows: [
-                                    Shadow(
-                                      color: Colors.black26,
-                                      blurRadius: 10,
-                                      offset: Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
                               ),
                             ),
-                            const SizedBox(height: 12),
-                            AnimatedBuilder(
-                              animation: _fadeAnimation,
-                              builder: (context, child) {
-                                return Opacity(
-                                  opacity: _fadeAnimation.value * 0.8,
-                                  child: Text(
-                                    'Your Health, Your Vault',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      color: Colors.white.withOpacity(0.9),
-                                      letterSpacing: 0.5,
-                                      fontWeight: FontWeight.w300,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
+                          ),
                         ),
                       ),
-
-                      const SizedBox(height: 60),
-
-                      // Loading indicator with text
-                      FadeTransition(
-                        opacity: _fadeAnimation,
+                    ),
+                    SafeArea(
+                      child: Center(
                         child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            SizedBox(
-                              width: 50,
-                              height: 50,
-                              child: CircularProgressIndicator(
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.white.withOpacity(0.8),
+                            Transform.rotate(
+                              angle: (1 - phaseTwoRaw) * 0.08,
+                              child: Transform.scale(
+                                scale: 0.78 + (phaseTwoRaw * 0.22),
+                                child: Opacity(
+                                  opacity: phaseTwoOpacity,
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      Transform.scale(
+                                        scale: glowPulse,
+                                        child: Container(
+                                          width: 136,
+                                          height: 136,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: Colors.white.withValues(
+                                              alpha: isDark ? 0.09 : 0.22,
+                                            ),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: const Color(0xFF5BD6FF)
+                                                    .withValues(
+                                                        alpha: isDark
+                                                            ? 0.2
+                                                            : 0.28),
+                                                blurRadius: 30,
+                                                spreadRadius: 6,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      Container(
+                                        width: 108,
+                                        height: 108,
+                                        decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(30),
+                                          color: Colors.white
+                                              .withValues(alpha: 0.14),
+                                          border: Border.all(
+                                            color: Colors.white
+                                                .withValues(alpha: 0.32),
+                                          ),
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(18),
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(22),
+                                            child: Image.asset(
+                                              'assets/icon/app_icon.png',
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) {
+                                                return const Icon(
+                                                  Icons
+                                                      .health_and_safety_rounded,
+                                                  color: Colors.white,
+                                                  size: 46,
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                                strokeWidth: 3,
                               ),
                             ),
-                            const SizedBox(height: 16),
-                            AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 300),
+                            const SizedBox(height: 22),
+                            Opacity(
+                              opacity: phaseTwoOpacity,
                               child: Text(
-                                _loadingText,
-                                key: ValueKey<String>(_loadingText),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.white.withOpacity(0.9),
-                                  fontWeight: FontWeight.w400,
+                                'Medical Vault',
+                                style: theme.textTheme.headlineMedium?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            Transform.translate(
+                              offset: Offset(0, (1 - phaseThree) * 18),
+                              child: Opacity(
+                                opacity: phaseThree,
+                                child: Text(
+                                  'Your Health. Secured.',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    color: Colors.white.withValues(alpha: 0.94),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 26),
+                            Opacity(
+                              opacity: phaseThree,
+                              child: Text(
+                                _statusText,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: Colors.white.withValues(alpha: 0.84),
+                                  letterSpacing: 0.1,
                                 ),
                               ),
                             ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
+                    ),
+                  ],
+                );
+              },
             );
           },
         ),
       ),
     );
   }
+}
+
+class _SplashParticlesPainter extends CustomPainter {
+  _SplashParticlesPainter({
+    required this.progress,
+    required this.isDark,
+  });
+
+  final double progress;
+  final bool isDark;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final baseColor =
+        isDark ? const Color(0xFF86C6FF) : const Color(0xFF49A7F5);
+
+    for (var i = 0; i < 18; i++) {
+      final baseX = ((i * 53) % 100) / 100;
+      final baseY = ((i * 71) % 100) / 100;
+      final driftX = math.sin((progress * math.pi * 2) + i) * 0.04;
+      final travelY = (baseY + (progress * 0.26) + (i * 0.01)) % 1.0;
+      final radius = 1.5 + ((i % 4) * 0.8);
+      final alpha =
+          (0.05 + ((math.sin((progress * math.pi * 2) + (i * 0.6)) + 1) * 0.04))
+              .clamp(0.03, 0.16);
+
+      final paint = Paint()..color = baseColor.withValues(alpha: alpha);
+
+      canvas.drawCircle(
+        Offset(
+          (baseX + driftX).clamp(0.0, 1.0) * size.width,
+          travelY * size.height,
+        ),
+        radius,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SplashParticlesPainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.isDark != isDark;
+  }
+}
+
+class _SplashBootstrapResult {
+  const _SplashBootstrapResult._({
+    required this.isAuthenticated,
+    this.userData,
+  });
+
+  const _SplashBootstrapResult.unauthenticated()
+      : this._(isAuthenticated: false);
+
+  const _SplashBootstrapResult.authenticated(Map<String, dynamic> data)
+      : this._(
+          isAuthenticated: true,
+          userData: data,
+        );
+
+  final bool isAuthenticated;
+  final Map<String, dynamic>? userData;
 }

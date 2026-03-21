@@ -2,12 +2,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:hello/Notifications/fcm_service.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http_parser/http_parser.dart';
 import 'Document_model.dart';
 import 'package:dio/dio.dart';
 import 'package:hello/helpers/google_auth_helper.dart';
+import 'package:hello/services/secure_token_storage.dart';
 
 class ApiService {
   static const String _defaultApiBaseUrl =
@@ -23,12 +26,52 @@ class ApiService {
   static const String patientAppointmentsUrl = "$baseUrl/patient/appointments";
   static const String publicUrl = "$baseUrl/public";
 
+  static String get _apiOrigin {
+    var parsed = Uri.tryParse(baseUrl) ?? Uri.parse(_defaultApiBaseUrl);
+    if (parsed.host.isEmpty) {
+      parsed = Uri.parse(_defaultApiBaseUrl);
+    }
+    final portPart = parsed.hasPort && parsed.port > 0 ? ":${parsed.port}" : "";
+    return "${parsed.scheme}://${parsed.host}$portPart";
+  }
+
+  static String? resolveMediaUrl(String? rawUrl) {
+    final value = rawUrl?.trim() ?? "";
+    if (value.isEmpty) return null;
+
+    if (value.startsWith("data:image/")) return value;
+
+    final parsed = Uri.tryParse(value);
+    if (parsed != null &&
+        parsed.hasScheme &&
+        (parsed.scheme == "http" || parsed.scheme == "https") &&
+        parsed.host.isNotEmpty) {
+      return value;
+    }
+
+    if (value.startsWith("/uploads/")) {
+      return "$_apiOrigin$value";
+    }
+    if (value.startsWith("uploads/")) {
+      return "$_apiOrigin/$value";
+    }
+
+    // Unknown relative keys (for example raw S3 keys) are intentionally ignored
+    // so Flutter doesn't try to treat them as local file:// URIs.
+    return null;
+  }
+
   static const Duration _publicCacheTtl = Duration(minutes: 5);
   static const Duration _appointmentsCacheTtl = Duration(minutes: 3);
+  static const Duration _publicGeoCacheTtl = Duration(minutes: 20);
+  static const String _publicGeoCountryKey = "public_geo_country";
+  static const String _publicGeoStateKey = "public_geo_state";
+  static const String _publicGeoRegionKey = "public_geo_region";
   static final Map<String, _TimedCacheEntry<List<Map<String, dynamic>>>>
       _adsCache = {};
   static _TimedCacheEntry<Map<String, dynamic>>? _uiConfigCache;
   static _TimedCacheEntry<List<dynamic>>? _pastAppointmentsCache;
+  static _TimedCacheEntry<_PublicGeoScope>? _publicGeoScopeCache;
 
   static void invalidatePublicConfigCache({
     bool ads = true,
@@ -77,10 +120,211 @@ class ApiService {
     return uri.replace(queryParameters: query);
   }
 
+  static String _normalizeGeoPart(dynamic value, {int maxLength = 80}) {
+    final normalized = (value ?? "").toString().trim().toUpperCase();
+    if (normalized.isEmpty) return "";
+    return normalized.substring(
+        0, normalized.length > maxLength ? maxLength : normalized.length);
+  }
+
+  static _PublicGeoScope _extractGeoScopeFromUserData(
+    Map<String, dynamic> userData,
+  ) {
+    String readValue(List<String> keys) {
+      for (final key in keys) {
+        final dynamic value = userData[key];
+        if (value is String && value.trim().isNotEmpty) {
+          return value.trim();
+        }
+      }
+      return "";
+    }
+
+    final nestedLocation = userData["location"];
+    final locationMap = nestedLocation is Map
+        ? nestedLocation.map(
+            (key, value) => MapEntry(key.toString(), value),
+          )
+        : const <String, dynamic>{};
+
+    String readFromNested(List<String> keys) {
+      for (final key in keys) {
+        final dynamic value = locationMap[key];
+        if (value is String && value.trim().isNotEmpty) {
+          return value.trim();
+        }
+      }
+      return "";
+    }
+
+    final countryValue =
+        readValue(["country", "countryCode", "isoCountryCode"]);
+    final stateValue = readValue(["state", "province", "administrativeArea"]);
+    final regionValue = readValue(["region", "district", "city", "locality"]);
+
+    final country = _normalizeGeoPart(
+      countryValue.isNotEmpty
+          ? countryValue
+          : readFromNested(["country", "countryCode", "isoCountryCode"]),
+    );
+    final state = _normalizeGeoPart(
+      stateValue.isNotEmpty
+          ? stateValue
+          : readFromNested(["state", "province", "administrativeArea"]),
+    );
+    final region = _normalizeGeoPart(
+      regionValue.isNotEmpty
+          ? regionValue
+          : readFromNested(["region", "district", "city", "locality"]),
+    );
+
+    return _PublicGeoScope(
+      country: country,
+      state: state,
+      region: region,
+    );
+  }
+
+  static Future<_PublicGeoScope> _resolveDeviceGeoScope() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return const _PublicGeoScope.empty();
+
+      final permission = await Geolocator.checkPermission();
+      if (permission != LocationPermission.always &&
+          permission != LocationPermission.whileInUse) {
+        return const _PublicGeoScope.empty();
+      }
+
+      Position? position;
+      try {
+        position = await Geolocator.getLastKnownPosition();
+      } catch (_) {
+        position = null;
+      }
+
+      if (position == null) {
+        try {
+          position = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.low,
+          ).timeout(const Duration(seconds: 2));
+        } catch (_) {
+          return const _PublicGeoScope.empty();
+        }
+      }
+
+      final placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      ).timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => const <Placemark>[],
+      );
+      if (placemarks.isEmpty) {
+        return const _PublicGeoScope.empty();
+      }
+
+      final place = placemarks.first;
+      final country = _normalizeGeoPart(
+        (place.isoCountryCode ?? "").trim().isNotEmpty
+            ? place.isoCountryCode
+            : place.country,
+      );
+      final state = _normalizeGeoPart(place.administrativeArea);
+      final region = _normalizeGeoPart(
+        (place.subAdministrativeArea ?? "").trim().isNotEmpty
+            ? place.subAdministrativeArea
+            : (place.locality ?? place.subLocality),
+      );
+
+      return _PublicGeoScope(
+        country: country,
+        state: state,
+        region: region,
+      );
+    } catch (_) {
+      return const _PublicGeoScope.empty();
+    }
+  }
+
+  static Future<void> _persistPublicGeoScope(
+    SharedPreferences prefs,
+    _PublicGeoScope scope,
+  ) async {
+    if (scope.country.isEmpty) {
+      await prefs.remove(_publicGeoCountryKey);
+    } else {
+      await prefs.setString(_publicGeoCountryKey, scope.country);
+    }
+    if (scope.state.isEmpty) {
+      await prefs.remove(_publicGeoStateKey);
+    } else {
+      await prefs.setString(_publicGeoStateKey, scope.state);
+    }
+    if (scope.region.isEmpty) {
+      await prefs.remove(_publicGeoRegionKey);
+    } else {
+      await prefs.setString(_publicGeoRegionKey, scope.region);
+    }
+  }
+
+  static Future<_PublicGeoScope> _resolvePublicGeoScope({
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh &&
+        _publicGeoScopeCache != null &&
+        _publicGeoScopeCache!.isValid) {
+      return _publicGeoScopeCache!.value;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final storedScope = _PublicGeoScope(
+      country: _normalizeGeoPart(prefs.getString(_publicGeoCountryKey)),
+      state: _normalizeGeoPart(prefs.getString(_publicGeoStateKey)),
+      region: _normalizeGeoPart(prefs.getString(_publicGeoRegionKey)),
+    );
+
+    var scope = storedScope;
+    final rawUserData = prefs.getString("userData");
+    if (rawUserData != null && rawUserData.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawUserData);
+        if (decoded is Map) {
+          final userMap = decoded.map(
+            (key, value) => MapEntry(key.toString(), value),
+          );
+          final userScope = _extractGeoScopeFromUserData(userMap);
+          scope = userScope.withFallback(scope);
+        }
+      } catch (_) {
+        // Ignore malformed userData cache.
+      }
+    }
+
+    final shouldResolveFromDevice = forceRefresh || scope.isEmpty;
+    if (shouldResolveFromDevice) {
+      final deviceScope = await _resolveDeviceGeoScope();
+      if (!deviceScope.isEmpty) {
+        scope = deviceScope.withFallback(scope);
+      }
+    }
+
+    if (scope.country != storedScope.country ||
+        scope.state != storedScope.state ||
+        scope.region != storedScope.region) {
+      await _persistPublicGeoScope(prefs, scope);
+    }
+
+    _publicGeoScopeCache = _TimedCacheEntry(
+      value: scope,
+      expiresAt: DateTime.now().add(_publicGeoCacheTtl),
+    );
+    return scope;
+  }
+
   // ---------------- TOKEN ----------------
   static Future<String?> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('authToken');
+    return SecureTokenStorage.getToken();
   }
 
   // ✅ Public method to get token for Dio requests
@@ -94,8 +338,9 @@ class ApiService {
       String token) async {
     try {
       final res = await http.post(
-        Uri.parse("$authUrl/verify?token=${Uri.encodeQueryComponent(token)}"),
+        Uri.parse("$authUrl/verify"),
         headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"token": token}),
       );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -244,7 +489,7 @@ class ApiService {
 
         if (token != null) {
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString("authToken", token);
+          await SecureTokenStorage.saveToken(token.toString());
           await prefs.setString("userId", user?['id']?.toString() ?? "");
           await prefs.setString("email", user?['email']?.toString() ?? "");
           await prefs.setString("name", user?['name']?.toString() ?? "Patient");
@@ -1034,7 +1279,7 @@ class ApiService {
 
         if (token != null) {
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString("authToken", token);
+          await SecureTokenStorage.saveToken(token.toString());
           await prefs.setString("userId", user['id']?.toString() ?? "");
           await prefs.setString("email", user['email']?.toString() ?? "");
           await prefs.setString("name", user['name']?.toString() ?? "Patient");
@@ -1254,12 +1499,17 @@ class ApiService {
       if (response.statusCode != 200) return [];
       final data = jsonDecode(response.body);
       if (data["success"] != true || data["threads"] is! List) return [];
-      return (data["threads"] as List)
-          .whereType<Map>()
-          .map((entry) => entry.map(
-                (key, value) => MapEntry(key.toString(), value),
-              ))
-          .toList(growable: false);
+      return (data["threads"] as List).whereType<Map>().map((entry) {
+        final mapped = entry.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+        return {
+          ...mapped,
+          "counterpartRole": "doctor",
+          "counterpartAvatar":
+              resolveMediaUrl(mapped["counterpartAvatar"]?.toString()) ?? "",
+        };
+      }).toList(growable: false);
     } catch (e) {
       print("fetchChatThreads error: $e");
       return [];
@@ -1349,7 +1599,9 @@ class ApiService {
     bool forceRefresh = false,
   }) async {
     final normalizedPlacement = (placement ?? "").trim().toUpperCase();
-    final cacheKey = normalizedPlacement.isEmpty ? "ALL" : normalizedPlacement;
+    final geoScope = await _resolvePublicGeoScope(forceRefresh: forceRefresh);
+    final cacheKey =
+        "${normalizedPlacement.isEmpty ? "ALL" : normalizedPlacement}|${geoScope.cacheKey}";
 
     if (!forceRefresh) {
       final cached = _adsCache[cacheKey];
@@ -1359,10 +1611,14 @@ class ApiService {
     }
 
     try {
+      final query = <String, String>{};
+      if (normalizedPlacement.isNotEmpty) {
+        query["placement"] = normalizedPlacement;
+      }
+      query.addAll(geoScope.toQueryParameters());
+
       final uri = Uri.parse("$publicUrl/ads").replace(
-        queryParameters: normalizedPlacement.isEmpty
-            ? null
-            : {"placement": normalizedPlacement},
+        queryParameters: query.isEmpty ? null : query,
       );
       final response = await http.get(uri).timeout(const Duration(seconds: 8));
       if (response.statusCode != 200) return [];
@@ -1477,10 +1733,14 @@ class ApiService {
   }) async {
     try {
       final normalizedCategory = (category ?? "").trim();
+      final geoScope = await _resolvePublicGeoScope();
+      final query = <String, String>{};
+      if (normalizedCategory.isNotEmpty) {
+        query["category"] = normalizedCategory;
+      }
+      query.addAll(geoScope.toQueryParameters());
       final uri = Uri.parse("$publicUrl/products").replace(
-        queryParameters: normalizedCategory.isEmpty
-            ? null
-            : {"category": normalizedCategory},
+        queryParameters: query.isEmpty ? null : query,
       );
       final response = await http.get(uri).timeout(const Duration(seconds: 8));
       if (response.statusCode != 200) return [];
@@ -1552,6 +1812,44 @@ class ApiService {
       return false;
     }
   }
+}
+
+class _PublicGeoScope {
+  final String country;
+  final String state;
+  final String region;
+
+  const _PublicGeoScope({
+    this.country = "",
+    this.state = "",
+    this.region = "",
+  });
+
+  const _PublicGeoScope.empty()
+      : country = "",
+        state = "",
+        region = "";
+
+  bool get isEmpty => country.isEmpty && state.isEmpty && region.isEmpty;
+
+  _PublicGeoScope withFallback(_PublicGeoScope fallback) {
+    return _PublicGeoScope(
+      country: country.isNotEmpty ? country : fallback.country,
+      state: state.isNotEmpty ? state : fallback.state,
+      region: region.isNotEmpty ? region : fallback.region,
+    );
+  }
+
+  Map<String, String> toQueryParameters() {
+    final query = <String, String>{};
+    if (country.isNotEmpty) query["country"] = country;
+    if (state.isNotEmpty) query["state"] = state;
+    if (region.isNotEmpty) query["region"] = region;
+    return query;
+  }
+
+  String get cacheKey =>
+      "${country.isEmpty ? "*" : country}|${state.isEmpty ? "*" : state}|${region.isEmpty ? "*" : region}";
 }
 
 class _TimedCacheEntry<T> {

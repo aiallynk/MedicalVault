@@ -98,7 +98,7 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
         photoUrl = urlStr;
       }
     }
-    
+
     return CircleAvatar(
       radius: radius,
       backgroundColor: Theme.of(context).primaryColor,
@@ -297,6 +297,7 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
+            settings: const RouteSettings(name: '/dashboard'),
             builder: (context) => Dashboard1(userData: userData),
           ),
         );
@@ -327,8 +328,8 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            context.l10n.format('profileSwitcher.switchError',
-                {'error': errorMessage}),
+            context.l10n
+                .format('profileSwitcher.switchError', {'error': errorMessage}),
           ),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 4),
@@ -433,6 +434,7 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
                         Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(
+                            settings: const RouteSettings(name: '/dashboard'),
                             builder: (context) =>
                                 Dashboard1(userData: userData),
                           ),
@@ -440,8 +442,8 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
 
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text(context.l10n
-                                .format('profileSwitcher.switchSuccess', {
+                            content: Text(context.l10n.format(
+                                'profileSwitcher.switchSuccess', {
                               'name': profile['name']?.toString() ??
                                   context.l10n.t('profileSwitcher.unknown')
                             })),
@@ -453,10 +455,9 @@ class _ProfileSwitcherModalState extends State<ProfileSwitcherModal> {
                             e.toString().replaceAll('Exception: ', '');
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text(context.l10n
-                                .format('profileSwitcher.switchError', {
-                              'error': errorMessage
-                            })),
+                            content: Text(context.l10n.format(
+                                'profileSwitcher.switchError',
+                                {'error': errorMessage})),
                             backgroundColor: Colors.red,
                             duration: const Duration(seconds: 4),
                           ),

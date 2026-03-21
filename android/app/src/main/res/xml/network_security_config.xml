@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Disallow cleartext globally -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <!-- Allow only HTTPS for production API domains -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">backend-medicalvault.onrender.com</domain>
+        <domain includeSubdomains="true">health-vault-web.vercel.app</domain>
+    </domain-config>
+</network-security-config>

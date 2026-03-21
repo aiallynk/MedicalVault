@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../api_service.dart';
 import '../core/theme/app_radii.dart';
 import '../core/theme/app_spacing.dart';
 import 'app_text.dart';
@@ -63,7 +64,9 @@ class DoctorCard extends StatelessWidget {
       return null;
     }
 
-    return NetworkImage(source);
+    final resolvedSource = ApiService.resolveMediaUrl(source);
+    if (resolvedSource == null || resolvedSource.isEmpty) return null;
+    return NetworkImage(resolvedSource);
   }
 
   @override
@@ -105,7 +108,7 @@ class DoctorCard extends StatelessWidget {
                 backgroundImage: avatarImage,
                 child: avatarImage == null
                     ? Icon(
-                        Icons.person_rounded,
+                        Icons.medical_services_rounded,
                         color: highlighted ? Colors.white : primary,
                         size: compact ? 20 : 24,
                       )

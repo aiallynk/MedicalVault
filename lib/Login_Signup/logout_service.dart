@@ -1,5 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
+import 'package:hello/services/secure_token_storage.dart';
 
 class LogoutService {
   static final LogoutService _instance = LogoutService._internal();
@@ -14,6 +15,7 @@ class LogoutService {
       // Clear all authentication-related data
       await prefs.remove('token');
       await prefs.remove('authToken');
+      await SecureTokenStorage.clearToken();
       await prefs.remove('userData');
       await prefs.remove('userId');
       await prefs.remove('privacy_accepted');
@@ -40,7 +42,7 @@ class LogoutService {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
-      final authToken = prefs.getString('authToken');
+      final authToken = await SecureTokenStorage.getToken();
       return (token != null || authToken != null);
     } catch (e) {
       if (kDebugMode) {

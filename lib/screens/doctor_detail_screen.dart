@@ -56,6 +56,7 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
         'avatar'
       ],
     );
+    final resolvedImageUrl = ApiService.resolveMediaUrl(imageUrl) ?? '';
     final rating = (widget.doctor['rating'] as num?)?.toDouble() ?? 4.6;
     final appointmentCount = widget.appointments.length;
     final doctorId = _doctorField(['_id', 'id', 'doctorId']);
@@ -99,12 +100,12 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                               radius: 42,
                               backgroundColor:
                                   Colors.white.withValues(alpha: 0.26),
-                              backgroundImage: imageUrl.isNotEmpty
-                                  ? NetworkImage(imageUrl)
+                              backgroundImage: resolvedImageUrl.isNotEmpty
+                                  ? NetworkImage(resolvedImageUrl)
                                   : null,
-                              child: imageUrl.isEmpty
+                              child: resolvedImageUrl.isEmpty
                                   ? const Icon(
-                                      Icons.person_rounded,
+                                      Icons.medical_services_rounded,
                                       color: Colors.white,
                                       size: 44,
                                     )
@@ -309,6 +310,7 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                           onPressed: () => _openDoctorChat(
                             doctorId: doctorId,
                             doctorName: name,
+                            doctorAvatarUrl: resolvedImageUrl,
                             chatUrl: doctorChatUrl,
                             doctorEmail: doctorEmail,
                             doctorPhone: doctorPhone,
@@ -371,6 +373,7 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
   Future<void> _openDoctorChat({
     required String doctorId,
     required String doctorName,
+    required String doctorAvatarUrl,
     required String chatUrl,
     required String doctorEmail,
     required String doctorPhone,
@@ -383,6 +386,7 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
             counterpartId: doctorId.trim(),
             counterpartName: "Dr. $doctorName",
             counterpartRole: "doctor",
+            counterpartAvatarUrl: doctorAvatarUrl,
           ),
         ),
       );

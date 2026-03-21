@@ -8,6 +8,7 @@ class DirectChatScreen extends StatefulWidget {
   final String counterpartId;
   final String counterpartName;
   final String counterpartRole;
+  final String? counterpartAvatarUrl;
   final String? sessionId;
 
   const DirectChatScreen({
@@ -15,6 +16,7 @@ class DirectChatScreen extends StatefulWidget {
     required this.counterpartId,
     required this.counterpartName,
     required this.counterpartRole,
+    this.counterpartAvatarUrl,
     this.sessionId,
   });
 
@@ -186,16 +188,43 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
   @override
   Widget build(BuildContext context) {
     final subtitle = "Doctor chat";
+    final displayNameRaw = widget.counterpartName.trim();
+    final displayName = displayNameRaw.isEmpty
+        ? "Doctor"
+        : displayNameRaw.toLowerCase().startsWith("dr.")
+            ? displayNameRaw
+            : "Dr. $displayNameRaw";
+    final avatarUrl =
+        ApiService.resolveMediaUrl(widget.counterpartAvatarUrl) ?? "";
 
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        title: Row(
           children: [
-            Text(widget.counterpartName),
-            Text(
-              subtitle,
-              style: Theme.of(context).textTheme.bodySmall,
+            CircleAvatar(
+              radius: 18,
+              backgroundImage:
+                  avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+              child: avatarUrl.isEmpty
+                  ? const Icon(Icons.medical_services_rounded, size: 18)
+                  : null,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
           ],
         ),

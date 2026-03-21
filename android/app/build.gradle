@@ -12,10 +12,11 @@ def keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
 }
+def mapsApiKey = System.getenv("MAPS_API_KEY") ?: ""
 
 android {
     namespace = "com.example.hello"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = "27.3.13750724"
 
     compileOptions {
@@ -29,10 +30,11 @@ android {
 
     defaultConfig {
         applicationId = "com.example.hello"
-        minSdk = 23
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders += [MAPS_API_KEY: mapsApiKey]
     }
 
     signingConfigs {
