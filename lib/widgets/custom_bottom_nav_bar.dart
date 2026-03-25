@@ -139,51 +139,28 @@ class CustomBottomNavBar extends StatelessWidget {
 
             return SizedBox(
               height: barHeight,
-              child: reduceMotion
-                  ? DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: baseSurface,
-                        borderRadius: BorderRadius.circular(barHeight / 2),
-                        border: Border.all(
-                          color: accentColor.withValues(alpha: 0.32),
-                          width: outerBorderWidth,
-                        ),
-                      ),
-                      child: _buildItemsRow(
-                        selectedIndex: selectedIndex,
-                        itemWidths: itemWidths,
-                        itemHeight: itemHeight,
-                        itemGap: itemGap,
-                        contentHorizontalInset: contentHorizontalInset,
-                        contentVerticalInset: contentVerticalInset,
-                        accentColor: accentColor,
-                        activeFill: activeFill,
-                        inactiveIcon: inactiveIcon,
-                        surfaceColor: theme.colorScheme.surface,
-                      ),
-                    )
-                  : RepaintBoundary(
-                      child: CustomPaint(
-                        painter: _BottomShellPainter(
-                          fillColor: baseSurface,
-                          borderColor: accentColor.withValues(alpha: 0.32),
-                          borderWidth: outerBorderWidth,
-                          separatorXs: separatorCenters,
-                        ),
-                        child: _buildItemsRow(
-                          selectedIndex: selectedIndex,
-                          itemWidths: itemWidths,
-                          itemHeight: itemHeight,
-                          itemGap: itemGap,
-                          contentHorizontalInset: contentHorizontalInset,
-                          contentVerticalInset: contentVerticalInset,
-                          accentColor: accentColor,
-                          activeFill: activeFill,
-                          inactiveIcon: inactiveIcon,
-                          surfaceColor: theme.colorScheme.surface,
-                        ),
-                      ),
-                    ),
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _BottomShellPainter(
+                    fillColor: baseSurface,
+                    borderColor: accentColor.withValues(alpha: 0.32),
+                    borderWidth: outerBorderWidth,
+                    separatorXs: separatorCenters,
+                  ),
+                  child: _buildItemsRow(
+                    selectedIndex: selectedIndex,
+                    itemWidths: itemWidths,
+                    itemHeight: itemHeight,
+                    itemGap: itemGap,
+                    contentHorizontalInset: contentHorizontalInset,
+                    contentVerticalInset: contentVerticalInset,
+                    accentColor: accentColor,
+                    activeFill: activeFill,
+                    inactiveIcon: inactiveIcon,
+                    surfaceColor: theme.colorScheme.surface,
+                  ),
+                ),
+              ),
             );
           },
         ),

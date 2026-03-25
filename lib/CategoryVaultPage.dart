@@ -11,6 +11,7 @@ import 'Document_model.dart';
 import 'api_service.dart';
 import 'localization/app_localizations.dart';
 import 'UploadDocument.dart';
+import 'utils/timezone_utils.dart';
 
 class CategoryVaultPage extends StatefulWidget {
   final String category;
@@ -126,7 +127,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
       return docs;
     }
 
-    final now = DateTime.now();
+    final now = nowForContextTimeZone(context);
     int dayLimit;
 
     switch (selectedTimeFilter) {
@@ -151,7 +152,13 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
         return false; // Exclude documents without date
       }
 
-      final docDate = DateTime.tryParse(doc.date!);
+      final docDate = combineDateAndTimeForContext(
+        context,
+        doc.date!,
+        null,
+        defaultHour: 0,
+        defaultMinute: 0,
+      );
       if (docDate == null) {
         return false; // Exclude documents with invalid date
       }
@@ -251,16 +258,44 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
         break;
       case 'Oldest First':
         results.sort((a, b) {
-          final dateA = DateTime.tryParse(a.date ?? '') ?? DateTime(1970);
-          final dateB = DateTime.tryParse(b.date ?? '') ?? DateTime(1970);
+          final dateA = combineDateAndTimeForContext(
+                context,
+                a.date,
+                null,
+                defaultHour: 0,
+                defaultMinute: 0,
+              ) ??
+              DateTime.utc(1970);
+          final dateB = combineDateAndTimeForContext(
+                context,
+                b.date,
+                null,
+                defaultHour: 0,
+                defaultMinute: 0,
+              ) ??
+              DateTime.utc(1970);
           return dateA.compareTo(dateB); // Ascending
         });
         break;
       case 'Newest First':
       default:
         results.sort((a, b) {
-          final dateA = DateTime.tryParse(a.date ?? '') ?? DateTime(1970);
-          final dateB = DateTime.tryParse(b.date ?? '') ?? DateTime(1970);
+          final dateA = combineDateAndTimeForContext(
+                context,
+                a.date,
+                null,
+                defaultHour: 0,
+                defaultMinute: 0,
+              ) ??
+              DateTime.utc(1970);
+          final dateB = combineDateAndTimeForContext(
+                context,
+                b.date,
+                null,
+                defaultHour: 0,
+                defaultMinute: 0,
+              ) ??
+              DateTime.utc(1970);
           return dateB.compareTo(dateA); // Descending
         });
         break;
@@ -649,19 +684,24 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                                   color: Theme.of(context).iconTheme.color),
                             ),
                             onTap: () async {
+                              final now = nowForContextTimeZone(context);
                               final picked = await showDatePicker(
                                 context: context,
                                 initialDate: dateController.text.isNotEmpty
                                     ? DateTime.tryParse(dateController.text) ??
-                                        DateTime.now()
-                                    : DateTime.now(),
+                                        now
+                                    : now,
                                 firstDate: DateTime(1900),
-                                lastDate: DateTime.now(),
+                                lastDate: now,
                               );
                               if (picked != null) {
                                 setDialogState(() {
-                                  dateController.text =
-                                      picked.toIso8601String().split('T')[0];
+                                  dateController.text = formatDateForContext(
+                                    context,
+                                    picked,
+                                    pattern: 'yyyy-MM-dd',
+                                    fallback: dateController.text,
+                                  );
                                 });
                               }
                             },
@@ -1189,7 +1229,12 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
                               final categoryChip = _localizedCategoryLabel(
                                   file.category ?? '', l10n);
                               final uploadedLabel =
-                                  '${l10n.t('documents.uploadedOnShort')} ${file.date?.isNotEmpty == true ? file.date : l10n.t('common.unknown')}';
+                                  '${l10n.t('documents.uploadedOnShort')} ${file.date?.isNotEmpty == true ? formatDateForContext(
+                                      context,
+                                      file.date,
+                                      pattern: 'yyyy-MM-dd',
+                                      fallback: l10n.t('common.unknown'),
+                                    ) : l10n.t('common.unknown')}';
                               return Container(
                                 margin: const EdgeInsets.symmetric(
                                     horizontal: 12, vertical: 6),

@@ -2,7 +2,7 @@
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.0.7+7
+version: 1.0.13+13
 
 environment:
   sdk: ^3.6.0
@@ -48,6 +48,11 @@ dependencies:
   geocoding: ^2.1.1
   google_fonts: ^6.2.1
   web_socket_channel: ^3.0.3
+  timezone: ^0.10.1
+  connectivity_plus: ^6.1.3
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  workmanager: ^0.6.0
 
 dev_dependencies:
   flutter_test:
@@ -68,7 +73,9 @@ flutter:
     - assets/AiAllyLogo.png
     - assets/BloodReport.png
     - assets/HospitalBill.png
+    - assets/app_icon.png
     - assets/icon/app_icon.png
+    - assets/icon/medical_vault_logo.svg
     - assets/LoadingClock.json
     - assets/twodotloading.json
     - assets/Theme.png

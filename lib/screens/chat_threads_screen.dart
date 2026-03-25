@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api_service.dart';
+import '../utils/timezone_utils.dart';
 import 'direct_chat_screen.dart';
 
 class ChatThreadsScreen extends StatefulWidget {
@@ -93,22 +94,36 @@ class _ChatThreadsScreenState extends State<ChatThreadsScreen> {
   }
 
   String _formatMessageTime(dynamic raw) {
-    final value = raw?.toString() ?? "";
-    if (value.isEmpty) return "";
-    final parsed = DateTime.tryParse(value);
-    if (parsed == null) return "";
-    final local = parsed.toLocal();
-    final now = DateTime.now();
-    final sameDay = now.year == local.year &&
-        now.month == local.month &&
-        now.day == local.day;
-    if (sameDay) {
-      final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
-      final minute = local.minute.toString().padLeft(2, '0');
-      final suffix = local.hour >= 12 ? 'PM' : 'AM';
-      return "$hour:$minute $suffix";
+    final timeLabel = formatTimeForContext(
+      context,
+      raw,
+      pattern: 'h:mm a',
+      fallback: '',
+    );
+    if (timeLabel.isEmpty) return '';
+
+    final messageDay = formatDateForContext(
+      context,
+      raw,
+      pattern: 'yyyy-MM-dd',
+      fallback: '',
+    );
+    final today = formatDateForContext(
+      context,
+      nowForContextTimeZone(context),
+      pattern: 'yyyy-MM-dd',
+      fallback: '',
+    );
+    if (messageDay.isNotEmpty && messageDay == today) {
+      return timeLabel;
     }
-    return "${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}";
+
+    return formatDateForContext(
+      context,
+      raw,
+      pattern: 'dd/MM',
+      fallback: '',
+    );
   }
 
   @override

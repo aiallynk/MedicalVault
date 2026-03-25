@@ -3,12 +3,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:geocoding/geocoding.dart';
 
 import '../../api_service.dart';
 import '../../localization/app_localizations.dart';
+import '../../utils/timezone_utils.dart';
 
 enum _LostReportTarget { profile, other }
 
@@ -56,6 +56,7 @@ class _ReportLostPageState extends State<ReportLostPage> {
   @override
   void initState() {
     super.initState();
+    _lastSeenTime = nowForContextTimeZone(context);
     _initialiseProfile();
   }
 
@@ -127,11 +128,12 @@ class _ReportLostPageState extends State<ReportLostPage> {
 
   Future<void> _pickDateTime() async {
     final current = _lastSeenTime;
+    final now = nowForContextTimeZone(context);
     final date = await showDatePicker(
       context: context,
       initialDate: current,
-      firstDate: DateTime.now().subtract(const Duration(days: 30)),
-      lastDate: DateTime.now(),
+      firstDate: now.subtract(const Duration(days: 30)),
+      lastDate: now,
     );
     if (date == null) return;
 
@@ -766,7 +768,6 @@ class _ReportLostPageState extends State<ReportLostPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final formatter = DateFormat("MMM d, yyyy • h:mm a");
     final l10n = context.l10n;
 
     return Scaffold(
@@ -916,7 +917,11 @@ class _ReportLostPageState extends State<ReportLostPage> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(l10n.t('lostReport.lastSeenTime')),
-                  subtitle: Text(formatter.format(_lastSeenTime)),
+                  subtitle: Text(formatDateTimeForContext(
+                    context,
+                    _lastSeenTime,
+                    pattern: 'MMM d, yyyy - h:mm a',
+                  )),
                   trailing: TextButton(
                     onPressed: _pickDateTime,
                     child: Text(l10n.t('lostReport.edit')),

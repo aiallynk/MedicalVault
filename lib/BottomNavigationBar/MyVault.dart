@@ -12,6 +12,7 @@ import 'package:hello/Document_model.dart';
 import 'package:hello/UploadDocument.dart';
 import 'package:hello/api_service.dart';
 import 'package:hello/localization/app_localizations.dart';
+import 'package:hello/utils/timezone_utils.dart';
 
 // ================= DOCUMENT DETAIL PAGE =================
 class DocumentDetailPage extends StatelessWidget {
@@ -186,6 +187,14 @@ class DocumentDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final uploadedOnLabel = document.date != null && document.date!.isNotEmpty
+        ? formatDateTimeForContext(
+            context,
+            document.date,
+            pattern: 'MMM d, yyyy • h:mm a',
+            fallback: l10n.t('common.unknown'),
+          )
+        : l10n.t('common.unknown');
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -204,7 +213,7 @@ class DocumentDetailPage extends StatelessWidget {
                 style: const TextStyle(fontSize: 18)),
             const SizedBox(height: 10),
             Text(
-                "${l10n.t('documentDetail.uploadedOn')} ${document.date ?? l10n.t('common.unknown')}",
+                "${l10n.t('documentDetail.uploadedOn')} $uploadedOnLabel",
                 style: const TextStyle(fontSize: 16)),
             const SizedBox(height: 20),
             Row(
@@ -380,7 +389,7 @@ class _MyVaultState extends State<MyVault> {
 
   List<Document> _filterAndSortDocuments() {
     final query = _searchController.text.trim().toLowerCase();
-    final now = DateTime.now();
+    final now = nowForContextTimeZone(context);
 
     // Step 1: Filter by category
     var docs = _selectedCategory == "All"
@@ -413,7 +422,13 @@ class _MyVaultState extends State<MyVault> {
 
       docs = docs.where((doc) {
         if (doc.date == null || doc.date!.isEmpty) return false;
-        final docDate = DateTime.tryParse(doc.date!);
+        final docDate = combineDateAndTimeForContext(
+          context,
+          doc.date!,
+          null,
+          defaultHour: 0,
+          defaultMinute: 0,
+        );
         if (docDate == null) return false;
         final daysDifference = now.difference(docDate).inDays;
         return daysDifference <= dayLimit;
@@ -444,16 +459,44 @@ class _MyVaultState extends State<MyVault> {
         break;
       case "Oldest First":
         docs.sort((a, b) {
-          final dateA = DateTime.tryParse(a.date ?? '') ?? DateTime(1970);
-          final dateB = DateTime.tryParse(b.date ?? '') ?? DateTime(1970);
+          final dateA = combineDateAndTimeForContext(
+                context,
+                a.date,
+                null,
+                defaultHour: 0,
+                defaultMinute: 0,
+              ) ??
+              DateTime.utc(1970);
+          final dateB = combineDateAndTimeForContext(
+                context,
+                b.date,
+                null,
+                defaultHour: 0,
+                defaultMinute: 0,
+              ) ??
+              DateTime.utc(1970);
           return dateA.compareTo(dateB); // Ascending
         });
         break;
       case "Newest First":
       default:
         docs.sort((a, b) {
-          final dateA = DateTime.tryParse(a.date ?? '') ?? DateTime(1970);
-          final dateB = DateTime.tryParse(b.date ?? '') ?? DateTime(1970);
+          final dateA = combineDateAndTimeForContext(
+                context,
+                a.date,
+                null,
+                defaultHour: 0,
+                defaultMinute: 0,
+              ) ??
+              DateTime.utc(1970);
+          final dateB = combineDateAndTimeForContext(
+                context,
+                b.date,
+                null,
+                defaultHour: 0,
+                defaultMinute: 0,
+              ) ??
+              DateTime.utc(1970);
           return dateB.compareTo(dateA); // Descending
         });
         break;
@@ -845,19 +888,24 @@ class _MyVaultState extends State<MyVault> {
                                   color: Theme.of(context).iconTheme.color),
                             ),
                             onTap: () async {
+                              final now = nowForContextTimeZone(context);
                               final picked = await showDatePicker(
                                 context: context,
                                 initialDate: dateController.text.isNotEmpty
                                     ? DateTime.tryParse(dateController.text) ??
-                                        DateTime.now()
-                                    : DateTime.now(),
+                                        now
+                                    : now,
                                 firstDate: DateTime(1900),
-                                lastDate: DateTime.now(),
+                                lastDate: now,
                               );
                               if (picked != null) {
                                 setDialogState(() {
-                                  dateController.text =
-                                      picked.toIso8601String().split('T')[0];
+                                  dateController.text = formatDateForContext(
+                                    context,
+                                    picked,
+                                    pattern: 'yyyy-MM-dd',
+                                    fallback: dateController.text,
+                                  );
                                 });
                               }
                             },
@@ -1223,7 +1271,12 @@ class _MyVaultState extends State<MyVault> {
                             final categoryLabel = _localizedCategoryLabel(
                                 doc.category ?? '', l10n);
                             final dateLabel = doc.date?.isNotEmpty == true
-                                ? doc.date!
+                                ? formatDateForContext(
+                                    context,
+                                    doc.date,
+                                    pattern: 'yyyy-MM-dd',
+                                    fallback: l10n.t('common.unknown'),
+                                  )
                                 : l10n.t('common.unknown');
                             return Card(
                               margin: const EdgeInsets.symmetric(

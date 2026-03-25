@@ -135,7 +135,9 @@ class _SignUpPageState extends State<SignUpPage> {
           context,
           MaterialPageRoute(
             settings: const RouteSettings(name: '/verify'),
-            builder: (_) => const VerifyEmailPage(),
+            builder: (_) => VerifyEmailPage(
+              prefilledEmail: _emailController.text.trim(),
+            ),
           ),
         );
 

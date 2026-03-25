@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -5,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
 
 import 'Login_Signup/SignUp.dart';
 import 'Login_Signup/VerifyEmailPage.dart';
@@ -19,8 +22,12 @@ import 'firebase_options.dart';
 import 'localization/app_localizations.dart';
 import 'providers/dashboard_prefetch_provider.dart';
 import 'providers/language_provider.dart';
+import 'providers/timezone_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/welcome_screen.dart';
+import 'services/offline/offline_storage_service.dart';
+import 'services/offline/offline_sync_engine.dart';
+import 'services/session_conflict_service.dart';
 import 'widgets/ai_floating_button.dart';
 
 export 'core/theme/app_theme.dart';
@@ -31,12 +38,21 @@ final AppRouteObserver appRouteObserver = AppRouteObserver();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  tzdata.initializeTimeZones();
 
   StatusBarHelper.configureSystemUiMode();
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Initialize encrypted offline storage + reconnect sync engine.
+  try {
+    await OfflineStorageService.instance.initialize();
+    await OfflineSyncEngine.instance.initialize();
+  } catch (error) {
+    debugPrint('Offline engine init skipped: $error');
+  }
 
   await FCMService().initialize();
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
@@ -45,7 +61,11 @@ void main() async {
   final hasSavedThemePreferences =
       await ThemeProvider.hasSavedThemePreferences();
   final initialLocale = await LanguageProvider.loadLocale();
-  final remoteUiConfig = await ApiService.fetchUiConfig();
+  final initialTimeZone = await TimezoneProvider.loadTimeZone();
+  final remoteUiConfig = await ApiService.fetchUiConfig().timeout(
+    const Duration(seconds: 2),
+    onTimeout: () => null,
+  );
 
   int colorToValue(Color color) {
     final a = (color.a * 255).round() & 0xFF;
@@ -101,6 +121,9 @@ void main() async {
         ),
         ChangeNotifierProvider(create: (_) => DashboardPrefetchProvider()),
         ChangeNotifierProvider(create: (_) => LanguageProvider(initialLocale)),
+        ChangeNotifierProvider(
+          create: (_) => TimezoneProvider(initialTimeZone),
+        ),
       ],
       child: const MyApp(),
     ),
@@ -372,6 +395,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   void initState() {
     super.initState();
+    unawaited(SessionConflictService.instance.initialize());
     _initDeepLinks();
   }
 

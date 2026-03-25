@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'api_service.dart';
 import 'localization/app_localizations.dart';
 import 'Document_model.dart';
+import 'utils/timezone_utils.dart';
 
 class UploadDocument extends StatefulWidget {
   final String userId;
@@ -114,7 +115,12 @@ class _UploadDocumentState extends State<UploadDocument> {
 
   Future<void> _pickDate() async {
     final l10n = context.l10n;
-    final now = DateTime.now();
+    final currentTimeZoneNow = nowForContextTimeZone(context);
+    final now = DateTime(
+      currentTimeZoneNow.year,
+      currentTimeZoneNow.month,
+      currentTimeZoneNow.day,
+    );
     final yesterday = now.subtract(const Duration(days: 1));
     final pickedDate = await showDatePicker(
       context: context,
@@ -162,7 +168,7 @@ class _UploadDocumentState extends State<UploadDocument> {
             _selectedCategory == "Reports" ? "Lab Report" : _selectedCategory!,
         notes: _notesController.text,
         date: _selectedDate?.toIso8601String() ??
-            DateTime.now().toIso8601String(),
+            nowForContextTimeZone(context).toIso8601String(),
         onProgress: (progress) {
           // Ensure state updates happen on the main thread
           if (mounted) {

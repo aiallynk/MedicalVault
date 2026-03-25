@@ -1,12 +1,12 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 
 import '../../api_service.dart';
 import '../../localization/app_localizations.dart';
+import '../../utils/timezone_utils.dart';
 
 class ReportFoundPage extends StatefulWidget {
   const ReportFoundPage({super.key});
@@ -36,6 +36,12 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
   String? _photoName;
 
   @override
+  void initState() {
+    super.initState();
+    _foundTime = nowForContextTimeZone(context);
+  }
+
+  @override
   void dispose() {
     _ageController.dispose();
     _descriptionController.dispose();
@@ -46,11 +52,12 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
 
   Future<void> _pickDateTime() async {
     final l10n = context.l10n;
+    final now = nowForContextTimeZone(context);
     final date = await showDatePicker(
       context: context,
       initialDate: _foundTime,
-      firstDate: DateTime.now().subtract(const Duration(days: 7)),
-      lastDate: DateTime.now(),
+      firstDate: now.subtract(const Duration(days: 7)),
+      lastDate: now,
       helpText: l10n.t('reportFound.datePicker.help'),
       cancelText: l10n.t('reportFound.datePicker.cancel'),
       confirmText: l10n.t('reportFound.datePicker.confirm'),
@@ -212,7 +219,6 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final formatter = DateFormat("MMM d, yyyy • h:mm a");
     final l10n = context.l10n;
 
     return Scaffold(
@@ -374,7 +380,7 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(l10n.t('reportFound.foundTime')),
-                  subtitle: Text(formatter.format(_foundTime)),
+                  subtitle: Text(formatDateTimeForContext(context, _foundTime, pattern: 'MMM d, yyyy - h:mm a')),
                   trailing: TextButton(
                     onPressed: _pickDateTime,
                     child: Text(l10n.t('reportFound.edit')),

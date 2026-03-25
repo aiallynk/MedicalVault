@@ -9,10 +9,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http_parser/http_parser.dart';
 import 'Document_model.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hello/helpers/google_auth_helper.dart';
+import 'package:hello/services/offline/offline_storage_service.dart';
 import 'package:hello/services/secure_token_storage.dart';
 
 class ApiService {
+  static void _debugLog(String message) {
+    if (!kReleaseMode) {
+      // ignore: avoid_print
+      print(message);
+    }
+  }
+
   static const String _defaultApiBaseUrl =
       "https://backend-medicalvault.onrender.com/api";
   static const String baseUrl =
@@ -72,6 +81,15 @@ class ApiService {
   static _TimedCacheEntry<Map<String, dynamic>>? _uiConfigCache;
   static _TimedCacheEntry<List<dynamic>>? _pastAppointmentsCache;
   static _TimedCacheEntry<_PublicGeoScope>? _publicGeoScopeCache;
+  static const String _sessionInvalidCode = "SESSION_INVALID";
+  static const String _defaultSessionInvalidMessage =
+      "You have been logged out due to login from another device";
+  static const String _deviceIdPrefsKey = "auth_device_id";
+  static final StreamController<Map<String, String>> _sessionEventsController =
+      StreamController<Map<String, String>>.broadcast();
+
+  static Stream<Map<String, String>> get sessionEvents =>
+      _sessionEventsController.stream;
 
   static void invalidatePublicConfigCache({
     bool ads = true,
@@ -118,6 +136,49 @@ class ApiService {
       query["surface"] = normalizedSurface;
     }
     return uri.replace(queryParameters: query);
+  }
+
+  static Uri authSessionWebSocketUri({
+    String? token,
+    String? attemptToken,
+    String? deviceId,
+  }) {
+    var parsedBase = Uri.tryParse(baseUrl) ?? Uri.parse(_defaultApiBaseUrl);
+    if (parsedBase.host.isEmpty) {
+      parsedBase = Uri.parse(_defaultApiBaseUrl);
+    }
+
+    final wsScheme = parsedBase.scheme == 'https' ? 'wss' : 'ws';
+    final resolvedPort = parsedBase.hasPort && parsedBase.port > 0
+        ? parsedBase.port
+        : (wsScheme == 'wss' ? 443 : 80);
+    final pathSegments = <String>[
+      ...parsedBase.pathSegments.where((segment) => segment.isNotEmpty),
+      'auth',
+      'session',
+      'ws',
+    ];
+
+    final query = <String, String>{};
+    final normalizedToken = (token ?? '').trim();
+    final normalizedAttemptToken = (attemptToken ?? '').trim();
+    final normalizedDeviceId = (deviceId ?? '').trim();
+    if (normalizedToken.isNotEmpty) {
+      query['token'] = normalizedToken;
+    } else if (normalizedAttemptToken.isNotEmpty) {
+      query['attemptToken'] = normalizedAttemptToken;
+    }
+    if (normalizedDeviceId.isNotEmpty) {
+      query['deviceId'] = normalizedDeviceId;
+    }
+
+    return Uri(
+      scheme: wsScheme,
+      host: parsedBase.host,
+      port: resolvedPort,
+      pathSegments: pathSegments,
+      queryParameters: query.isEmpty ? null : query,
+    );
   }
 
   static String _normalizeGeoPart(dynamic value, {int maxLength = 80}) {
@@ -332,6 +393,125 @@ class ApiService {
     return _getToken();
   }
 
+  static Map<String, dynamic> _decodeJsonMap(String rawBody) {
+    try {
+      final decoded = jsonDecode(rawBody);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) {
+        return decoded.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      }
+    } catch (_) {
+      // Ignore malformed JSON payloads.
+    }
+    return <String, dynamic>{};
+  }
+
+  static void _emitSessionEvent(Map<String, String> event) {
+    if (_sessionEventsController.isClosed) return;
+    _sessionEventsController.add(event);
+  }
+
+  static void _emitSessionInvalid([String? message]) {
+    final resolvedMessage = (message ?? _defaultSessionInvalidMessage).trim();
+    _emitSessionEvent({
+      'type': 'session_invalid',
+      'message': resolvedMessage.isEmpty
+          ? _defaultSessionInvalidMessage
+          : resolvedMessage,
+    });
+  }
+
+  static bool _isSessionInvalidResponse(
+    http.Response response,
+    Map<String, dynamic> payload,
+  ) {
+    if (response.statusCode != 401) return false;
+    final code = (payload['code'] ?? '').toString().trim().toUpperCase();
+    return code == _sessionInvalidCode;
+  }
+
+  static Future<String> _ensureDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = (prefs.getString(_deviceIdPrefsKey) ?? '').trim();
+    if (existing.isNotEmpty) return existing;
+
+    final generated =
+        '${Platform.operatingSystem}-${DateTime.now().microsecondsSinceEpoch}';
+    await prefs.setString(_deviceIdPrefsKey, generated);
+    return generated;
+  }
+
+  static Future<String> getOrCreateDeviceId() async {
+    return _ensureDeviceId();
+  }
+
+  static String _deviceInfo() {
+    final os = Platform.operatingSystem;
+    final version = Platform.operatingSystemVersion.replaceAll('\n', ' ');
+    return '$os $version'.trim();
+  }
+
+  static Future<Map<String, String>> _deviceHeaders() async {
+    final deviceId = await _ensureDeviceId();
+    return <String, String>{
+      'x-device-id': deviceId,
+      'x-device-info': _deviceInfo(),
+    };
+  }
+
+  static Future<void> _persistAuthSessionPayload(
+    Map<String, dynamic> payload,
+  ) async {
+    final token = payload['token']?.toString();
+    if (token == null || token.trim().isEmpty) return;
+
+    final userRaw = payload['user'];
+    final user = userRaw is Map
+        ? userRaw.map((key, value) => MapEntry(key.toString(), value))
+        : <String, dynamic>{};
+
+    final prefs = await SharedPreferences.getInstance();
+    await SecureTokenStorage.saveToken(token);
+    await prefs.setString("userId", user['id']?.toString() ?? "");
+    await prefs.setString("email", user['email']?.toString() ?? "");
+    await prefs.setString("name", user['name']?.toString() ?? "Patient");
+    await prefs.setString("userData", jsonEncode(user));
+    if (user['emailVerified'] != null) {
+      await prefs.setBool('emailVerified', user['emailVerified'] == true);
+    }
+    await OfflineStorageService.instance.cacheUserData(user);
+    await OfflineStorageService.instance.cacheEmergencyContactsFromUserData(
+      user,
+    );
+
+    await FCMService().registerToken();
+  }
+
+  static String? extractTokenFromResponseData(Map<String, dynamic>? data) {
+    if (data == null) return null;
+    final direct = data['token']?.toString().trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+
+    final accessToken = data['accessToken']?.toString().trim();
+    if (accessToken != null && accessToken.isNotEmpty) return accessToken;
+
+    final nested = data['data'];
+    if (nested is Map) {
+      final nestedToken = nested['token']?.toString().trim();
+      if (nestedToken != null && nestedToken.isNotEmpty) {
+        return nestedToken;
+      }
+      final nestedAccess = nested['accessToken']?.toString().trim();
+      if (nestedAccess != null && nestedAccess.isNotEmpty) {
+        return nestedAccess;
+      }
+    }
+
+    return null;
+  }
+
   // ---------------- PASSWORD FLOWS ----------------
   // ---------------- EMAIL VERIFICATION ----------------
   static Future<Map<String, dynamic>?> verifyEmailWithToken(
@@ -420,11 +600,11 @@ class ApiService {
         final data = jsonDecode(res.body);
         return data;
       } else {
-        print("Forgot password failed: ${res.body}");
+        _debugLog("Forgot password failed");
         return {"success": false, "message": "Failed to send reset email"};
       }
     } catch (e) {
-      print("Forgot password error: $e");
+      _debugLog("Forgot password error: $e");
       return {"success": false, "message": "Network error"};
     }
   }
@@ -441,7 +621,7 @@ class ApiService {
       final data = jsonDecode(res.body);
       return data;
     } catch (e) {
-      print("Reset password error: $e");
+      _debugLog("Reset password error: $e");
       return {"success": false, "message": "Network error"};
     }
   }
@@ -460,58 +640,479 @@ class ApiService {
       final data = jsonDecode(res.body);
       return data;
     } catch (e) {
-      print("Change password error: $e");
+      _debugLog("Change password error: $e");
       return {"success": false, "message": "Network error"};
     }
   }
 
   static Future<Map<String, String>> _authHeaders() async {
     final token = await _getToken();
+    final deviceHeaders = await _deviceHeaders();
+    if (token == null || token.trim().isEmpty) {
+      return deviceHeaders;
+    }
     return {
-      HttpHeaders.authorizationHeader: 'Bearer ${token ?? ''}',
+      ...deviceHeaders,
+      HttpHeaders.authorizationHeader: 'Bearer $token',
     };
   }
 
-  // ---------------- LOGIN ----------------
-  static Future<Map<String, dynamic>?> login(
-      String email, String password) async {
-    try {
-      final res = await http.post(
-        Uri.parse("$authUrl/login"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"email": email, "password": password}),
-      );
+  static Map<String, dynamic> _asStringKeyMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((key, data) => MapEntry(key.toString(), data));
+    }
+    return <String, dynamic>{};
+  }
 
+  static bool? _parseAllowMultipleSessionsValue(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final normalized = (value ?? '').toString().trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+    if (normalized == 'true' ||
+        normalized == '1' ||
+        normalized == 'yes' ||
+        normalized == 'on' ||
+        normalized == 'enabled') {
+      return true;
+    }
+    if (normalized == 'false' ||
+        normalized == '0' ||
+        normalized == 'no' ||
+        normalized == 'off' ||
+        normalized == 'disabled') {
+      return false;
+    }
+    return null;
+  }
+
+  static bool? _extractAllowMultipleSessionsFromResponse(
+    Map<String, dynamic> data,
+  ) {
+    final direct =
+        _parseAllowMultipleSessionsValue(data['allowMultipleSessions']);
+    if (direct != null) return direct;
+
+    final candidateRoots = <Map<String, dynamic>>[
+      _asStringKeyMap(data['data']),
+      _asStringKeyMap(data['policy']),
+      _asStringKeyMap(data['sessionPolicy']),
+      _asStringKeyMap(data['session']),
+      _asStringKeyMap(data['user']),
+    ];
+    for (final root in candidateRoots) {
+      if (root.isEmpty) continue;
+      final parsed = _parseAllowMultipleSessionsValue(
+        root['allowMultipleSessions'],
+      );
+      if (parsed != null) return parsed;
+    }
+
+    final dataRoot = _asStringKeyMap(data['data']);
+    if (dataRoot.isNotEmpty) {
+      final nested = <Map<String, dynamic>>[
+        _asStringKeyMap(dataRoot['policy']),
+        _asStringKeyMap(dataRoot['sessionPolicy']),
+        _asStringKeyMap(dataRoot['session']),
+        _asStringKeyMap(dataRoot['user']),
+      ];
+      for (final node in nested) {
+        if (node.isEmpty) continue;
+        final parsed = _parseAllowMultipleSessionsValue(
+          node['allowMultipleSessions'],
+        );
+        if (parsed != null) return parsed;
+      }
+    }
+    return null;
+  }
+
+  static Future<void> _persistAllowMultipleSessionsInCache(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawUserData = prefs.getString("userData");
+      if (rawUserData != null && rawUserData.trim().isNotEmpty) {
+        final decoded = jsonDecode(rawUserData);
+        if (decoded is Map) {
+          final user =
+              decoded.map((key, data) => MapEntry(key.toString(), data));
+          user['allowMultipleSessions'] = value;
+          await prefs.setString("userData", jsonEncode(user));
+          await OfflineStorageService.instance.cacheUserData(user);
+          return;
+        }
+      }
+      await prefs.setString(
+        "userData",
+        jsonEncode(<String, dynamic>{'allowMultipleSessions': value}),
+      );
+    } catch (e) {
+      _debugLog("persist allowMultipleSessions cache failed: $e");
+    }
+  }
+
+  // ---------------- DEVICE SESSIONS ----------------
+  static Future<List<Map<String, dynamic>>> fetchDeviceSessions() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.get(
+        Uri.parse("$baseUrl/sessions"),
+        headers: headers,
+      );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        final token = data['token'];
-        final user = data['user'];
-
-        if (token != null) {
-          final prefs = await SharedPreferences.getInstance();
-          await SecureTokenStorage.saveToken(token.toString());
-          await prefs.setString("userId", user?['id']?.toString() ?? "");
-          await prefs.setString("email", user?['email']?.toString() ?? "");
-          await prefs.setString("name", user?['name']?.toString() ?? "Patient");
-          // ✅ Also store userData for dashboard compatibility
-          await prefs.setString("userData", jsonEncode(user));
-          // Store emailVerified flag for convenience
-          if (user != null && user['emailVerified'] != null) {
-            await prefs.setBool('emailVerified', user['emailVerified'] == true);
-          }
-
-          // Register FCM token after successful login
-          await FCMService().registerToken();
+        if (data['success'] == true && data['sessions'] is List) {
+          return (data['sessions'] as List)
+              .whereType<Map>()
+              .map((entry) => entry.map(
+                    (key, value) => MapEntry(key.toString(), value),
+                  ))
+              .toList(growable: false);
         }
-
-        return data;
-      } else {
-        print("Login failed: ${res.body}");
-        return null;
       }
     } catch (e) {
-      print("Login error: $e");
-      return null;
+      _debugLog("fetchDeviceSessions error: $e");
+    }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>> fetchSessionPolicy() async {
+    try {
+      final headers = await _authHeaders();
+      final endpoints = <Uri>[
+        Uri.parse("$authUrl/session/policy"),
+        Uri.parse("$authUrl/session/settings"),
+        Uri.parse("$baseUrl/sessions/policy"),
+        Uri.parse("$baseUrl/session/policy"),
+      ];
+
+      for (final uri in endpoints) {
+        try {
+          final res = await http.get(uri, headers: headers);
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            continue;
+          }
+          final data = _decodeJsonMap(res.body);
+          final parsed = _extractAllowMultipleSessionsFromResponse(data);
+          if (parsed != null) {
+            await _persistAllowMultipleSessionsInCache(parsed);
+            return {
+              'success': true,
+              'allowMultipleSessions': parsed,
+            };
+          }
+        } catch (_) {
+          // Try next endpoint.
+        }
+      }
+
+      final profile = await me();
+      final parsedFromProfile =
+          _parseAllowMultipleSessionsValue(profile?['allowMultipleSessions']);
+      if (parsedFromProfile != null) {
+        await _persistAllowMultipleSessionsInCache(parsedFromProfile);
+        return {
+          'success': true,
+          'allowMultipleSessions': parsedFromProfile,
+        };
+      }
+    } catch (e) {
+      _debugLog("fetchSessionPolicy error: $e");
+    }
+    return {
+      'success': false,
+      'message': 'Unable to fetch session policy',
+    };
+  }
+
+  static Future<Map<String, dynamic>> updateSessionPolicy({
+    required bool allowMultipleSessions,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final payload = jsonEncode({
+        'allowMultipleSessions': allowMultipleSessions,
+      });
+
+      final requestBuilders = <Future<http.Response> Function()>[
+        () => http.put(
+              Uri.parse("$authUrl/session/policy"),
+              headers: {...headers, "Content-Type": "application/json"},
+              body: payload,
+            ),
+        () => http.patch(
+              Uri.parse("$authUrl/session/policy"),
+              headers: {...headers, "Content-Type": "application/json"},
+              body: payload,
+            ),
+        () => http.put(
+              Uri.parse("$authUrl/session/settings"),
+              headers: {...headers, "Content-Type": "application/json"},
+              body: payload,
+            ),
+        () => http.patch(
+              Uri.parse("$authUrl/session/settings"),
+              headers: {...headers, "Content-Type": "application/json"},
+              body: payload,
+            ),
+        () => http.put(
+              Uri.parse("$baseUrl/sessions/policy"),
+              headers: {...headers, "Content-Type": "application/json"},
+              body: payload,
+            ),
+      ];
+
+      for (final request in requestBuilders) {
+        try {
+          final res = await request();
+          if (res.statusCode < 200 || res.statusCode >= 300) continue;
+          final data = _decodeJsonMap(res.body);
+          final parsed = _extractAllowMultipleSessionsFromResponse(data) ??
+              allowMultipleSessions;
+          await _persistAllowMultipleSessionsInCache(parsed);
+          return {
+            'success': true,
+            'allowMultipleSessions': parsed,
+            ...data,
+          };
+        } catch (_) {
+          // Try next endpoint.
+        }
+      }
+
+      final profileUpdate = await updateProfile({
+        'allowMultipleSessions': allowMultipleSessions,
+      });
+      if (profileUpdate != null && profileUpdate['success'] == true) {
+        await _persistAllowMultipleSessionsInCache(allowMultipleSessions);
+        return {
+          'success': true,
+          'allowMultipleSessions': allowMultipleSessions,
+          ...profileUpdate,
+        };
+      }
+    } catch (e) {
+      _debugLog("updateSessionPolicy error: $e");
+    }
+    return {
+      'success': false,
+      'message': 'Unable to update session policy',
+      'allowMultipleSessions': allowMultipleSessions,
+    };
+  }
+
+  static Future<bool> logoutDeviceSession(String sessionId) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.delete(
+        Uri.parse("$baseUrl/sessions/$sessionId"),
+        headers: headers,
+      );
+      if (res.statusCode == 200) return true;
+    } catch (e) {
+      _debugLog("logoutDeviceSession error: $e");
+    }
+    return false;
+  }
+
+  static Future<bool> logoutAllDeviceSessions() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.delete(
+        Uri.parse("$baseUrl/sessions"),
+        headers: headers,
+      );
+      if (res.statusCode == 200) return true;
+    } catch (e) {
+      _debugLog("logoutAllDeviceSessions error: $e");
+    }
+    return false;
+  }
+
+  // ---------------- LOGIN ----------------
+  static Future<Map<String, dynamic>> login(
+      String email, String password) async {
+    try {
+      final headers = await _deviceHeaders();
+      final res = await http.post(
+        Uri.parse("$authUrl/login"),
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({"email": email, "password": password}),
+      );
+      final data = _decodeJsonMap(res.body);
+
+      if (res.statusCode == 200 && data['success'] != false) {
+        await _persistAuthSessionPayload(data);
+        return {
+          'success': true,
+          ...data,
+          'statusCode': res.statusCode,
+        };
+      }
+
+      if (_isSessionInvalidResponse(res, data)) {
+        _emitSessionInvalid(data['message']?.toString());
+      }
+
+      return {
+        'success': false,
+        ...data,
+        'statusCode': res.statusCode,
+        'message': (data['message'] ?? 'Login failed').toString(),
+      };
+    } catch (e) {
+      _debugLog("Login error: $e");
+      return {
+        'success': false,
+        'message': 'Network error',
+        'statusCode': 0,
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> loginWithGoogleIdToken(
+      String idToken) async {
+    try {
+      final headers = await _deviceHeaders();
+      final res = await http.post(
+        Uri.parse("$authUrl/google"),
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({"idToken": idToken}),
+      );
+      final data = _decodeJsonMap(res.body);
+
+      if (res.statusCode == 200 && data['success'] != false) {
+        await _persistAuthSessionPayload(data);
+        return {
+          'success': true,
+          ...data,
+          'statusCode': res.statusCode,
+        };
+      }
+
+      if (_isSessionInvalidResponse(res, data)) {
+        _emitSessionInvalid(data['message']?.toString());
+      }
+
+      return {
+        'success': false,
+        ...data,
+        'statusCode': res.statusCode,
+        'message': (data['message'] ?? 'Google login failed').toString(),
+      };
+    } catch (e) {
+      _debugLog("Google login error: $e");
+      return {
+        'success': false,
+        'message': 'Network error',
+        'statusCode': 0,
+      };
+    }
+  }
+
+  static Future<bool> respondToLoginAttempt({
+    required String loginAttemptId,
+    required bool approve,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("$authUrl/session/login-attempt/respond"),
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({
+          "loginAttemptId": loginAttemptId,
+          "approve": approve,
+        }),
+      );
+      final data = _decodeJsonMap(res.body);
+      if (_isSessionInvalidResponse(res, data)) {
+        _emitSessionInvalid(data['message']?.toString());
+      }
+      return res.statusCode >= 200 &&
+          res.statusCode < 300 &&
+          data['success'] == true;
+    } catch (e) {
+      _debugLog("respondToLoginAttempt error: $e");
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>> finalizePendingLogin({
+    required String loginAttemptId,
+    required String attemptToken,
+  }) async {
+    try {
+      final headers = await _deviceHeaders();
+      final res = await http.post(
+        Uri.parse("$authUrl/session/login-attempt/finalize"),
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({
+          "loginAttemptId": loginAttemptId,
+          "attemptToken": attemptToken,
+        }),
+      );
+      final data = _decodeJsonMap(res.body);
+
+      if (res.statusCode == 200 && data['success'] != false) {
+        await _persistAuthSessionPayload(data);
+        return {
+          'success': true,
+          ...data,
+          'statusCode': res.statusCode,
+        };
+      }
+
+      if (_isSessionInvalidResponse(res, data)) {
+        _emitSessionInvalid(data['message']?.toString());
+      }
+
+      return {
+        'success': false,
+        ...data,
+        'statusCode': res.statusCode,
+        'message': (data['message'] ?? 'Failed to finalize login').toString(),
+      };
+    } catch (e) {
+      _debugLog("finalizePendingLogin error: $e");
+      return {
+        'success': false,
+        'message': 'Network error',
+        'statusCode': 0,
+      };
+    }
+  }
+
+  static Future<bool> sendSessionHeartbeat() async {
+    try {
+      final token = await _getToken();
+      if (token == null || token.trim().isEmpty) return false;
+
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("$authUrl/session/heartbeat"),
+        headers: headers,
+      );
+      final data = _decodeJsonMap(res.body);
+      if (_isSessionInvalidResponse(res, data)) {
+        _emitSessionInvalid(data['message']?.toString());
+      }
+      return res.statusCode == 200 && data['success'] == true;
+    } catch (e) {
+      _debugLog("sendSessionHeartbeat error: $e");
+      return false;
     }
   }
 
@@ -522,32 +1123,93 @@ class ApiService {
       final res = await http
           .get(Uri.parse("$authUrl/me"), headers: headers)
           .timeout(const Duration(seconds: 8));
+      final data = _decodeJsonMap(res.body);
       if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        return data['data']['user'];
-      } else {
-        print("Profile fetch failed: ${res.body}");
+        final user = data['data'] is Map
+            ? (data['data']['user'] is Map
+                ? (data['data']['user'] as Map)
+                    .map((key, value) => MapEntry(key.toString(), value))
+                : null)
+            : null;
+        if (user != null) {
+          await OfflineStorageService.instance.cacheUserData(user);
+          await OfflineStorageService.instance
+              .cacheEmergencyContactsFromUserData(
+            user,
+          );
+        }
+        return user;
       }
+      if (_isSessionInvalidResponse(res, data)) {
+        _emitSessionInvalid(data['message']?.toString());
+        return null;
+      }
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        _debugLog("Profile fetch denied: ${res.statusCode}");
+        return null;
+      }
+      _debugLog("Profile fetch failed: ${res.body}");
+      return OfflineStorageService.instance.getCachedUserData();
     } catch (e) {
-      print("Me error: $e");
+      _debugLog("Me error: $e");
+      return OfflineStorageService.instance.getCachedUserData();
     }
-    return null;
   }
 
   static Future<Map<String, dynamic>?> updateProfile(
       Map<String, dynamic> updates) async {
     try {
+      final pendingEmergencyContacts =
+          OfflineStorageService.extractEmergencyContacts(updates);
+      if (pendingEmergencyContacts.isNotEmpty) {
+        // Preserve plain emergency contacts locally even if backend echoes encrypted blobs.
+        await OfflineStorageService.instance
+            .cacheEmergencyContacts(pendingEmergencyContacts);
+      }
+
       final headers = await _authHeaders();
       final res = await http.put(
         Uri.parse("$authUrl/me"),
         headers: {...headers, "Content-Type": "application/json"},
         body: jsonEncode(_sanitizeBody(updates)),
       );
-      final data = jsonDecode(res.body);
+      final data = _decodeJsonMap(res.body);
       if (res.statusCode == 200 && data['success'] == true) {
         final prefs = await SharedPreferences.getInstance();
-        final userData = data['data'];
+        final userData = data['data'] is Map
+            ? (data['data'] as Map)
+                .map((key, value) => MapEntry(key.toString(), value))
+            : null;
         if (userData != null) {
+          final allergiesRaw = (userData['allergies'] ?? '').toString().trim();
+          if (allergiesRaw.toLowerCase().startsWith('enc:v') &&
+              updates['allergies'] is String) {
+            userData['allergies'] = updates['allergies'];
+          }
+
+          final emergencyContactRaw = userData['emergencyContact'];
+          if (emergencyContactRaw is Map) {
+            final emergencyContact =
+                emergencyContactRaw.map((k, v) => MapEntry(k.toString(), v));
+            final phoneRaw =
+                (emergencyContact['phone'] ?? '').toString().trim();
+            if (phoneRaw.toLowerCase().startsWith('enc:v') &&
+                pendingEmergencyContacts.isNotEmpty) {
+              final first = pendingEmergencyContacts.first;
+              emergencyContact['phone'] = first['phone'];
+              if ((emergencyContact['name'] ?? '').toString().trim().isEmpty) {
+                emergencyContact['name'] = first['name'];
+              }
+              if ((emergencyContact['relationship'] ?? '')
+                  .toString()
+                  .trim()
+                  .isEmpty) {
+                emergencyContact['relationship'] = first['relationship'];
+              }
+              userData['emergencyContact'] = emergencyContact;
+            }
+          }
+
           await prefs.setString('userData', jsonEncode(userData));
           if (userData['name'] != null) {
             await prefs.setString('name', userData['name'].toString());
@@ -555,6 +1217,9 @@ class ApiService {
           if (userData['email'] != null) {
             await prefs.setString('email', userData['email'].toString());
           }
+          await OfflineStorageService.instance.cacheUserData(userData);
+          await OfflineStorageService.instance
+              .cacheEmergencyContactsFromUserData(userData);
         }
       }
       return data;

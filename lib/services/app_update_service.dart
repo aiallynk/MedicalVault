@@ -34,12 +34,16 @@ class AppUpdateInfo {
 
   factory AppUpdateInfo.fromJson(Map<String, dynamic> json) {
     return AppUpdateInfo(
-      latestVersion: (json['latestVersion'] ?? '').toString().trim(),
+      latestVersion:
+          (json['latestVersion'] ?? json['version'] ?? '').toString().trim(),
       minimumSupportedVersion:
           (json['minimumSupportedVersion'] ?? '').toString().trim(),
       apkUrl: (json['apkUrl'] ?? '').toString().trim(),
       releaseNotes: (json['releaseNotes'] ?? '').toString().trim(),
-      sha256: (json['sha256'] ?? '').toString().trim().toLowerCase(),
+      sha256: (json['sha256'] ?? json['checksum'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase(),
       hasUpdate: json['hasUpdate'] == true,
       forceUpdate: json['forceUpdate'] == true,
     );
@@ -106,6 +110,19 @@ class AppUpdateService {
 
   AppUpdateService({Dio? dio}) : _dio = dio ?? Dio();
 
+  String _withVersionQuery(String rawUrl, String version,
+      {bool addNonce = false}) {
+    final base = rawUrl.trim();
+    if (base.isEmpty) return base;
+    final uri = Uri.parse(base);
+    final params = Map<String, String>.from(uri.queryParameters);
+    params['v'] = version.trim();
+    if (addNonce) {
+      params['ts'] = DateTime.now().millisecondsSinceEpoch.toString();
+    }
+    return uri.replace(queryParameters: params).toString();
+  }
+
   Future<String> getInstalledVersion() async {
     final package = await PackageInfo.fromPlatform();
     return package.version.trim();
@@ -140,19 +157,34 @@ class AppUpdateService {
     }
 
     if (info.apkUrl.isNotEmpty) {
-      return info;
+      final normalized = AppUpdateInfo(
+        latestVersion: info.latestVersion,
+        minimumSupportedVersion: info.minimumSupportedVersion,
+        apkUrl: _withVersionQuery(info.apkUrl, info.latestVersion),
+        releaseNotes: info.releaseNotes,
+        sha256: info.sha256,
+        hasUpdate: info.hasUpdate,
+        forceUpdate: info.forceUpdate,
+      );
+      await _clearStaleSkipData(normalized.latestVersion);
+      return normalized;
     }
 
     // Backward-compatible fallback for deployments that return an empty apkUrl.
-    return AppUpdateInfo(
+    final fallback = AppUpdateInfo(
       latestVersion: info.latestVersion,
       minimumSupportedVersion: info.minimumSupportedVersion,
-      apkUrl: '${ApiService.baseUrl}/app/apk/${info.latestVersion}',
+      apkUrl: _withVersionQuery(
+        '${ApiService.baseUrl}/app/apk/${info.latestVersion}',
+        info.latestVersion,
+      ),
       releaseNotes: info.releaseNotes,
       sha256: info.sha256,
       hasUpdate: info.hasUpdate,
       forceUpdate: info.forceUpdate,
     );
+    await _clearStaleSkipData(fallback.latestVersion);
+    return fallback;
   }
 
   Future<AppUpdateCheckResult> checkForUpdate({
@@ -280,37 +312,74 @@ class AppUpdateService {
     }
 
     final apkTargetPath = await _buildApkTargetPath(info.latestVersion);
+    await _clearCachedApkArtifacts(keepTargetPath: apkTargetPath);
     bool checksumVerified = false;
-    try {
-      await _dio.download(
-        info.apkUrl,
-        apkTargetPath,
-        onReceiveProgress: (received, total) {
-          if (total <= 0) return;
-          onProgress?.call(received / total);
-        },
-        options: Options(
-          sendTimeout: const Duration(seconds: 15),
-          receiveTimeout: const Duration(minutes: 10),
-        ),
-      );
-    } catch (error) {
-      debugPrint('Update download failed: $error');
-      return const AppUpdateInstallResult(
-        state: AppUpdateInstallState.downloadFailed,
-        message: 'Failed to download update. Please check your connection.',
-      );
-    }
+    final expectedChecksum = info.sha256.trim().toLowerCase();
 
-    if (info.sha256.isNotEmpty) {
-      final isValid = await _verifyChecksum(apkTargetPath, info.sha256);
-      if (!isValid) {
+    for (int attempt = 0; attempt < 2; attempt++) {
+      final shouldAddNonce = attempt > 0;
+      final downloadUrl = _withVersionQuery(
+        info.apkUrl,
+        info.latestVersion,
+        addNonce: shouldAddNonce,
+      );
+
+      try {
+        await _dio.download(
+          downloadUrl,
+          apkTargetPath,
+          onReceiveProgress: (received, total) {
+            if (total <= 0) return;
+            onProgress?.call(received / total);
+          },
+          options: Options(
+            sendTimeout: const Duration(seconds: 15),
+            receiveTimeout: const Duration(minutes: 10),
+            headers: const {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+            },
+          ),
+        );
+      } catch (error) {
+        debugPrint('Update download failed: $error');
         return const AppUpdateInstallResult(
-          state: AppUpdateInstallState.checksumMismatch,
-          message: 'Downloaded APK checksum mismatch. Update aborted.',
+          state: AppUpdateInstallState.downloadFailed,
+          message: 'Failed to download update. Please check your connection.',
         );
       }
-      checksumVerified = true;
+
+      if (expectedChecksum.isEmpty) {
+        break;
+      }
+
+      final actualChecksum = await _computeChecksum(apkTargetPath);
+      debugPrint(
+        'APK checksum verification attempt ${attempt + 1}: expected=$expectedChecksum actual=${actualChecksum ?? "unknown"}',
+      );
+
+      final isValid = actualChecksum == expectedChecksum;
+      if (isValid) {
+        checksumVerified = true;
+        break;
+      }
+
+      if (attempt == 0) {
+        try {
+          final stale = File(apkTargetPath);
+          if (await stale.exists()) {
+            await stale.delete();
+          }
+        } catch (_) {
+          // Continue with retry even if file deletion fails.
+        }
+        continue;
+      }
+
+      return const AppUpdateInstallResult(
+        state: AppUpdateInstallState.checksumMismatch,
+        message: 'Downloaded APK checksum mismatch. Update aborted.',
+      );
     }
 
     final installPermission = await Permission.requestInstallPackages.status;
@@ -370,12 +439,52 @@ class AppUpdateService {
     return path.join(tempDir.path, fileName);
   }
 
-  Future<bool> _verifyChecksum(String filePath, String expectedHash) async {
+  Future<void> _clearCachedApkArtifacts({required String keepTargetPath}) async {
+    final tempDir = await getTemporaryDirectory();
+    final keep = path.normalize(keepTargetPath);
+    final entities = tempDir.listSync();
+    for (final entity in entities) {
+      if (entity is! File) continue;
+      final fileName = path.basename(entity.path).toLowerCase();
+      if (!fileName.startsWith('medical_vault_update_') ||
+          !fileName.endsWith('.apk')) {
+        continue;
+      }
+      final normalized = path.normalize(entity.path);
+      if (normalized == keep) {
+        try {
+          if (await entity.exists()) {
+            await entity.delete();
+          }
+        } catch (_) {}
+        continue;
+      }
+      try {
+        if (await entity.exists()) {
+          await entity.delete();
+        }
+      } catch (_) {
+        // Ignore cache cleanup errors.
+      }
+    }
+  }
+
+  Future<void> _clearStaleSkipData(String latestVersion) async {
+    final prefs = await SharedPreferences.getInstance();
+    final skippedVersion = prefs.getString(skipVersionKey)?.trim();
+    if (skippedVersion == null || skippedVersion.isEmpty) return;
+    if (skippedVersion == latestVersion) return;
+    if (skippedVersion == '1.0.8' ||
+        compareVersions(skippedVersion, latestVersion) < 0) {
+      await clearSkipWindow();
+    }
+  }
+
+  Future<String?> _computeChecksum(String filePath) async {
     final file = File(filePath);
-    if (!await file.exists()) return false;
+    if (!await file.exists()) return null;
     final bytes = await file.readAsBytes();
-    final digest = crypto.sha256.convert(bytes).toString().toLowerCase();
-    return digest == expectedHash.toLowerCase();
+    return crypto.sha256.convert(bytes).toString().toLowerCase();
   }
 
   String _statusMessage(PackageInstallerStatus status) {

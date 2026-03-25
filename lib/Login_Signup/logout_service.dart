@@ -18,6 +18,7 @@ class LogoutService {
       await SecureTokenStorage.clearToken();
       await prefs.remove('userData');
       await prefs.remove('userId');
+      await prefs.remove('sessionId');
       await prefs.remove('privacy_accepted');
       await prefs.remove('privacy_accepted_date');
       await prefs.remove('privacy_version');

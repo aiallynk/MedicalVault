@@ -589,17 +589,14 @@ class SettingsVisuals {
     final theme = Theme.of(context);
     final brightness = theme.brightness;
     final accent = theme.colorScheme.primary;
-    final surface = Color.alphaBlend(
-      accent.withValues(alpha: brightness == Brightness.dark ? 0.04 : 0.025),
-      theme.cardColor,
-    );
+    final surface = theme.cardColor;
 
     return SettingsVisuals(
       accent: accent,
       surface: surface,
       outline: brightness == Brightness.dark
-          ? Colors.white.withValues(alpha: 0.08)
-          : accent.withValues(alpha: 0.12),
+          ? Colors.white.withValues(alpha: 0.1)
+          : const Color(0xFFDCE3EC),
       divider: brightness == Brightness.dark
           ? Colors.white.withValues(alpha: 0.06)
           : Colors.black.withValues(alpha: 0.06),

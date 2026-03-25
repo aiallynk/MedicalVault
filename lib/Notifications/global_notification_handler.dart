@@ -7,8 +7,15 @@ import '../screens/appointments_page.dart';
 import '../screens/appointment_detail_screen.dart';
 import '../screens/direct_chat_screen.dart';
 import '../screens/chat_threads_screen.dart';
+import 'package:flutter/foundation.dart';
 
 class GlobalNotificationHandler {
+  void _debugLog(String message) {
+    if (!kReleaseMode) {
+      // ignore: avoid_print
+      print(message);
+    }
+  }
   static final GlobalNotificationHandler _instance =
       GlobalNotificationHandler._internal();
   factory GlobalNotificationHandler() => _instance;
@@ -134,15 +141,10 @@ class GlobalNotificationHandler {
 
   // Handle FCM notification
   Future<void> handleFCMNotification(RemoteMessage message) async {
-    print('🔔 GlobalNotificationHandler.handleFCMNotification called');
-    print('  - Global context: ${_globalContext != null ? "Set" : "Not set"}');
-    print('  - Message ID: ${message.messageId}');
-    print('  - Title: ${message.notification?.title}');
-    print('  - Body: ${message.notification?.body}');
-    print('  - Data: ${message.data}');
+    _debugLog('GlobalNotificationHandler.handleFCMNotification');
 
     if (_globalContext == null) {
-      print('❌ Global context not set, cannot show notification');
+      _debugLog('Global context not set');
       return;
     }
 
@@ -152,7 +154,7 @@ class GlobalNotificationHandler {
     final body = message.notification?.body ?? 'You have a new notification';
     final onTap = _buildNavigationAction(data, type.toString());
 
-    print('📱 Handling FCM notification: $type - $title');
+    _debugLog('Handling FCM notification: $type');
 
     switch (type) {
       case 'SESSION_REQUEST':
@@ -238,10 +240,8 @@ class GlobalNotificationHandler {
     String body, {
     VoidCallback? onTap,
   }) async {
-    print('🔔 Handling session request notification');
     final isEnabled =
         await _settingsService.isNotificationEnabled('sessionExpiring');
-    print('  - Session notifications enabled: $isEnabled');
     if (!isEnabled) return;
 
     _notificationManager.showSystemNotification(
@@ -250,7 +250,7 @@ class GlobalNotificationHandler {
       body,
       onTap: onTap,
     );
-    print('✅ Session request notification shown');
+    _debugLog('Session request notification shown');
   }
 
   // Handle session response notification
@@ -412,6 +412,10 @@ class GlobalNotificationHandler {
     }
 
     final deepLink = data['deepLink']?.toString().trim() ?? '';
+    final deepLinkAllowed = deepLink.startsWith('/appointments') || deepLink.startsWith('/requests');
+    if (deepLink.isNotEmpty && !deepLinkAllowed) {
+      return null;
+    }
     if (deepLink.contains('/appointments')) {
       return _openAppointments;
     }

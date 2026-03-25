@@ -3,11 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'package:hello/core/theme/theme.dart';
 
 import 'QR.dart';
 import 'MedicalCard.dart';
-import 'package:hello/SettingPages/AccountSettingsPage.dart';
 import 'package:hello/SettingPages/ChangePassword.dart';
 import 'package:hello/SettingPages/ContactSupportPage.dart';
 import 'package:hello/SettingPages/FaqPage.dart';
@@ -19,6 +17,7 @@ import 'package:hello/SettingPages/PrivacyPolicyPage.dart';
 import 'package:hello/SettingPages/PrivacyHelpSettingsPage.dart';
 import 'package:hello/SettingPages/ProfilePageSetting.dart';
 import 'package:hello/SettingPages/ProfileFamilySettingsPage.dart';
+import 'package:hello/SettingPages/SecurityCompliancePage.dart';
 import 'package:hello/SettingPages/SecuritySettingsPage.dart';
 import 'package:hello/SettingPages/ThemeSelectionPage.dart';
 import 'package:hello/SettingPages/TermsOfServicesPage.dart';
@@ -31,9 +30,9 @@ import 'package:hello/Notifications/notification_settings_service.dart';
 import 'package:hello/Login_Signup/logout_service.dart';
 import 'package:hello/localization/app_localizations.dart';
 import 'package:hello/providers/language_provider.dart';
+import 'package:hello/providers/timezone_provider.dart';
 import 'package:hello/widgets/app_text.dart';
 import 'package:hello/widgets/settings_primitives.dart';
-import 'package:hello/widgets/ai_floating_button.dart';
 
 class SettingsPage extends StatefulWidget {
   final Map<String, dynamic> userData; // 👈 full user data map
@@ -48,9 +47,14 @@ class _SettingsPageState extends State<SettingsPage> {
   bool sessionExpiring = true;
   bool reminders = true;
   bool systemNotifs = true;
+  bool allowMultipleSessions = false;
+  bool isLoadingSessionPolicy = false;
+  bool isUpdatingSessionPolicy = false;
   List<Map<String, dynamic>> linkedProfiles = [];
   bool isLoadingProfiles = false;
   bool isLoadingSettings = false;
+  bool isLoadingDeviceSessions = false;
+  List<Map<String, dynamic>> deviceSessions = [];
   late Map<String, dynamic> _userData;
   final ValueNotifier<int> _sectionRefreshToken = ValueNotifier<int>(0);
 
@@ -62,8 +66,15 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _userData = Map<String, dynamic>.from(widget.userData);
+    _syncSessionPolicyFromUserData(_userData);
+    context.read<TimezoneProvider>().applyUserTimeZone(
+          _userData,
+          fallbackToDefault: true,
+        );
     _loadLinkedProfiles();
     _loadNotificationSettings();
+    _loadDeviceSessions();
+    _loadSessionPolicy();
     _refreshUserFromPrefs();
   }
 
@@ -78,12 +89,41 @@ class _SettingsPageState extends State<SettingsPage> {
     super.didUpdateWidget(oldWidget);
     if (!mapEquals(oldWidget.userData, widget.userData)) {
       _userData = Map<String, dynamic>.from(widget.userData);
+      _syncSessionPolicyFromUserData(_userData);
       _notifySectionRefresh();
     }
   }
 
   void _notifySectionRefresh() {
     _sectionRefreshToken.value++;
+  }
+
+  bool? _parseBoolLike(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final normalized = (value ?? '').toString().trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+    if (normalized == 'true' ||
+        normalized == '1' ||
+        normalized == 'yes' ||
+        normalized == 'on' ||
+        normalized == 'enabled') {
+      return true;
+    }
+    if (normalized == 'false' ||
+        normalized == '0' ||
+        normalized == 'no' ||
+        normalized == 'off' ||
+        normalized == 'disabled') {
+      return false;
+    }
+    return null;
+  }
+
+  void _syncSessionPolicyFromUserData(Map<String, dynamic> source) {
+    final parsed = _parseBoolLike(source['allowMultipleSessions']);
+    if (parsed == null) return;
+    allowMultipleSessions = parsed;
   }
 
   Future<void> _loadLinkedProfiles() async {
@@ -117,9 +157,14 @@ class _SettingsPageState extends State<SettingsPage> {
       if (stored == null) return;
       final decoded = jsonDecode(stored);
       if (decoded is Map<String, dynamic>) {
+        await context.read<TimezoneProvider>().applyUserTimeZone(
+              decoded,
+              fallbackToDefault: true,
+            );
         if (!mounted) return;
         setState(() {
           _userData = Map<String, dynamic>.from(decoded);
+          _syncSessionPolicyFromUserData(_userData);
         });
         _notifySectionRefresh();
       }
@@ -151,6 +196,135 @@ class _SettingsPageState extends State<SettingsPage> {
         isLoadingSettings = false;
       });
       _notifySectionRefresh();
+    }
+  }
+
+  Future<void> _loadDeviceSessions() async {
+    if (!mounted) return;
+    setState(() {
+      isLoadingDeviceSessions = true;
+    });
+    _notifySectionRefresh();
+    try {
+      final sessions = await ApiService.fetchDeviceSessions();
+      if (!mounted) return;
+      setState(() {
+        deviceSessions = sessions;
+      });
+      _notifySectionRefresh();
+    } catch (e) {
+      print("Error loading device sessions: $e");
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isLoadingDeviceSessions = false;
+      });
+      _notifySectionRefresh();
+    }
+  }
+
+  Future<void> _loadSessionPolicy() async {
+    if (!mounted) return;
+    setState(() {
+      isLoadingSessionPolicy = true;
+    });
+    _notifySectionRefresh();
+    try {
+      final policy = await ApiService.fetchSessionPolicy();
+      if (!mounted) return;
+      final parsed = _parseBoolLike(policy['allowMultipleSessions']);
+      if (parsed == null) return;
+      setState(() {
+        allowMultipleSessions = parsed;
+        _userData['allowMultipleSessions'] = parsed;
+      });
+      _notifySectionRefresh();
+    } catch (e) {
+      print("Error loading session policy: $e");
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isLoadingSessionPolicy = false;
+      });
+      _notifySectionRefresh();
+    }
+  }
+
+  Future<void> _updateSessionPolicy(bool value) async {
+    if (isUpdatingSessionPolicy) return;
+    if (!mounted) return;
+    setState(() {
+      isUpdatingSessionPolicy = true;
+    });
+    _notifySectionRefresh();
+
+    try {
+      final response = await ApiService.updateSessionPolicy(
+        allowMultipleSessions: value,
+      );
+      if (!mounted) return;
+
+      if (response['success'] == true) {
+        final parsed =
+            _parseBoolLike(response['allowMultipleSessions']) ?? value;
+        setState(() {
+          allowMultipleSessions = parsed;
+          _userData['allowMultipleSessions'] = parsed;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              parsed
+                  ? context.l10n.auto('Multiple sessions enabled')
+                  : context.l10n.auto('Single active session policy enabled'),
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              (response['message'] ?? 'Unable to update session policy')
+                  .toString(),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unable to update session policy: $e'),
+        ),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isUpdatingSessionPolicy = false;
+      });
+      _notifySectionRefresh();
+    }
+  }
+
+  Future<void> _logoutDeviceSession(String id) async {
+    final success = await ApiService.logoutDeviceSession(id);
+    if (!mounted) return;
+    if (success) {
+      await _loadDeviceSessions();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.auto('Device logged out'))),
+      );
+    }
+  }
+
+  Future<void> _logoutAllDeviceSessions() async {
+    final success = await ApiService.logoutAllDeviceSessions();
+    if (!mounted) return;
+    if (success) {
+      await _loadDeviceSessions();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.auto('All devices logged out'))),
+      );
     }
   }
 
@@ -287,332 +461,89 @@ class _SettingsPageState extends State<SettingsPage> {
             SettingsPageHeader(
               title: l10n.auto('Settings'),
               subtitle: l10n.auto(
-                'Manage privacy, linked profiles, app appearance, and updates in one place.',
+                'Manage your account, appearance, privacy, and safety controls in one place.',
               ),
               icon: Icons.settings_rounded,
             ),
             const SizedBox(height: SettingsTokens.sectionGap),
+            _buildSettingsGroupHeading(
+              context,
+              title: l10n.auto('Account'),
+              subtitle: l10n.auto(
+                'Profile, visual preferences, and privacy controls.',
+              ),
+            ),
             SettingsSectionCard(
               icon: Icons.badge_outlined,
-              title: l10n.auto('Profile & Family'),
-              subtitle: l10n.auto('Manage your identity and linked profiles'),
-              onTap: () => _openSettingsSection(
-                ProfileFamilySettingsPage(
-                  refreshListenable: _sectionRefreshToken,
-                  title: l10n.auto('Profile & Family'),
-                  subtitle:
-                      l10n.auto('Manage your identity and linked profiles'),
-                  contentBuilder: (sectionContext) {
-                    final String name =
-                        _userData['name']?.toString() ?? 'Your Name';
-                    final String email =
-                        _userData['email']?.toString() ?? 'youremail@gmail.com';
-                    final String mobile =
-                        _userData['mobile']?.toString() ?? 'N/A';
-                    final String aadhaar =
-                        _userData['aadhaar']?.toString() ?? 'N/A';
-                    final String dob =
-                        _userData['dateOfBirth']?.toString() ?? 'N/A';
-                    return Column(
-                      children: [
-                        SettingsSection(
-                          title: sectionContext.l10n.auto('Identity'),
-                          subtitle: sectionContext.l10n.auto(
-                            'Review your personal details and keep linked family profiles organized.',
-                          ),
-                          child: SettingsGroupCard(
-                            child: Column(
-                              children: [
-                                _buildPersonalDetailsTile(
-                                  sectionContext,
-                                  name: name,
-                                  email: email,
-                                  mobile: mobile,
-                                  aadhaar: aadhaar,
-                                  dob: dob,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: SettingsTokens.sectionGap),
-                        _buildSwitchProfileSection(sectionContext),
-                      ],
-                    );
-                  },
-                ),
+              title: l10n.auto('Account'),
+              subtitle: l10n.auto('Profile and linked family profiles'),
+              onTap: () => _openSettingsSection(_buildAccountSectionPage()),
+            ),
+            SettingsSectionCard(
+              icon: Icons.palette_outlined,
+              title: l10n.auto('App Appearance'),
+              subtitle: l10n.auto(
+                'Theme Studio, app language, and timezone settings',
               ),
+              onTap: () =>
+                  _openSettingsSection(_buildAppAppearanceSectionPage()),
             ),
             SettingsSectionCard(
               icon: Icons.lock_outline_rounded,
-              title: l10n.auto('Security'),
-              subtitle: l10n.auto('Keep your account protected'),
-              onTap: () => _openSettingsSection(
-                SecuritySettingsPage(
-                  refreshListenable: _sectionRefreshToken,
-                  title: l10n.auto('Security'),
-                  subtitle: l10n.auto('Keep your account protected'),
-                  contentBuilder: (sectionContext) {
-                    return SettingsSection(
-                      title: sectionContext.l10n.auto('Credentials'),
-                      subtitle: sectionContext.l10n.auto(
-                        'Update the core credentials that protect your account.',
-                      ),
-                      child: SettingsGroupCard(
-                        child: Column(
-                          children: [
-                            _buildTile(
-                              sectionContext,
-                              Icons.lock,
-                              l10n.auto('Password'),
-                              l10n.auto('Change your account password'),
-                              const ChangePasswordScreen(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
+              title: l10n.auto('Privacy & Security'),
+              subtitle:
+                  l10n.auto('Password, session policy, and active devices'),
+              onTap: () =>
+                  _openSettingsSection(_buildPrivacySecuritySectionPage()),
+            ),
+            const SizedBox(height: SettingsTokens.sectionGap),
+            _buildSettingsGroupHeading(
+              context,
+              title: l10n.auto('Care & Safety'),
+              subtitle: l10n.auto(
+                'Emergency tools and alerts that keep care responsive.',
               ),
             ),
             SettingsSectionCard(
-              icon: Icons.health_and_safety_outlined,
-              title: l10n.auto('Health Access'),
-              subtitle: l10n.auto('Appointments, QR sharing and medical card'),
-              onTap: () => _openSettingsSection(
-                HealthAccessSettingsPage(
-                  refreshListenable: _sectionRefreshToken,
-                  title: l10n.auto('Health Access'),
-                  subtitle:
-                      l10n.auto('Appointments, QR sharing and medical card'),
-                  contentBuilder: (sectionContext) {
-                    return SettingsSection(
-                      title: sectionContext.l10n.auto('Access Tools'),
-                      subtitle: sectionContext.l10n.auto(
-                        'Open the tools you use to share, view, and manage care access.',
-                      ),
-                      child: SettingsGroupCard(
-                        child: Column(
-                          children: [
-                            _buildTile(
-                              sectionContext,
-                              Icons.share,
-                              l10n.auto('Sharing Controls'),
-                              l10n.auto('Manage your QR sharing options'),
-                              QRPage(),
-                              showDivider: true,
-                            ),
-                            _buildTile(
-                              sectionContext,
-                              Icons.calendar_today,
-                              l10n.auto('Appointments'),
-                              l10n.auto('View and manage your appointments'),
-                              const AppointmentsPage(),
-                              showDivider: true,
-                            ),
-                            _buildMedicalCardTile(sectionContext),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-            SettingsSectionCard(
-              icon: Icons.tune_rounded,
-              title: l10n.auto('App Preferences'),
-              subtitle: l10n.auto('Language, theme and app appearance'),
-              onTap: () => _openSettingsSection(
-                PreferencesSettingsPage(
-                  refreshListenable: _sectionRefreshToken,
-                  title: l10n.auto('App Preferences'),
-                  subtitle: l10n.auto('Language, theme and app appearance'),
-                  contentBuilder: (sectionContext) {
-                    return Column(
-                      children: [
-                        _buildLanguageSection(sectionContext),
-                        const SizedBox(height: SettingsTokens.sectionGap),
-                        _buildThemePreferenceSection(sectionContext),
-                        const SizedBox(height: SettingsTokens.sectionGap),
-                        SettingsSection(
-                          title: sectionContext.l10n.auto('Utilities'),
-                          subtitle: sectionContext.l10n.auto(
-                            'Quick actions for app metadata and assistant placement.',
-                          ),
-                          child: SettingsGroupCard(
-                            child: Column(
-                              children: [
-                                _buildAboutAppTile(sectionContext),
-                                _buildAIAssistantResetTile(sectionContext),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
+              icon: Icons.my_location_rounded,
+              title: l10n.auto('Emergency & SOS'),
+              subtitle:
+                  l10n.auto('SOS, appointments, QR sharing, and medical card'),
+              onTap: () =>
+                  _openSettingsSection(_buildEmergencySosSectionPage()),
             ),
             SettingsSectionCard(
               icon: Icons.notifications_active_outlined,
               title: l10n.auto('Notifications'),
               subtitle: l10n.auto('Choose what alerts you receive'),
-              onTap: () => _openSettingsSection(
-                NotificationsSettingsPage(
-                  refreshListenable: _sectionRefreshToken,
-                  title: l10n.auto('Notifications'),
-                  subtitle: l10n.auto('Choose what alerts you receive'),
-                  contentBuilder: (sectionContext) {
-                    final scheme = Theme.of(sectionContext).colorScheme;
-                    if (isLoadingSettings) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: CircularProgressIndicator(),
-                        ),
-                      );
-                    }
-                    return SettingsSection(
-                      title: sectionContext.l10n.auto('Alert Categories'),
-                      subtitle: sectionContext.l10n.auto(
-                        'Choose the moments when the app should interrupt you.',
-                      ),
-                      child: SettingsGroupCard(
-                        child: Column(
-                          children: [
-                            _buildNotificationSwitchTile(
-                              sectionContext,
-                              l10n.auto('Session Expiring'),
-                              l10n.auto(
-                                'Get notified when your session with doctor is about to expire (last 30 seconds)',
-                              ),
-                              sessionExpiring,
-                              Icons.timer,
-                              scheme.primary,
-                              (val) => _updateNotificationSetting(
-                                  'sessionExpiring', val),
-                              showDivider: true,
-                            ),
-                            _buildNotificationSwitchTile(
-                              sectionContext,
-                              l10n.auto('Reminders'),
-                              l10n.auto(
-                                'Receive appointment reminders and other important notifications',
-                              ),
-                              reminders,
-                              Icons.notifications,
-                              scheme.secondary,
-                              (val) =>
-                                  _updateNotificationSetting('reminders', val),
-                              showDivider: true,
-                            ),
-                            _buildNotificationSwitchTile(
-                              sectionContext,
-                              l10n.auto('System'),
-                              l10n.auto(
-                                'Get system updates, advertisements, and instruction notifications',
-                              ),
-                              systemNotifs,
-                              Icons.info,
-                              scheme.tertiary,
-                              (val) =>
-                                  _updateNotificationSetting('system', val),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
+              onTap: () =>
+                  _openSettingsSection(_buildNotificationsSectionPage()),
+            ),
+            const SizedBox(height: SettingsTokens.sectionGap),
+            _buildSettingsGroupHeading(
+              context,
+              title: l10n.auto('Information'),
+              subtitle: l10n.auto(
+                'App details, legal documents, and compliance notes.',
               ),
             ),
             SettingsSectionCard(
-              icon: Icons.verified_user_outlined,
-              title: l10n.auto('Privacy & Help'),
-              subtitle: l10n.auto('Policies, FAQs and support'),
-              onTap: () => _openSettingsSection(
-                PrivacyHelpSettingsPage(
-                  refreshListenable: _sectionRefreshToken,
-                  title: l10n.auto('Privacy & Help'),
-                  subtitle: l10n.auto('Policies, FAQs and support'),
-                  contentBuilder: (sectionContext) {
-                    return SettingsSection(
-                      title: sectionContext.l10n.auto('Help Resources'),
-                      subtitle: sectionContext.l10n.auto(
-                        'Policies, support documents, and direct help channels.',
-                      ),
-                      child: SettingsGroupCard(
-                        child: Column(
-                          children: [
-                            _buildTile(
-                              sectionContext,
-                              Icons.privacy_tip,
-                              l10n.auto('Privacy Policy'),
-                              l10n.auto('Read how your data is handled'),
-                              PrivacyPolicy(),
-                              showDivider: true,
-                            ),
-                            _buildTile(
-                              sectionContext,
-                              Icons.description,
-                              l10n.auto('Terms of Service'),
-                              l10n.auto('Review terms and conditions'),
-                              TermsOfService(),
-                              showDivider: true,
-                            ),
-                            _buildTile(
-                              sectionContext,
-                              Icons.help_outline,
-                              l10n.auto('FAQs'),
-                              l10n.auto('Find answers to common questions'),
-                              FAQs(),
-                              showDivider: true,
-                            ),
-                            _buildTile(
-                              sectionContext,
-                              Icons.support_agent,
-                              l10n.auto('Contact Support'),
-                              l10n.auto('Get help from the support team'),
-                              ContactSupportScreen(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
+              icon: Icons.info_outline_rounded,
+              title: l10n.auto('About'),
+              subtitle:
+                  l10n.auto('App version, release info, and update status'),
+              onTap: () => _openSettingsSection(const AboutAppPage()),
             ),
             SettingsSectionCard(
-              icon: Icons.logout_rounded,
-              title: l10n.auto('Account'),
-              subtitle: l10n.auto('Sign out from your current account'),
-              onTap: () => _openSettingsSection(
-                AccountSettingsPage(
-                  refreshListenable: _sectionRefreshToken,
-                  title: l10n.auto('Account'),
-                  subtitle: l10n.auto('Sign out from your current account'),
-                  contentBuilder: (sectionContext) {
-                    return SettingsSection(
-                      title: sectionContext.l10n.auto('Session'),
-                      subtitle: sectionContext.l10n.auto(
-                        'End this session securely on the current device.',
-                      ),
-                      child: SettingsGroupCard(
-                        child: Column(
-                          children: [
-                            _buildLogoutTile(sectionContext),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
+              icon: Icons.gavel_rounded,
+              title: l10n.auto('Legal & Compliance'),
+              subtitle:
+                  l10n.auto('Privacy policy, terms, support, and compliance'),
+              onTap: () =>
+                  _openSettingsSection(_buildLegalComplianceSectionPage()),
             ),
+            const SizedBox(height: 8),
+            _buildRootLogoutButton(context),
           ],
         ),
       ),
@@ -622,6 +553,454 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _openSettingsSection(Widget page) async {
     await pushSettingsRoute(context, page);
     _notifySectionRefresh();
+  }
+
+  Widget _buildSettingsGroupHeading(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 2, 2, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppText(
+            title,
+            variant: AppTextVariant.subtitle,
+            fontWeight: FontWeight.w700,
+          ),
+          const SizedBox(height: 3),
+          AppText(
+            subtitle,
+            variant: AppTextVariant.caption,
+            color: Theme.of(context).textTheme.bodyMedium?.color,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountSectionPage() {
+    final l10n = context.l10n;
+    return ProfileFamilySettingsPage(
+      refreshListenable: _sectionRefreshToken,
+      title: l10n.auto('Account'),
+      subtitle: l10n.auto('Manage your identity and linked profiles'),
+      contentBuilder: (sectionContext) {
+        final String name = _userData['name']?.toString() ?? 'Your Name';
+        final String email =
+            _userData['email']?.toString() ?? 'youremail@gmail.com';
+        final String mobile = _userData['mobile']?.toString() ?? 'N/A';
+        final String aadhaar = _userData['aadhaar']?.toString() ?? 'N/A';
+        final String dob = _userData['dateOfBirth']?.toString() ?? 'N/A';
+        return Column(
+          children: [
+            SettingsSection(
+              title: sectionContext.l10n.auto('Identity'),
+              subtitle: sectionContext.l10n.auto(
+                'Review your personal details and keep linked family profiles organized.',
+              ),
+              child: SettingsGroupCard(
+                child: Column(
+                  children: [
+                    _buildPersonalDetailsTile(
+                      sectionContext,
+                      name: name,
+                      email: email,
+                      mobile: mobile,
+                      aadhaar: aadhaar,
+                      dob: dob,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: SettingsTokens.sectionGap),
+            _buildSwitchProfileSection(sectionContext),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildPrivacySecuritySectionPage() {
+    final l10n = context.l10n;
+    return SecuritySettingsPage(
+      refreshListenable: _sectionRefreshToken,
+      title: l10n.auto('Privacy & Security'),
+      subtitle: l10n.auto('Password, session policy, and active devices'),
+      contentBuilder: (sectionContext) {
+        return Column(
+          children: [
+            SettingsSection(
+              title: sectionContext.l10n.auto('Credentials'),
+              subtitle: sectionContext.l10n.auto(
+                'Update the core credentials that protect your account.',
+              ),
+              child: SettingsGroupCard(
+                child: Column(
+                  children: [
+                    _buildTile(
+                      sectionContext,
+                      Icons.lock,
+                      l10n.auto('Password'),
+                      l10n.auto('Change your account password'),
+                      const ChangePasswordScreen(),
+                      showDivider: true,
+                    ),
+                    SettingsItemTile(
+                      icon: Icons.logout_rounded,
+                      title: l10n.auto('Logout all devices'),
+                      subtitle: l10n.auto('End all active device sessions'),
+                      onTap: _logoutAllDeviceSessions,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: SettingsTokens.sectionGap),
+            _buildSessionPolicySection(sectionContext),
+            const SizedBox(height: SettingsTokens.sectionGap),
+            SettingsSection(
+              title: sectionContext.l10n.auto('Active Devices'),
+              subtitle: sectionContext.l10n.auto(
+                'Review and revoke active sessions by device.',
+              ),
+              child: SettingsGroupCard(
+                child: isLoadingDeviceSessions
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    : Column(
+                        children: deviceSessions.isEmpty
+                            ? [
+                                Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: AppText(
+                                    sectionContext.l10n.auto(
+                                      'No active device sessions found.',
+                                    ),
+                                    variant: AppTextVariant.caption,
+                                  ),
+                                ),
+                              ]
+                            : deviceSessions.map((session) {
+                                final id = session['id']?.toString() ?? '';
+                                final device = session['deviceInfo']
+                                            ?.toString()
+                                            .trim()
+                                            .isNotEmpty ==
+                                        true
+                                    ? session['deviceInfo'].toString()
+                                    : (session['userAgent']?.toString() ??
+                                        sectionContext.l10n
+                                            .auto('Unknown device'));
+                                final ip =
+                                    session['ipAddress']?.toString() ?? 'N/A';
+                                return SettingsItemTile(
+                                  icon: Icons.devices_rounded,
+                                  title: device,
+                                  subtitle: sectionContext.l10n.auto('IP: $ip'),
+                                  onTap: id.isEmpty
+                                      ? null
+                                      : () => _logoutDeviceSession(id),
+                                  trailing: const Icon(Icons.logout, size: 16),
+                                  showDivider: deviceSessions.last != session,
+                                );
+                              }).toList(),
+                      ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildEmergencySosSectionPage() {
+    final l10n = context.l10n;
+    return HealthAccessSettingsPage(
+      refreshListenable: _sectionRefreshToken,
+      title: l10n.auto('Emergency & SOS'),
+      subtitle: l10n.auto('SOS, appointments, QR sharing, and medical card'),
+      contentBuilder: (sectionContext) {
+        return SettingsSection(
+          title: sectionContext.l10n.auto('Access Tools'),
+          subtitle: sectionContext.l10n.auto(
+            'Open the tools you use to share, view, and manage care access.',
+          ),
+          child: SettingsGroupCard(
+            child: Column(
+              children: [
+                _buildTile(
+                  sectionContext,
+                  Icons.share,
+                  l10n.auto('Sharing Controls'),
+                  l10n.auto('Manage your QR sharing options'),
+                  QRPage(),
+                  showDivider: true,
+                ),
+                _buildTile(
+                  sectionContext,
+                  Icons.calendar_today,
+                  l10n.auto('Appointments'),
+                  l10n.auto('View and manage your appointments'),
+                  const AppointmentsPage(),
+                  showDivider: true,
+                ),
+                _buildMedicalCardTile(sectionContext),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAppAppearanceSectionPage() {
+    final l10n = context.l10n;
+    return PreferencesSettingsPage(
+      refreshListenable: _sectionRefreshToken,
+      title: l10n.auto('App Appearance'),
+      subtitle: l10n.auto(
+        'Open Theme Studio, choose the app language, and set the timezone used for dates and times.',
+      ),
+      contentBuilder: (sectionContext) {
+        return Column(
+          children: [
+            _buildThemeStudioSection(sectionContext),
+            const SizedBox(height: SettingsTokens.sectionGap),
+            _buildLanguageSection(sectionContext),
+            const SizedBox(height: SettingsTokens.sectionGap),
+            _buildTimezoneSection(sectionContext),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSessionPolicySection(BuildContext sectionContext) {
+    return SettingsSection(
+      title: sectionContext.l10n.auto('Session Policy'),
+      subtitle: sectionContext.l10n.auto(
+        'Choose whether your account allows simultaneous logins on multiple devices.',
+      ),
+      child: SettingsGroupCard(
+        child: Column(
+          children: [
+            if (isLoadingSessionPolicy)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 18),
+                child: Center(
+                  child: SizedBox(
+                    height: 22,
+                    width: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2.3),
+                  ),
+                ),
+              )
+            else
+              SettingsSwitchTile(
+                icon: Icons.phonelink_ring_rounded,
+                title: sectionContext.l10n.auto('Allow Multiple Sessions'),
+                subtitle: allowMultipleSessions
+                    ? sectionContext.l10n.auto(
+                        'Multiple devices can stay logged in at the same time.',
+                      )
+                    : sectionContext.l10n.auto(
+                        'Only one active session is allowed. New logins require approval.',
+                      ),
+                value: allowMultipleSessions,
+                onChanged: (value) {
+                  if (isUpdatingSessionPolicy) return;
+                  _updateSessionPolicy(value);
+                },
+              ),
+            if (isUpdatingSessionPolicy)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 14),
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThemeStudioSection(BuildContext sectionContext) {
+    return SettingsSection(
+      title: sectionContext.l10n.auto('Theme Studio'),
+      subtitle: sectionContext.l10n.auto(
+        'Change light, dark, or system mode and choose the accent style used across the app.',
+      ),
+      child: SettingsGroupCard(
+        child: SettingsItemTile(
+          icon: Icons.auto_awesome_rounded,
+          title: sectionContext.l10n.auto('Theme Studio'),
+          subtitle: sectionContext.l10n.auto(
+            'Open the theme controls and preview how the app will look.',
+          ),
+          onTap: () => pushSettingsRoute(
+            sectionContext,
+            const ThemeSelectionPage(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotificationsSectionPage() {
+    final l10n = context.l10n;
+    return NotificationsSettingsPage(
+      refreshListenable: _sectionRefreshToken,
+      title: l10n.auto('Notifications'),
+      subtitle: l10n.auto('Choose what alerts you receive'),
+      contentBuilder: (sectionContext) {
+        final scheme = Theme.of(sectionContext).colorScheme;
+        if (isLoadingSettings) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+        return SettingsSection(
+          title: sectionContext.l10n.auto('Alert Categories'),
+          subtitle: sectionContext.l10n.auto(
+            'Choose the moments when the app should interrupt you.',
+          ),
+          child: SettingsGroupCard(
+            child: Column(
+              children: [
+                _buildNotificationSwitchTile(
+                  sectionContext,
+                  l10n.auto('Session Expiring'),
+                  l10n.auto(
+                    'Get notified when your session with doctor is about to expire (last 30 seconds)',
+                  ),
+                  sessionExpiring,
+                  Icons.timer,
+                  scheme.primary,
+                  (val) => _updateNotificationSetting('sessionExpiring', val),
+                  showDivider: true,
+                ),
+                _buildNotificationSwitchTile(
+                  sectionContext,
+                  l10n.auto('Reminders'),
+                  l10n.auto(
+                    'Receive appointment reminders and other important notifications',
+                  ),
+                  reminders,
+                  Icons.notifications,
+                  scheme.secondary,
+                  (val) => _updateNotificationSetting('reminders', val),
+                  showDivider: true,
+                ),
+                _buildNotificationSwitchTile(
+                  sectionContext,
+                  l10n.auto('System'),
+                  l10n.auto(
+                    'Get system updates, advertisements, and instruction notifications',
+                  ),
+                  systemNotifs,
+                  Icons.info,
+                  scheme.tertiary,
+                  (val) => _updateNotificationSetting('system', val),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLegalComplianceSectionPage() {
+    final l10n = context.l10n;
+    return PrivacyHelpSettingsPage(
+      refreshListenable: _sectionRefreshToken,
+      title: l10n.auto('Legal & Compliance'),
+      subtitle: l10n.auto('Policies, terms, support, and compliance'),
+      contentBuilder: (sectionContext) {
+        return SettingsSection(
+          title: sectionContext.l10n.auto('Help Resources'),
+          subtitle: sectionContext.l10n.auto(
+            'Policies, support documents, and direct help channels.',
+          ),
+          child: SettingsGroupCard(
+            child: Column(
+              children: [
+                _buildTile(
+                  sectionContext,
+                  Icons.privacy_tip,
+                  l10n.auto('Privacy Policy'),
+                  l10n.auto('Read how your data is handled'),
+                  PrivacyPolicy(),
+                  showDivider: true,
+                ),
+                _buildTile(
+                  sectionContext,
+                  Icons.description,
+                  l10n.auto('Terms of Service'),
+                  l10n.auto('Review terms and conditions'),
+                  TermsOfService(),
+                  showDivider: true,
+                ),
+                _buildTile(
+                  sectionContext,
+                  Icons.verified_user,
+                  l10n.auto('Security & Compliance'),
+                  l10n.auto('Review implemented security controls'),
+                  const SecurityCompliancePage(),
+                  showDivider: true,
+                ),
+                _buildTile(
+                  sectionContext,
+                  Icons.help_outline,
+                  l10n.auto('FAQs'),
+                  l10n.auto('Find answers to common questions'),
+                  FAQs(),
+                  showDivider: true,
+                ),
+                _buildTile(
+                  sectionContext,
+                  Icons.support_agent,
+                  l10n.auto('Contact Support'),
+                  l10n.auto('Get help from the support team'),
+                  ContactSupportScreen(),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildRootLogoutButton(BuildContext context) {
+    final l10n = context.l10n;
+    final errorColor = Theme.of(context).colorScheme.error;
+    return OutlinedButton.icon(
+      onPressed: _handleLogout,
+      icon: Icon(Icons.logout_rounded, color: errorColor),
+      label: Text(
+        l10n.auto('Logout'),
+        style: TextStyle(
+          color: errorColor,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(double.infinity, 56),
+        side: BorderSide(color: errorColor.withValues(alpha: 0.42)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+      ),
+    );
   }
 
   Widget _buildPersonalDetailsTile(
@@ -710,55 +1089,99 @@ class _SettingsPageState extends State<SettingsPage> {
     )['label']!;
 
     return SettingsSection(
-      title: l10n.t('settings.language.selectorTitle'),
-      subtitle: l10n.t('settings.language.selectorSubtitle'),
+      title: l10n.auto('App Language'),
+      subtitle: l10n.auto(
+        'Choose the language used across menus, buttons, and messages.',
+      ),
       child: SettingsGroupCard(
         child: Column(
           children: [
             SettingsItemTile(
               icon: Icons.translate_rounded,
               title: l10n.auto('App Language'),
-              subtitle: l10n.auto('Choose the language used across the app.'),
+              subtitle: l10n.auto(
+                'Choose the language used in menus, buttons, and messages.',
+              ),
               onTap: () => _showLanguagePicker(
                 sectionContext,
                 languages: languages,
                 currentCode: currentCode,
               ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Theme.of(sectionContext)
-                          .colorScheme
-                          .primary
-                          .withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: AppText(
-                      currentLabel,
-                      variant: AppTextVariant.caption,
-                      color: Theme.of(sectionContext).colorScheme.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Icon(
-                    Icons.arrow_forward_ios_rounded,
-                    size: 15,
-                    color: Theme.of(sectionContext)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.34),
-                  ),
-                ],
+              trailing: _buildSelectionTrailing(
+                context: sectionContext,
+                label: currentLabel,
+                maxWidth: 92,
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildTimezoneSection(BuildContext sectionContext) {
+    final timezoneProvider = sectionContext.watch<TimezoneProvider>();
+    final l10n = sectionContext.l10n;
+    final selected = timezoneProvider.selectedOption;
+
+    return SettingsSection(
+      title: l10n.auto('Time Zone'),
+      subtitle: l10n.auto(
+        'Choose the time zone used for appointments, reminders, and all date displays.',
+      ),
+      child: SettingsGroupCard(
+        child: SettingsItemTile(
+          icon: Icons.schedule_rounded,
+          title: l10n.auto('Current Time Zone'),
+          subtitle: l10n.auto(
+            'Select the time zone the app should use when showing dates and times.',
+          ),
+          onTap: () => _showTimezonePicker(sectionContext),
+          trailing: _buildSelectionTrailing(
+            context: sectionContext,
+            label: selected.label,
+            maxWidth: 132,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectionTrailing({
+    required BuildContext context,
+    required String label,
+    double maxWidth = 120,
+  }) {
+    final theme = Theme.of(context);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: AppText(
+              label,
+              variant: AppTextVariant.caption,
+              color: theme.colorScheme.primary,
+              fontWeight: FontWeight.w700,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Icon(
+          Icons.arrow_forward_ios_rounded,
+          size: 15,
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.34),
+        ),
+      ],
     );
   }
 
@@ -799,172 +1222,6 @@ class _SettingsPageState extends State<SettingsPage> {
       accentColor: iconColor,
       showDivider: showDivider,
       onChanged: onChanged,
-    );
-  }
-
-  Widget _buildThemePreferenceSection(BuildContext context) {
-    final themeProvider = context.watch<ThemeProvider>();
-    final l10n = context.l10n;
-    final scheme = Theme.of(context).colorScheme;
-    final currentAccent = themeProvider.customPrimaryColor ?? scheme.primary;
-    final currentSecondary = themeProvider.customSecondaryColor;
-    final paletteLabel = themeProvider.customPrimaryColor == null
-        ? appThemePaletteLabel(themeProvider.palette)
-        : themeProvider.hasCustomGradient
-            ? l10n.auto('Custom Gradient')
-            : l10n.auto('Custom Solid');
-    final paletteSubtitle = themeProvider.customPrimaryColor == null
-        ? l10n.auto('Using the built-in palette accent')
-        : themeProvider.hasCustomGradient
-            ? l10n.auto('Custom gradient accent active across the app')
-            : l10n.auto('Custom solid accent active across the app');
-
-    return SettingsSection(
-      title: l10n.auto('Theme & Mode'),
-      subtitle: l10n.auto(
-        'Review the active palette, open the visual preview page, and set your preferred appearance mode.',
-      ),
-      child: Column(
-        children: [
-          SettingsGroupCard(
-            child: Column(
-              children: [
-                SettingsItemTile(
-                  icon: Icons.palette_outlined,
-                  title: l10n.auto('Theme Style'),
-                  subtitle: paletteLabel,
-                  showDivider: true,
-                  onTap: () => pushSettingsRoute(
-                    context,
-                    const ThemeSelectionPage(),
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 22,
-                        height: 22,
-                        decoration: BoxDecoration(
-                          color:
-                              currentSecondary == null ? currentAccent : null,
-                          gradient: currentSecondary == null
-                              ? null
-                              : LinearGradient(
-                                  colors: [currentAccent, currentSecondary],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                          borderRadius: BorderRadius.circular(8),
-                          border:
-                              Border.all(color: Theme.of(context).dividerColor),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Icon(
-                        Icons.arrow_forward_ios_rounded,
-                        size: 15,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.34),
-                      ),
-                    ],
-                  ),
-                ),
-                SettingsItemTile(
-                  icon: Icons.color_lens_outlined,
-                  title: l10n.auto('Accent Color'),
-                  subtitle: paletteSubtitle,
-                  onTap: () => pushSettingsRoute(
-                    context,
-                    const ThemeSelectionPage(),
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: currentAccent.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: AppText(
-                          paletteLabel,
-                          variant: AppTextVariant.caption,
-                          fontWeight: FontWeight.w700,
-                          color: currentAccent,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Icon(
-                        Icons.arrow_forward_ios_rounded,
-                        size: 15,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.34),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          SegmentedModeSelector(
-            selectedMode: themeProvider.themeMode,
-            onChanged: themeProvider.setThemeMode,
-            labels: {
-              ThemeMode.light: l10n.auto('Light'),
-              ThemeMode.dark: l10n.auto('Dark'),
-              ThemeMode.system: l10n.auto('System'),
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAIAssistantResetTile(BuildContext sectionContext) {
-    return SettingsItemTile(
-      icon: Icons.smart_toy_outlined,
-      title: sectionContext.l10n.auto('Reset AI assistant position'),
-      subtitle: sectionContext.l10n.auto(
-        'Move the assistant bubble back to its default location',
-      ),
-      showDivider: false,
-      onTap: () async {
-        final messenger = ScaffoldMessenger.of(sectionContext);
-        final message =
-            sectionContext.l10n.auto('AI assistant position has been reset');
-        await resetAIAssistantButtonPosition();
-        if (!mounted) return;
-        _notifySectionRefresh();
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(message),
-          ),
-        );
-      },
-      trailing: const Icon(Icons.restart_alt_rounded, size: 18),
-    );
-  }
-
-  Widget _buildAboutAppTile(BuildContext sectionContext) {
-    return SettingsItemTile(
-      icon: Icons.info_outline_rounded,
-      title: sectionContext.l10n.auto('About App'),
-      subtitle: sectionContext.l10n.auto(
-        'View app version, release notes and check for latest updates',
-      ),
-      showDivider: true,
-      onTap: () {
-        pushSettingsRoute(sectionContext, const AboutAppPage());
-      },
-      trailing: const Icon(Icons.open_in_new_rounded, size: 18),
     );
   }
 
@@ -1046,6 +1303,86 @@ class _SettingsPageState extends State<SettingsPage> {
                           },
                         ),
                     ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showTimezonePicker(BuildContext sectionContext) async {
+    final timezoneProvider = sectionContext.read<TimezoneProvider>();
+    final l10n = sectionContext.l10n;
+    final currentTimeZone = timezoneProvider.timeZoneId;
+
+    await showModalBottomSheet<void>(
+      context: sectionContext,
+      backgroundColor: Theme.of(sectionContext).cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      isScrollControlled: true,
+      builder: (bottomSheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SettingsSectionHeader(
+                  title: l10n.auto('Select Timezone'),
+                  subtitle: l10n.auto(
+                    'All date and time displays will follow this timezone.',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: SettingsGroupCard(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: TimezoneProvider.supportedTimeZones.length,
+                      itemBuilder: (context, index) {
+                        final zone = TimezoneProvider.supportedTimeZones[index];
+                        final isSelected = zone.id == currentTimeZone;
+
+                        return SettingsItemTile(
+                          icon: Icons.public_rounded,
+                          title: zone.label,
+                          subtitle: zone.id,
+                          showDivider: index !=
+                              TimezoneProvider.supportedTimeZones.length - 1,
+                          trailing: isSelected
+                              ? Icon(
+                                  Icons.check_rounded,
+                                  color: Theme.of(sectionContext)
+                                      .colorScheme
+                                      .primary,
+                                )
+                              : const SizedBox.shrink(),
+                          onTap: () async {
+                            await timezoneProvider.setTimeZone(zone.id);
+                            if (!mounted) return;
+                            if (bottomSheetContext.mounted) {
+                              Navigator.of(bottomSheetContext).pop();
+                            }
+                            ScaffoldMessenger.of(sectionContext).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  l10n.auto(
+                                    'Timezone switched to ${zone.label}',
+                                  ),
+                                ),
+                              ),
+                            );
+                            _notifySectionRefresh();
+                          },
+                        );
+                      },
+                    ),
                   ),
                 ),
               ],
@@ -1857,16 +2194,6 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildLogoutTile(BuildContext sectionContext) {
-    return SettingsItemTile(
-      icon: Icons.logout_rounded,
-      iconColor: Colors.red,
-      title: sectionContext.l10n.auto('Logout'),
-      subtitle: sectionContext.l10n.auto('Sign out of your account'),
-      onTap: _handleLogout,
     );
   }
 }

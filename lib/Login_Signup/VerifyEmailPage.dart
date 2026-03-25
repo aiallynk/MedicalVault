@@ -5,7 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class VerifyEmailPage extends StatefulWidget {
   final String? incomingToken; // tokenId.secret from deep link
-  const VerifyEmailPage({super.key, this.incomingToken});
+  final String? prefilledEmail;
+  const VerifyEmailPage({super.key, this.incomingToken, this.prefilledEmail});
 
   @override
   State<VerifyEmailPage> createState() => _VerifyEmailPageState();
@@ -16,6 +17,12 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
   bool _isVerifying = false;
   String? _email;
   String? _status;
+
+  @override
+  void dispose() {
+    _codeCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -29,8 +36,9 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
   Future<void> _loadEmail() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
-      _email = prefs.getString('email');
+      _email = widget.prefilledEmail ?? prefs.getString('email');
     });
   }
 
@@ -106,57 +114,64 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Verify your email')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 8),
-            Text(
-              _email != null
-                  ? 'A verification link and code were sent to\n$_email'
-                  : 'A verification link and code were sent to your email',
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _codeCtrl,
-              decoration: const InputDecoration(
-                labelText: '6-digit code',
-                hintText: 'Enter the code from email',
-              ),
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-            ),
-            const SizedBox(height: 8),
-            if (_status != null)
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        Navigator.pop(context, false);
+      },
+      child: Scaffold(
+        appBar: AppBar(title: const Text('Verify your email')),
+        body: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 8),
               Text(
-                _status!,
+                _email != null
+                    ? 'A verification link and code were sent to\n$_email'
+                    : 'A verification link and code were sent to your email',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: _status!.toLowerCase().contains('success')
-                        ? Colors.green
-                        : Colors.red),
               ),
-            const Spacer(),
-            ElevatedButton(
-              onPressed: _isVerifying ? null : _verifyWithCode,
-              child: _isVerifying
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Verify with code'),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: _resend,
-              child: const Text('Resend verification'),
-            ),
-          ],
+              const SizedBox(height: 16),
+              TextField(
+                controller: _codeCtrl,
+                decoration: const InputDecoration(
+                  labelText: '6-digit code',
+                  hintText: 'Enter the code from email',
+                ),
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+              ),
+              const SizedBox(height: 8),
+              if (_status != null)
+                Text(
+                  _status!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: _status!.toLowerCase().contains('success')
+                          ? Colors.green
+                          : Colors.red),
+                ),
+              const Spacer(),
+              ElevatedButton(
+                onPressed: _isVerifying ? null : _verifyWithCode,
+                child: _isVerifying
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Verify with code'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: _resend,
+                child: const Text('Resend verification'),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../utils/timezone_utils.dart';
+
 class PastAppointmentCard extends StatelessWidget {
   final Map<String, dynamic> appointment;
   final VoidCallback onTap;
@@ -27,14 +29,12 @@ class PastAppointmentCard extends StatelessWidget {
     final doctorNotesShared = apt['doctorNotesShared'] ?? '';
     final linkedDocs = apt['linkedDocuments'] as List<dynamic>? ?? [];
 
-    String dateStr = '';
-    if (date != null) {
-      if (date is String) {
-        dateStr = DateTime.tryParse(date)?.toLocal().toString().split(' ')[0] ?? date;
-      } else if (date is Map && date['\$date'] != null) {
-        dateStr = DateTime.fromMillisecondsSinceEpoch(date['\$date']).toLocal().toString().split(' ')[0];
-      }
-    }
+    final dateStr = formatDateForContext(
+      context,
+      date,
+      pattern: 'yyyy-MM-dd',
+      fallback: '',
+    );
 
     String typeLabel = type.toString();
     if (type == 'consultation') typeLabel = 'Consultation';

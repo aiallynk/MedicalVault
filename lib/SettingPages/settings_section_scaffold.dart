@@ -60,9 +60,15 @@ class SettingsSectionScaffold extends StatelessWidget {
   IconData _iconForTitle(String value) {
     final normalized = value.toLowerCase();
     if (normalized.contains('profile')) return Icons.badge_outlined;
+    if (normalized.contains('appearance') || normalized.contains('theme')) {
+      return Icons.palette_outlined;
+    }
     if (normalized.contains('security')) return Icons.lock_outline_rounded;
     if (normalized.contains('health')) {
       return Icons.health_and_safety_outlined;
+    }
+    if (normalized.contains('emergency') || normalized.contains('sos')) {
+      return Icons.my_location_rounded;
     }
     if (normalized.contains('preference')) return Icons.tune_rounded;
     if (normalized.contains('notification')) {
@@ -71,7 +77,10 @@ class SettingsSectionScaffold extends StatelessWidget {
     if (normalized.contains('privacy') || normalized.contains('help')) {
       return Icons.verified_user_outlined;
     }
-    if (normalized.contains('account')) return Icons.logout_rounded;
+    if (normalized.contains('legal') || normalized.contains('compliance')) {
+      return Icons.gavel_rounded;
+    }
+    if (normalized.contains('account')) return Icons.badge_outlined;
     return Icons.settings_rounded;
   }
 }

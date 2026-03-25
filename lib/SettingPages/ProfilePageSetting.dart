@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
 import '../Document_model.dart';
 import '../api_service.dart';
@@ -33,6 +32,54 @@ class _ProfileNameState extends State<ProfileName> {
   bool _isUploadingProfileImage = false;
   bool _hasImageError = false;
 
+  String _sanitizeSensitiveValue(dynamic value) {
+    final raw = (value ?? '').toString().trim();
+    if (raw.isEmpty) return '';
+    if (raw.toLowerCase().startsWith('enc:v')) return '';
+    return raw;
+  }
+
+  Map<String, dynamic> _sanitizeUserPayload(Map<String, dynamic> incoming) {
+    final sanitized = Map<String, dynamic>.from(incoming);
+
+    final incomingAadhaar = _sanitizeSensitiveValue(sanitized['aadhaar']);
+    final previousAadhaar = _sanitizeSensitiveValue(user['aadhaar']);
+    sanitized['aadhaar'] =
+        incomingAadhaar.isNotEmpty ? incomingAadhaar : previousAadhaar;
+
+    final incomingAllergies = _sanitizeSensitiveValue(sanitized['allergies']);
+    final previousAllergies = _sanitizeSensitiveValue(user['allergies']);
+    sanitized['allergies'] =
+        incomingAllergies.isNotEmpty ? incomingAllergies : previousAllergies;
+
+    final incomingEmergency = sanitized['emergencyContact'];
+    final incomingEmergencyMap = incomingEmergency is Map
+        ? incomingEmergency.map((k, v) => MapEntry(k.toString(), v))
+        : <String, dynamic>{};
+    final previousEmergency = user['emergencyContact'];
+    final previousEmergencyMap = previousEmergency is Map
+        ? previousEmergency.map((k, v) => MapEntry(k.toString(), v))
+        : <String, dynamic>{};
+
+    final mergedEmergency = <String, dynamic>{
+      ...incomingEmergencyMap,
+      'name': _sanitizeSensitiveValue(incomingEmergencyMap['name']).isNotEmpty
+          ? _sanitizeSensitiveValue(incomingEmergencyMap['name'])
+          : _sanitizeSensitiveValue(previousEmergencyMap['name']),
+      'relationship':
+          _sanitizeSensitiveValue(incomingEmergencyMap['relationship'])
+                  .isNotEmpty
+              ? _sanitizeSensitiveValue(incomingEmergencyMap['relationship'])
+              : _sanitizeSensitiveValue(previousEmergencyMap['relationship']),
+      'phone': _sanitizeSensitiveValue(incomingEmergencyMap['phone']).isNotEmpty
+          ? _sanitizeSensitiveValue(incomingEmergencyMap['phone'])
+          : _sanitizeSensitiveValue(previousEmergencyMap['phone']),
+    };
+    sanitized['emergencyContact'] = mergedEmergency;
+
+    return sanitized;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -57,9 +104,14 @@ class _ProfileNameState extends State<ProfileName> {
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
+        final rawUser = body["data"]?["user"];
+        final userMap = rawUser is Map
+            ? rawUser.map((k, v) => MapEntry(k.toString(), v))
+            : <String, dynamic>{};
+        final sanitizedUser = _sanitizeUserPayload(userMap);
         if (!mounted) return;
         setState(() {
-          user = body["data"]["user"];
+          user = sanitizedUser;
           _loading = false;
         });
       } else {
@@ -564,8 +616,10 @@ class _ProfileNameState extends State<ProfileName> {
 
   Widget _infoRow(IconData icon, String label, String value, String fieldKey) {
     final l10n = context.l10n;
-    final displayValue =
-        value.isNotEmpty ? value : l10n.t('common.notAvailable');
+    final sanitizedValue = _sanitizeSensitiveValue(value);
+    final displayValue = sanitizedValue.isNotEmpty
+        ? sanitizedValue
+        : l10n.t('common.notAvailable');
 
     return Card(
       color: Theme.of(context).cardColor,
@@ -626,7 +680,7 @@ class _ProfileNameState extends State<ProfileName> {
                     ? Theme.of(context).iconTheme.color ?? Colors.white70
                     : Theme.of(context).primaryColor,
               ),
-              onPressed: () => _quickEditField(fieldKey, label, value),
+              onPressed: () => _quickEditField(fieldKey, label, sanitizedValue),
               tooltip: l10n.t('profile.quickEdit'),
             ),
           ],
@@ -1384,6 +1438,13 @@ class _EditProfilePageState extends State<EditProfilePage> {
   List<Map<String, dynamic>> medicalHistory = [];
   List<Map<String, dynamic>> medications = [];
 
+  String _sanitizeSensitiveValue(dynamic value) {
+    final raw = (value ?? '').toString().trim();
+    if (raw.isEmpty) return '';
+    if (raw.toLowerCase().startsWith('enc:v')) return '';
+    return raw;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1406,13 +1467,17 @@ class _EditProfilePageState extends State<EditProfilePage> {
       "Emergency Contact Phone"
     ]) {
       String value = "";
-      if (field.startsWith("ec")) {
-        String ecField = field.substring(2).toLowerCase();
+      if (field.startsWith("Emergency Contact")) {
+        String ecField = '';
+        if (field == "Emergency Contact Name") ecField = 'name';
+        if (field == "Emergency Contact Relationship") ecField = 'relationship';
+        if (field == "Emergency Contact Phone") ecField = 'phone';
         value = widget.userData["emergencyContact"]?[ecField]?.toString() ?? "";
       } else {
         value = widget.userData[field]?.toString() ?? "";
       }
-      _controllers[field] = TextEditingController(text: value);
+      _controllers[field] =
+          TextEditingController(text: _sanitizeSensitiveValue(value));
     }
 
     medicalHistory = List<Map<String, dynamic>>.from(

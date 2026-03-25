@@ -11,6 +11,7 @@ import 'package:hello/SettingPages/ForgotPasswordPage.dart';
 import 'package:hello/Login_Signup/VerifyEmailPage.dart';
 import 'package:hello/Login_Signup/google_login.dart';
 import 'package:hello/services/secure_token_storage.dart';
+import 'package:hello/services/session_conflict_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -57,9 +58,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        final token = ApiService.extractTokenFromResponseData(
+          data is Map
+              ? data.map((key, value) => MapEntry(key.toString(), value))
+              : null,
+        );
 
         final prefs = await SharedPreferences.getInstance();
-        await SecureTokenStorage.saveToken((data['token'] ?? '').toString());
+        if (token == null) {
+          await SecureTokenStorage.clearToken();
+          debugPrint('Login failed: token missing in response');
+          return null;
+        }
+
+        await SecureTokenStorage.saveToken(token);
         await prefs.setString('userData', jsonEncode(data['user']));
 
         return data['user'];
@@ -71,6 +83,15 @@ class _LoginScreenState extends State<LoginScreen> {
       debugPrint('Error logging in: $e');
       return null;
     }
+  }
+
+  Future<void> _clearStoredSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await SecureTokenStorage.clearToken();
+    await prefs.remove('userData');
+    await prefs.remove('userId');
+    await prefs.remove('email');
+    await prefs.remove('name');
   }
 
   Future<void> _animateLoginSuccessAndNavigate(
@@ -404,14 +425,50 @@ class _LoginScreenState extends State<LoginScreen> {
                                           });
 
                                           try {
-                                            final result =
-                                                await ApiService.login(
+                                            var result = await ApiService.login(
                                               _emailController.text.trim(),
                                               _passwordController.text.trim(),
                                             );
                                             if (!mounted) return;
 
-                                            if (result != null) {
+                                            final code = (result['code'] ?? '')
+                                                .toString()
+                                                .trim()
+                                                .toUpperCase();
+                                            if (result['success'] != true &&
+                                                code ==
+                                                    'LOGIN_APPROVAL_REQUIRED') {
+                                              final attemptId = (result[
+                                                          'loginAttemptId'] ??
+                                                      '')
+                                                  .toString()
+                                                  .trim();
+                                              final attemptToken = (result[
+                                                          'attemptToken'] ??
+                                                      '')
+                                                  .toString()
+                                                  .trim();
+                                              if (attemptId.isNotEmpty &&
+                                                  attemptToken.isNotEmpty) {
+                                                messenger.showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'Login request sent to active device. Waiting for approval...',
+                                                    ),
+                                                  ),
+                                                );
+                                                result =
+                                                    await SessionConflictService
+                                                        .instance
+                                                        .waitForLoginAttemptResolution(
+                                                  loginAttemptId: attemptId,
+                                                  attemptToken: attemptToken,
+                                                );
+                                                if (!mounted) return;
+                                              }
+                                            }
+
+                                            if (result['success'] == true) {
                                               final emailVerified = (result[
                                                               'user']
                                                           ?['emailVerified'] ??
@@ -426,19 +483,33 @@ class _LoginScreenState extends State<LoginScreen> {
                                                         const RouteSettings(
                                                             name: '/verify'),
                                                     builder: (_) =>
-                                                        const VerifyEmailPage(),
+                                                        VerifyEmailPage(
+                                                      prefilledEmail:
+                                                          _emailController.text
+                                                              .trim(),
+                                                    ),
                                                   ),
                                                 );
                                                 if (!mounted) return;
-                                                if (verified == true) {
+                                                if (verified != true) {
+                                                  await _clearStoredSession();
+                                                  if (!mounted) return;
                                                   messenger.showSnackBar(
                                                     const SnackBar(
                                                       content: Text(
-                                                        'Email verified. Please proceed.',
+                                                        'Verify your 6-digit code to continue.',
                                                       ),
                                                     ),
                                                   );
+                                                  return;
                                                 }
+                                                messenger.showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'Email verified. Please proceed.',
+                                                    ),
+                                                  ),
+                                                );
                                               }
                                               final prefs =
                                                   await SharedPreferences
@@ -458,12 +529,26 @@ class _LoginScreenState extends State<LoginScreen> {
                                                     )
                                                   : <String, dynamic>{};
 
+                                              await SessionConflictService
+                                                  .instance
+                                                  .connectForCurrentSession();
                                               await _animateLoginSuccessAndNavigate(
                                                   userData);
                                             } else {
+                                              final denyCode = (result['code'] ??
+                                                      '')
+                                                  .toString()
+                                                  .trim()
+                                                  .toUpperCase();
+                                              final message = denyCode ==
+                                                      'LOGIN_DENIED_BY_ACTIVE_SESSION'
+                                                  ? 'Login denied by active session'
+                                                  : (result['message'] ??
+                                                          'Login failed')
+                                                      .toString();
                                               messenger.showSnackBar(
-                                                const SnackBar(
-                                                  content: Text('Login failed'),
+                                                SnackBar(
+                                                  content: Text(message),
                                                 ),
                                               );
                                             }

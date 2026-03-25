@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../BottomNavigationBar/dashboard1.dart';
 import '../providers/dashboard_prefetch_provider.dart';
+import '../providers/timezone_provider.dart';
 
 class LoginSuccessScreen extends StatefulWidget {
   const LoginSuccessScreen({
@@ -68,6 +69,10 @@ class _LoginSuccessScreenState extends State<LoginSuccessScreen>
 
   Future<void> _runSuccessFlow() async {
     try {
+      await context.read<TimezoneProvider>().applyUserTimeZone(
+            widget.userData,
+            fallbackToDefault: true,
+          );
       final provider = context.read<DashboardPrefetchProvider>();
 
       final prefetchFuture = provider

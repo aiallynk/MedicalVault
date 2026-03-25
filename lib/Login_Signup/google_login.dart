@@ -3,10 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hello/Notifications/fcm_service.dart';
 import 'package:hello/api_service.dart';
 import 'package:hello/Login_Signup/login_success_screen.dart';
-import 'package:hello/services/secure_token_storage.dart';
+import 'package:hello/services/session_conflict_service.dart';
 
 class GoogleLoginScreen extends StatefulWidget {
   const GoogleLoginScreen({super.key});
@@ -16,8 +15,6 @@ class GoogleLoginScreen extends StatefulWidget {
 }
 
 class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
-  static const String backendEndpoint = "${ApiService.authUrl}/google";
-
   // For Android: clientId is null, it reads from google-services.json
   // For iOS: You need to set the iOS client ID from Firebase Console
   final GoogleSignIn _googleSignIn = GoogleSignIn(
@@ -112,55 +109,53 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         // Ignore People API errors and continue login flow
       }
 
-      final response = await http.post(
-        Uri.parse(backendEndpoint),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'idToken': idToken}),
-      );
+      var data = await ApiService.loginWithGoogleIdToken(idToken);
+      if (!mounted) return;
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
-
-        // Check backend success flag
-        if (data['success'] == true) {
-          // Store session to match the app's login expectations
-          final prefs = await SharedPreferences.getInstance();
-          final user = data['user'] ?? <String, dynamic>{};
-          final token = data['token'] ?? '';
-
-          await SecureTokenStorage.saveToken(token.toString());
-          await prefs.setString('userId', (user['id'] ?? '').toString());
-          await prefs.setString('email', (user['email'] ?? '').toString());
-          await prefs.setString('name', (user['name'] ?? 'Patient').toString());
-          final Map<String, dynamic> mergedUser =
-              Map<String, dynamic>.from(user);
-          if ((mergedUser['age'] == null ||
-                  mergedUser['age'].toString().isEmpty) &&
-              googleAge != null) {
-            mergedUser['age'] = googleAge;
-          }
-          await prefs.setString('userData', jsonEncode(mergedUser));
-
-          // Register FCM token now that we have an auth token
-          await FCMService().registerToken();
-
-          if (!mounted) return;
-          await _animateGoogleLoginSuccessAndNavigate(mergedUser);
-        } else {
+      final code = (data['code'] ?? '').toString().trim().toUpperCase();
+      if (data['success'] != true && code == 'LOGIN_APPROVAL_REQUIRED') {
+        final attemptId = (data['loginAttemptId'] ?? '').toString().trim();
+        final attemptToken = (data['attemptToken'] ?? '').toString().trim();
+        if (attemptId.isNotEmpty && attemptToken.isNotEmpty) {
           setState(() {
-            _statusMessage = data['message'] ?? 'Login failed';
-            _backendResponse = data;
+            _statusMessage =
+                'Login request sent to active device. Waiting for approval...';
           });
+          data = await SessionConflictService.instance
+              .waitForLoginAttemptResolution(
+            loginAttemptId: attemptId,
+            attemptToken: attemptToken,
+          );
+          if (!mounted) return;
         }
+      }
+
+      if (data['success'] == true) {
+        final prefs = await SharedPreferences.getInstance();
+        final storedUserRaw = prefs.getString('userData');
+        final storedUser = storedUserRaw == null
+            ? null
+            : jsonDecode(storedUserRaw);
+        final Map<String, dynamic> mergedUser = storedUser is Map
+            ? Map<String, dynamic>.from(storedUser)
+            : (data['user'] is Map
+                ? Map<String, dynamic>.from(data['user'])
+                : <String, dynamic>{});
+
+        if ((mergedUser['age'] == null ||
+                mergedUser['age'].toString().isEmpty) &&
+            googleAge != null) {
+          mergedUser['age'] = googleAge;
+          await prefs.setString('userData', jsonEncode(mergedUser));
+        }
+
+        await SessionConflictService.instance.connectForCurrentSession();
+        if (!mounted) return;
+        await _animateGoogleLoginSuccessAndNavigate(mergedUser);
       } else {
-        final errorData = jsonDecode(response.body);
         setState(() {
-          _statusMessage =
-              errorData['message'] ?? 'Backend error (${response.statusCode})';
-          _backendResponse = {
-            'status': response.statusCode,
-            'body': response.body,
-          };
+          _statusMessage = (data['message'] ?? 'Login failed').toString();
+          _backendResponse = data;
         });
       }
     } catch (e) {

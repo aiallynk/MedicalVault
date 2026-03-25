@@ -31,6 +31,8 @@ import '../features/lost_found/report_lost_page.dart';
 import '../features/lost_found/report_found_page.dart';
 import '../features/lost_found/my_lost_reports_page.dart';
 import '../providers/dashboard_prefetch_provider.dart';
+import '../providers/timezone_provider.dart';
+import '../utils/timezone_utils.dart';
 
 class Dashboard1 extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -79,6 +81,9 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       _lowPerformanceMode ||
       WidgetsBinding
           .instance.platformDispatcher.accessibilityFeatures.disableAnimations;
+
+  bool get _bottomNavReduceMotion => WidgetsBinding
+      .instance.platformDispatcher.accessibilityFeatures.disableAnimations;
 
   @override
   void initState() {
@@ -170,7 +175,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
         .map((item) => Map<String, dynamic>.from(item))
         .toList(growable: false);
     _dashboardAlerts = _activeDashboardAlerts(
-      DateTime.now(),
+      _nowInSelectedZone(),
       source: data.dashboardAlerts
           .map((item) => Map<String, dynamic>.from(item))
           .toList(growable: false),
@@ -313,7 +318,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   void _startAlertExpiryTimer() {
     _alertExpiryTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted) return;
-      final now = DateTime.now();
+      final now = _nowInSelectedZone();
       final active = _activeDashboardAlerts(now);
       if (active.length != _dashboardAlerts.length) {
         setState(() {
@@ -577,7 +582,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                   ))
               .toList(growable: false)
           : <Map<String, dynamic>>[];
-      final now = DateTime.now();
+      final now = _nowInSelectedZone();
       final activeAlerts = _activeDashboardAlerts(now, source: alerts);
 
       if (!mounted) return;
@@ -646,15 +651,14 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     return {legacy};
   }
 
+  DateTime _nowInSelectedZone() {
+    final timezoneId = context.read<TimezoneProvider>().timeZoneId;
+    return nowInTimeZone(timezoneId);
+  }
+
   DateTime? _parseAlertDate(dynamic raw) {
-    if (raw == null) return null;
-    if (raw is String) return DateTime.tryParse(raw)?.toLocal();
-    if (raw is Map && raw['\$date'] != null) {
-      final value = raw['\$date'];
-      if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-      if (value is String) return DateTime.tryParse(value)?.toLocal();
-    }
-    return null;
+    final timezoneId = context.read<TimezoneProvider>().timeZoneId;
+    return convertToSelectedTimeZone(raw, timezoneId);
   }
 
   Future<void> _openExternalUrl(String url) async {
@@ -1279,7 +1283,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
         bottomNavigationBar: CustomBottomNavBar(
           currentIndex: _currentIndex,
           onTap: _onNavTapped,
-          reduceMotion: _reduceMotion,
+          reduceMotion: _bottomNavReduceMotion,
           items: [
             BottomNavItemData(
               icon: Icons.home_rounded,
@@ -1690,7 +1694,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   }
 
   List<String> _localizedAlertHeadlines(BuildContext context) {
-    return _activeDashboardAlerts(DateTime.now())
+    return _activeDashboardAlerts(_nowInSelectedZone())
         .map((alert) => alert['message']?.toString().trim() ?? '')
         .where((message) => message.isNotEmpty)
         .toList(growable: false);

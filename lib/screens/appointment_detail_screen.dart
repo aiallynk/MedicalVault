@@ -5,7 +5,11 @@ import 'package:hello/widgets/app_text.dart';
 import 'package:hello/widgets/custom_button.dart';
 import 'package:hello/widgets/custom_card.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../providers/timezone_provider.dart';
+import '../utils/timezone_utils.dart';
 
 class AppointmentDetailScreen extends StatefulWidget {
   final String appointmentId;
@@ -155,10 +159,12 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
 
     final isUpcoming = ['scheduled', 'confirmed', 'pending'].contains(status);
     final isCompleted = status == 'completed';
-    final appointmentDate = _parseDate(date);
-    final dateLabel = appointmentDate != null
-        ? DateFormat('EEE, d MMM yyyy').format(appointmentDate)
-        : 'Date unavailable';
+    final dateLabel = formatDateForContext(
+      context,
+      date,
+      pattern: 'EEE, d MMM yyyy',
+      fallback: 'Date unavailable',
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -564,7 +570,8 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
   }
 
   void _initSchedule(Map<String, dynamic> apt) {
-    final baseDate = _parseDate(apt['appointmentDate']) ?? DateTime.now();
+    final baseDate =
+        _parseDate(apt['appointmentDate']) ?? nowForContextTimeZone(context);
     _selectedDate = baseDate;
 
     _dateOptions =
@@ -603,13 +610,8 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
   }
 
   DateTime? _parseDate(dynamic value) {
-    if (value == null) return null;
-    if (value is String) return DateTime.tryParse(value)?.toLocal();
-    if (value is Map && value['\$date'] != null && value['\$date'] is int) {
-      return DateTime.fromMillisecondsSinceEpoch(value['\$date'] as int)
-          .toLocal();
-    }
-    return null;
+    final timezoneId = context.read<TimezoneProvider>().timeZoneId;
+    return convertToSelectedTimeZone(value, timezoneId);
   }
 
   bool _isSameDay(DateTime a, DateTime b) {

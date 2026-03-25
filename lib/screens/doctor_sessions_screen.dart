@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
 import '../api_service.dart';
 import '../core/theme/theme.dart';
+import '../providers/timezone_provider.dart';
+import '../utils/timezone_utils.dart';
 import '../widgets/app_text.dart';
 import '../widgets/custom_card.dart';
 import 'appointment_detail_screen.dart';
@@ -166,14 +168,16 @@ class _DoctorSessionsScreenState extends State<DoctorSessionsScreen> {
                 ?.toString() ??
             '';
         final status = apt['status']?.toString() ?? 'completed';
-        final date = _parseDate(apt['appointmentDate']);
         final time = apt['appointmentTime']?.toString() ?? '';
         final notes = apt['doctorNotesShared']?.toString().trim() ?? '';
         final id = apt['_id']?.toString() ?? '';
 
-        final dateLabel = date != null
-            ? DateFormat('EEE, d MMM yyyy').format(date)
-            : 'Date unavailable';
+        final dateLabel = formatDateForContext(
+          context,
+          apt['appointmentDate'],
+          pattern: 'EEE, d MMM yyyy',
+          fallback: 'Date unavailable',
+        );
 
         return CustomCard(
           glass: true,
@@ -286,17 +290,7 @@ class _DoctorSessionsScreenState extends State<DoctorSessionsScreen> {
   }
 
   DateTime? _parseDate(dynamic value) {
-    if (value == null) return null;
-    if (value is String) return DateTime.tryParse(value)?.toLocal();
-    if (value is Map && value['\$date'] != null) {
-      final raw = value['\$date'];
-      if (raw is int) {
-        return DateTime.fromMillisecondsSinceEpoch(raw).toLocal();
-      }
-      if (raw is String) {
-        return DateTime.tryParse(raw)?.toLocal();
-      }
-    }
-    return null;
+    final timezoneId = context.read<TimezoneProvider>().timeZoneId;
+    return convertToSelectedTimeZone(value, timezoneId);
   }
 }

@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="shieldBlue" x1="108" y1="78" x2="404" y2="404" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F69BA"/>
+      <stop offset="1" stop-color="#1954A8"/>
+    </linearGradient>
+    <linearGradient id="lockTeal" x1="336" y1="84" x2="430" y2="210" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1EAFA4"/>
+      <stop offset="1" stop-color="#138A84"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Shield outline -->
+  <path
+    d="M256 46C216 70 168 88 116 98V184C116 287 171 381 249 425L256 429L263 425C341 381 396 287 396 184"
+    stroke="url(#shieldBlue)"
+    stroke-width="16"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Staff + caduceus core -->
+  <circle cx="256" cy="124" r="16" fill="url(#shieldBlue)"/>
+  <path d="M256 152V366" stroke="url(#shieldBlue)" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- Wings -->
+  <path
+    d="M252 160C228 140 196 144 172 160C182 178 216 188 236 174"
+    stroke="url(#shieldBlue)"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M260 160C284 140 316 144 340 160C330 178 296 188 276 174"
+    stroke="url(#shieldBlue)"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Serpents -->
+  <path
+    d="M256 194C220 194 212 214 232 228C252 242 252 260 232 274C212 288 214 310 238 322C250 328 256 338 256 350"
+    stroke="url(#shieldBlue)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M256 194C292 194 300 214 280 228C260 242 260 260 280 274C300 288 298 310 274 322C262 328 256 338 256 350"
+    stroke="url(#shieldBlue)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Lock -->
+  <path
+    d="M352 110V94C352 74 368 58 388 58C408 58 424 74 424 94V110"
+    stroke="url(#lockTeal)"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <rect x="338" y="104" width="100" height="94" rx="24" fill="url(#lockTeal)"/>
+  <circle cx="388" cy="147" r="9" fill="#EAF8F6"/>
+  <path d="M388 156V169" stroke="#EAF8F6" stroke-width="8" stroke-linecap="round"/>
+</svg>

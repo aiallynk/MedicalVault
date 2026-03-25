@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api_service.dart';
+import '../utils/timezone_utils.dart';
 
 class DirectChatScreen extends StatefulWidget {
   final String counterpartId;
@@ -90,7 +91,7 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
       "id": tempId,
       "senderRole": _patientRole,
       "message": text,
-      "createdAt": DateTime.now().toIso8601String(),
+      "createdAt": nowForContextTimeZone(context).toIso8601String(),
       "pending": true,
     };
 
@@ -172,17 +173,12 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
   }
 
   String _formatMessageTime(dynamic raw) {
-    try {
-      final parsed = DateTime.tryParse(raw?.toString() ?? "");
-      if (parsed == null) return "";
-      final local = parsed.toLocal();
-      final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
-      final minute = local.minute.toString().padLeft(2, '0');
-      final suffix = local.hour >= 12 ? 'PM' : 'AM';
-      return "$hour:$minute $suffix";
-    } catch (_) {
-      return "";
-    }
+    return formatTimeForContext(
+      context,
+      raw,
+      pattern: 'h:mm a',
+      fallback: '',
+    );
   }
 
   @override

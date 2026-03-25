@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../utils/timezone_utils.dart';
+
 class UpcomingAppointmentCard extends StatefulWidget {
   final Map<String, dynamic> appointment;
   final VoidCallback onTap;
@@ -37,32 +39,25 @@ class _UpcomingAppointmentCardState extends State<UpcomingAppointmentCard> {
 
   void _updateCountdown() {
     final apt = widget.appointment;
-    final date = apt['appointmentDate'];
-    final time = apt['appointmentTime'] ?? '00:00';
-    if (date == null) {
+    final target = combineDateAndTimeForContext(
+      context,
+      apt['appointmentDate'],
+      apt['appointmentTime']?.toString(),
+      defaultHour: 0,
+      defaultMinute: 0,
+    );
+    if (target == null) {
       setState(() => _countdown = '');
       return;
     }
-    DateTime aptDt;
-    if (date is String) {
-      aptDt = DateTime.parse(date);
-    } else {
-      aptDt = DateTime.fromMillisecondsSinceEpoch(date['\$date'] ?? 0);
-    }
-    final parts = time.toString().split(':');
-    aptDt = DateTime(
-      aptDt.year,
-      aptDt.month,
-      aptDt.day,
-      int.tryParse(parts[0]) ?? 0,
-      int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0,
-    );
-    final now = DateTime.now();
-    if (aptDt.isBefore(now)) {
+
+    final now = nowForContextTimeZone(context);
+    if (target.isBefore(now)) {
       setState(() => _countdown = 'Started');
       return;
     }
-    final diff = aptDt.difference(now);
+
+    final diff = target.difference(now);
     final h = diff.inHours;
     final m = diff.inMinutes % 60;
     if (h > 24) {
@@ -89,14 +84,12 @@ class _UpcomingAppointmentCardState extends State<UpcomingAppointmentCard> {
     final mode = apt['mode'] ?? 'in-person';
     final videoUrl = apt['videoCallUrl'] ?? '';
 
-    String dateStr = '';
-    if (date != null) {
-      if (date is String) {
-        dateStr = DateTime.tryParse(date)?.toLocal().toString().split(' ')[0] ?? date;
-      } else if (date is Map && date['\$date'] != null) {
-        dateStr = DateTime.fromMillisecondsSinceEpoch(date['\$date']).toLocal().toString().split(' ')[0];
-      }
-    }
+    final dateStr = formatDateForContext(
+      context,
+      date,
+      pattern: 'yyyy-MM-dd',
+      fallback: '',
+    );
 
     String typeLabel = type.toString();
     if (type == 'consultation') typeLabel = 'Consultation';

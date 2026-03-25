@@ -1,11 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hello/api_service.dart';
 import 'package:hello/models/user_profile.dart';
 import 'package:hello/localization/app_localizations.dart';
+import 'package:hello/services/offline/offline_storage_service.dart';
+import 'package:hello/services/offline/sos_offline_service.dart';
 
 class SosPage extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -18,6 +19,8 @@ class SosPage extends StatefulWidget {
 
 class _SosPageState extends State<SosPage> {
   final List<Map<String, dynamic>> _profiles = [];
+  List<Map<String, dynamic>> _offlineEmergencyContacts = [];
+  Map<String, dynamic> _effectiveUserData = <String, dynamic>{};
   String? _selectedProfileId;
   late TextEditingController _nameController;
   late TextEditingController _ageController;
@@ -33,6 +36,13 @@ class _SosPageState extends State<SosPage> {
   UserProfile? _currentUser;
   String? _allergies;
 
+  String? _safeSensitiveText(dynamic value) {
+    final raw = (value ?? '').toString().trim();
+    if (raw.isEmpty) return null;
+    if (raw.toLowerCase().startsWith('enc:v')) return null;
+    return raw;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -46,13 +56,18 @@ class _SosPageState extends State<SosPage> {
     _locationController = TextEditingController(text: '');
     _timeController = TextEditingController(text: _formatNow());
     _notesController = TextEditingController();
+    _effectiveUserData = Map<String, dynamic>.from(widget.userData);
     _currentUser = UserProfile.fromJson(widget.userData);
-    _allergies = _currentUser?.allergies;
+    _allergies = _safeSensitiveText(_currentUser?.allergies);
+    unawaited(OfflineStorageService.instance.cacheUserData(widget.userData));
+    unawaited(_seedEmergencyContactsIfMissing());
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       _timeController.text = _formatNow();
       setState(() {});
     });
+    _loadCachedLocation();
+    _loadOfflineEmergencyContacts();
     _loadProfiles();
     _refreshCurrentUser();
     _tryUpdateLocation();
@@ -74,7 +89,7 @@ class _SosPageState extends State<SosPage> {
     final now = DateTime.now();
     final hour = now.hour % 12 == 0 ? 12 : now.hour % 12;
     final ampm = now.hour >= 12 ? 'PM' : 'AM';
-    final two = (int n) => n.toString().padLeft(2, '0');
+    String two(int n) => n.toString().padLeft(2, '0');
     return '${two(hour)}:${two(now.minute)}:${two(now.second)} $ampm';
   }
 
@@ -125,8 +140,8 @@ class _SosPageState extends State<SosPage> {
     return age;
   }
 
-  String _localizedProfileName(Map<String, dynamic> profile,
-      AppLocalizations l10n) {
+  String _localizedProfileName(
+      Map<String, dynamic> profile, AppLocalizations l10n) {
     final raw = profile['name']?.toString() ?? '';
     if (raw.isEmpty) return l10n.t('sos.profileFallback');
     if (raw == 'My Profile') return l10n.t('sos.myProfile');
@@ -173,14 +188,73 @@ class _SosPageState extends State<SosPage> {
       final profile = await ApiService.me();
       if (!mounted) return;
       if (profile is Map<String, dynamic>) {
+        await OfflineStorageService.instance.cacheUserData(profile);
+        await OfflineStorageService.instance
+            .cacheEmergencyContactsFromUserData(profile);
+        final cachedContacts =
+            await OfflineStorageService.instance.getEmergencyContacts();
         final parsed = UserProfile.fromJson(profile);
         setState(() {
+          _effectiveUserData = Map<String, dynamic>.from(profile);
+          _offlineEmergencyContacts = cachedContacts;
           _currentUser = parsed;
-          _allergies = parsed.allergies;
+          _allergies = _safeSensitiveText(parsed.allergies);
         });
       }
     } catch (_) {
       // Silent failure – keep whatever data is already cached
+    }
+  }
+
+  Future<void> _seedEmergencyContactsIfMissing() async {
+    try {
+      final existing =
+          await OfflineStorageService.instance.getEmergencyContacts();
+      if (existing.isNotEmpty) return;
+      await OfflineStorageService.instance
+          .cacheEmergencyContactsFromUserData(widget.userData);
+      await _loadOfflineEmergencyContacts();
+    } catch (_) {
+      // Ignore cache write failures.
+    }
+  }
+
+  Future<void> _loadOfflineEmergencyContacts() async {
+    try {
+      final contacts =
+          await OfflineStorageService.instance.getEmergencyContacts();
+      if (!mounted) return;
+      setState(() {
+        _offlineEmergencyContacts = contacts;
+      });
+    } catch (_) {
+      // Ignore cache read issues and keep UI usable.
+    }
+  }
+
+  Future<void> _loadCachedLocation() async {
+    try {
+      final cached =
+          await OfflineStorageService.instance.getLastKnownLocation();
+      if (cached == null || !mounted) return;
+
+      final lat = double.tryParse((cached['latitude'] ?? '').toString());
+      final lon = double.tryParse((cached['longitude'] ?? '').toString());
+      if (lat == null || lon == null) return;
+      final accuracy =
+          double.tryParse((cached['accuracyMeters'] ?? '').toString());
+      final locationText = (cached['locationText'] ?? '').toString().trim();
+
+      setState(() {
+        _currentLatitude = lat;
+        _currentLongitude = lon;
+        _currentAccuracyMeters = accuracy;
+        _locationController.text = locationText.isNotEmpty
+            ? locationText
+            : '${lat.toStringAsFixed(6)},${lon.toStringAsFixed(6)}';
+      });
+    } catch (_) {
+      // Ignore local cache read failures.
     }
   }
 
@@ -196,7 +270,7 @@ class _SosPageState extends State<SosPage> {
         _mobileController.text = (widget.userData['mobile'] ?? '').toString();
         final rawAllergies =
             _currentUser?.allergies ?? widget.userData['allergies'];
-        _allergies = rawAllergies == null ? null : rawAllergies.toString();
+        _allergies = _safeSensitiveText(rawAllergies);
         setState(() {});
         return;
       }
@@ -217,7 +291,7 @@ class _SosPageState extends State<SosPage> {
       _ageController.text = computed ?? '';
       _mobileController.text = (user?['mobile'] ?? '').toString();
       final rawAllergies = user?['allergies'];
-      _allergies = rawAllergies == null ? null : rawAllergies.toString();
+      _allergies = _safeSensitiveText(rawAllergies);
       setState(() {});
     } catch (_) {
       // On error, leave age empty so it can be entered manually
@@ -264,10 +338,16 @@ class _SosPageState extends State<SosPage> {
         setState(() {
           _currentLatitude = lat;
           _currentLongitude = lon;
-          _currentAccuracyMeters =
-              accuracy.isFinite ? accuracy : null;
+          _currentAccuracyMeters = accuracy.isFinite ? accuracy : null;
           _locationController.text = '$latStr,$lonStr';
         });
+        await OfflineStorageService.instance.cacheLastKnownLocation(
+          latitude: lat,
+          longitude: lon,
+          accuracyMeters: accuracy.isFinite ? accuracy : null,
+          locationText: '$latStr,$lonStr',
+          capturedAt: DateTime.now(),
+        );
       }
     } catch (_) {
       // ignore errors; keep empty
@@ -292,16 +372,17 @@ class _SosPageState extends State<SosPage> {
         const SizedBox(height: 8),
         Container(
           width: double.infinity,
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: theme.dividerColor.withOpacity(0.4),
+              color: theme.dividerColor.withValues(alpha: 0.4),
             ),
             color: theme.brightness == Brightness.dark
-                ? theme.colorScheme.surfaceVariant.withOpacity(0.25)
-                : theme.colorScheme.surfaceVariant.withOpacity(0.6),
+                ? theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.25)
+                : theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.6),
           ),
           child: Text(
             allergiesText,
@@ -309,6 +390,161 @@ class _SosPageState extends State<SosPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildEmergencyContactsInfo(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasContacts = _offlineEmergencyContacts.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Emergency Contacts (Offline SMS/Call)',
+          style:
+              theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: theme.dividerColor.withValues(alpha: 0.4),
+            ),
+            color: theme.brightness == Brightness.dark
+                ? theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.25)
+                : theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.6),
+          ),
+          child: hasContacts
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: _offlineEmergencyContacts.map((contact) {
+                    final name = (contact['name'] ?? 'Emergency Contact')
+                        .toString()
+                        .trim();
+                    final phone = (contact['phone'] ?? '').toString().trim();
+                    final relationship =
+                        (contact['relationship'] ?? '').toString().trim();
+                    final subtitle = relationship.isNotEmpty
+                        ? '$phone ($relationship)'
+                        : phone;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '• $name: $subtitle',
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    );
+                  }).toList(growable: false),
+                )
+              : Text(
+                  'No emergency contacts found. Add contacts in profile settings to enable offline SMS/Call fallback.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showOfflineFallbackActions(SosDispatchResult result) async {
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final hasRecipients = result.recipients.isNotEmpty;
+        final primary = result.primaryRecipient ?? '';
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Offline SOS Actions',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  hasRecipients
+                      ? 'Choose how you want to notify emergency contacts now.'
+                      : 'No recipients available for SMS/Call.',
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: hasRecipients
+                            ? () async {
+                                final opened = await SosOfflineService.instance
+                                    .openSmsFallback(
+                                  recipients: result.recipients,
+                                  message: result.smsMessage,
+                                );
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      opened
+                                          ? 'SMS app opened.'
+                                          : 'Could not open SMS app.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            : null,
+                        icon: const Icon(Icons.sms_outlined),
+                        label: const Text('SMS'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: (hasRecipients && primary.trim().isNotEmpty)
+                            ? () async {
+                                final opened = await SosOfflineService.instance
+                                    .openCallFallback(
+                                  phone: primary,
+                                );
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      opened
+                                          ? 'Call dialer opened.'
+                                          : 'Could not open call dialer.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            : null,
+                        icon: const Icon(Icons.call_outlined),
+                        label: const Text('Call'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    child: const Text('Done'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -400,8 +636,7 @@ class _SosPageState extends State<SosPage> {
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
                     l10n.format('sos.accuracyLabel', {
-                      'meters': _currentAccuracyMeters!
-                          .toStringAsFixed(0),
+                      'meters': _currentAccuracyMeters!.toStringAsFixed(0),
                     }),
                     style: theme.textTheme.bodySmall
                         ?.copyWith(color: theme.hintColor),
@@ -409,6 +644,8 @@ class _SosPageState extends State<SosPage> {
                 ),
               const SizedBox(height: 16),
               _buildAllergiesInfo(context),
+              const SizedBox(height: 16),
+              _buildEmergencyContactsInfo(context),
               const SizedBox(height: 16),
               Text(l10n.t('sos.currentTime'),
                   style: theme.textTheme.bodyMedium
@@ -459,6 +696,32 @@ class _SosPageState extends State<SosPage> {
                           final lon = _currentLongitude;
 
                           if (lat == null || lon == null) {
+                            await _tryUpdateLocation();
+                          }
+
+                          final cachedLocation = await OfflineStorageService
+                              .instance
+                              .getLastKnownLocation();
+                          final effectiveLat = _currentLatitude ??
+                              double.tryParse(
+                                (cachedLocation?['latitude'] ?? '').toString(),
+                              );
+                          final effectiveLon = _currentLongitude ??
+                              double.tryParse(
+                                (cachedLocation?['longitude'] ?? '').toString(),
+                              );
+                          final effectiveAccuracy = _currentAccuracyMeters ??
+                              double.tryParse(
+                                (cachedLocation?['accuracyMeters'] ?? '')
+                                    .toString(),
+                              );
+                          final cachedLocationText =
+                              (cachedLocation?['locationText'] ?? '')
+                                  .toString()
+                                  .trim();
+
+                          if (!context.mounted) return;
+                          if (effectiveLat == null || effectiveLon == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
@@ -466,16 +729,17 @@ class _SosPageState extends State<SosPage> {
                                 ),
                               ),
                             );
-                            await _tryUpdateLocation();
                             return;
                           }
 
                           setState(() => _isSending = true);
                           final notes = _notesController.text.trim();
-                          final response = await ApiService.createSos(
-                            latitude: lat,
-                            longitude: lon,
-                            accuracyMeters: _currentAccuracyMeters,
+                          final result =
+                              await SosOfflineService.instance.sendSos(
+                            latitude: effectiveLat,
+                            longitude: effectiveLon,
+                            userData: _effectiveUserData,
+                            accuracyMeters: effectiveAccuracy,
                             notes: notes.isEmpty ? null : notes,
                             allergies: (_allergies?.trim().isNotEmpty ?? false)
                                 ? _allergies
@@ -492,30 +756,38 @@ class _SosPageState extends State<SosPage> {
                             locationText:
                                 _locationController.text.trim().isNotEmpty
                                     ? _locationController.text.trim()
-                                    : null,
+                                    : (cachedLocationText.isNotEmpty
+                                        ? cachedLocationText
+                                        : null),
                             profileId: _selectedProfileId,
                           );
 
-                          if (!mounted) {
-                            return;
-                          }
+                          if (!context.mounted) return;
 
                           setState(() => _isSending = false);
 
-                          if (response != null && response['success'] == true) {
+                          if (result.success) {
+                            String message;
+                            final backend = result.backendResponse;
                             final bool massTriggered =
-                                response['massIncidentTriggered'] == true;
-                            final message = massTriggered
-                                ? l10n.t('sos.sendSuccessMass')
-                                : l10n.t('sos.sendSuccess');
+                                backend?['massIncidentTriggered'] == true;
+                            if (result.usedOfflineFallback) {
+                              await _showOfflineFallbackActions(result);
+                              if (!context.mounted) return;
+                              message = result.message;
+                            } else {
+                              message = massTriggered
+                                  ? l10n.t('sos.sendSuccessMass')
+                                  : l10n.t('sos.sendSuccess');
+                            }
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text(message)),
                             );
                             Navigator.of(context).pop();
                           } else {
-                            final error =
-                                response?['message']?.toString() ??
-                                    l10n.t('sos.sendFailed');
+                            final error = result.message.isNotEmpty
+                                ? result.message
+                                : l10n.t('sos.sendFailed');
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text(error)),
                             );

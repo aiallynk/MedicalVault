@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_service.dart';
 import '../core/theme/theme.dart';
+import '../providers/timezone_provider.dart';
+import '../utils/timezone_utils.dart';
 import '../widgets/app_text.dart';
 import '../widgets/custom_button.dart';
 import '../widgets/custom_card.dart';
@@ -578,7 +581,7 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
 
     if (dates.isNotEmpty) return dates.take(7).toList();
 
-    final now = DateTime.now();
+    final now = nowForContextTimeZone(context);
     return List.generate(7, (i) => now.add(Duration(days: i)));
   }
 
@@ -600,15 +603,8 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
   List<String> _fallbackTimes() => const ['09:00', '11:00', '13:30', '16:00'];
 
   DateTime? _parseDate(dynamic value) {
-    if (value == null) return null;
-    if (value is String) return DateTime.tryParse(value)?.toLocal();
-    if (value is Map && value['\$date'] != null) {
-      final raw = value['\$date'];
-      if (raw is int) {
-        return DateTime.fromMillisecondsSinceEpoch(raw).toLocal();
-      }
-    }
-    return null;
+    final timezoneId = context.read<TimezoneProvider>().timeZoneId;
+    return convertToSelectedTimeZone(value, timezoneId);
   }
 
   String _normalizeTime(String raw) {

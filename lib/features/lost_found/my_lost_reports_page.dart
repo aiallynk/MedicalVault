@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import '../../api_service.dart';
 import '../../localization/app_localizations.dart';
+import '../../utils/timezone_utils.dart';
 
 class MyLostReportsPage extends StatefulWidget {
   const MyLostReportsPage({super.key});
@@ -12,8 +12,6 @@ class MyLostReportsPage extends StatefulWidget {
 }
 
 class _MyLostReportsPageState extends State<MyLostReportsPage> {
-  final DateFormat _dateFormat = DateFormat("MMM d, yyyy • h:mm a");
-
   List<dynamic> _reports = [];
   bool _isLoading = true;
   String? _error;
@@ -69,16 +67,16 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
     }
   }
 
-  String _formatDate(String? iso, AppLocalizations l10n) {
+  String _formatDate(BuildContext context, String? iso, AppLocalizations l10n) {
     if (iso == null || iso.isEmpty) {
       return l10n.t('myLostReports.timeUnknown');
     }
-    try {
-      final date = DateTime.parse(iso);
-      return _dateFormat.format(date.toLocal());
-    } catch (_) {
-      return l10n.t('myLostReports.timeUnknown');
-    }
+    return formatDateTimeForContext(
+      context,
+      iso,
+      pattern: 'MMM d, yyyy - h:mm a',
+      fallback: l10n.t('myLostReports.timeUnknown'),
+    );
   }
 
   Widget _buildReportCard(
@@ -217,7 +215,11 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
             const SizedBox(height: 12),
             Text(
               l10n.format('myLostReports.card.lastSeen', {
-                'time': _formatDate(report["lastSeenTime"]?.toString(), l10n)
+                'time': _formatDate(
+                  context,
+                  report["lastSeenTime"]?.toString(),
+                  l10n,
+                )
               }),
               style: theme.textTheme.bodyMedium,
             ),
@@ -272,7 +274,10 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
                           Text(
                             l10n.format('myLostReports.card.lastUpdated', {
                               'time': _formatDate(
-                                  matched["foundTime"]?.toString(), l10n)
+                                context,
+                                matched["foundTime"]?.toString(),
+                                l10n,
+                              )
                             }),
                             style: theme.textTheme.bodySmall,
                           ),
