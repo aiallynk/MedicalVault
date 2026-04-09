@@ -13,6 +13,7 @@ import 'package:hello/screens/splash/premium_splash_visual.dart';
 import 'package:hello/services/app_update_service.dart';
 import 'package:hello/services/offline/offline_storage_service.dart';
 import 'package:hello/services/secure_token_storage.dart';
+import 'package:hello/services/session_conflict_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -45,6 +46,7 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   void initState() {
     super.initState();
+    unawaited(SessionConflictService.instance.initialize());
     _initializeTimelineAnimation();
     _startSplashFlow();
   }
@@ -98,7 +100,7 @@ class _SplashScreenState extends State<SplashScreen>
     _SplashBootstrapResult bootstrap;
     try {
       bootstrap = await bootstrapFuture.timeout(
-        const Duration(milliseconds: 900),
+        const Duration(milliseconds: 5000),
         onTimeout: () => const _SplashBootstrapResult.unauthenticated(),
       );
     } catch (_) {
@@ -143,10 +145,16 @@ class _SplashScreenState extends State<SplashScreen>
 
       _setStatus('Validating secure session...');
 
-      final userData = await ApiService.me().timeout(
-        const Duration(seconds: 2),
+      var userData = await ApiService.me().timeout(
+        const Duration(seconds: 5),
         onTimeout: () => null,
       );
+      if (userData == null || userData.isEmpty) {
+        userData = await ApiService.me().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () => null,
+        );
+      }
 
       await configFuture;
 
@@ -176,9 +184,14 @@ class _SplashScreenState extends State<SplashScreen>
           : fallbackUserData;
 
       if (resolvedUserData == null || resolvedUserData.isEmpty) {
-        await SecureTokenStorage.clearToken();
-        await prefs.remove('userData');
-        await prefs.remove('userId');
+        final fallbackUserId = (prefs.getString('userId') ?? '').trim();
+        if (fallbackUserId.isNotEmpty) {
+          return _SplashBootstrapResult.authenticated({
+            'id': fallbackUserId,
+            'name': (prefs.getString('name') ?? 'Patient'),
+            'email': (prefs.getString('email') ?? ''),
+          });
+        }
         return const _SplashBootstrapResult.unauthenticated();
       }
 
@@ -195,11 +208,12 @@ class _SplashScreenState extends State<SplashScreen>
       }
 
       await prefs.setString('userData', jsonEncode(resolvedUserData));
+      final fallbackUserId = (prefs.getString('userId') ?? '').trim();
       await prefs.setString(
         'userId',
         resolvedUserData['id']?.toString() ??
             resolvedUserData['_id']?.toString() ??
-            '',
+            fallbackUserId,
       );
       await prefs.setString(
         'email',

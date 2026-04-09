@@ -119,7 +119,11 @@ class OfflineStorageService {
 
     final emergencyContact = userData['emergencyContact'];
     if (emergencyContact is Map) {
-      final phone = _sanitizePhone(emergencyContact['phone']);
+      final phone = _sanitizePhone(
+        emergencyContact['phone'] ??
+            emergencyContact['mobile'] ??
+            emergencyContact['number'],
+      );
       if (phone.isNotEmpty) {
         output.add({
           'name': _sanitizeText(emergencyContact['name']).isNotEmpty
@@ -179,7 +183,12 @@ class OfflineStorageService {
     if (extracted.isEmpty) {
       final emergencyContact = userData['emergencyContact'];
       if (emergencyContact is Map) {
-        final rawPhone = (emergencyContact['phone'] ?? '').toString().trim();
+        final rawPhone = (emergencyContact['phone'] ??
+                emergencyContact['mobile'] ??
+                emergencyContact['number'] ??
+                '')
+            .toString()
+            .trim();
         if (rawPhone.toLowerCase().startsWith('enc:v')) {
           // Backend returned encrypted value; keep existing local plain cache.
           return;

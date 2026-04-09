@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -48,7 +49,8 @@ class Dashboard1 extends StatefulWidget {
   State<Dashboard1> createState() => _Dashboard1State();
 }
 
-class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
+class _Dashboard1State extends State<Dashboard1>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   static const int _promoPageSeed = 10000;
   int _currentIndex = 0;
   int _promoPageIndex = 0;
@@ -59,11 +61,13 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   Timer? _uiRefreshTimer;
   Timer? _alertExpiryTimer;
   Timer? _publicConfigReconnectTimer;
+  StreamSubscription<dynamic>? _connectivitySubscription;
   late AnimationController _alertController;
   WebSocketChannel? _publicConfigChannel;
   StreamSubscription<dynamic>? _publicConfigSubscription;
   late Map<String, dynamic> _userData;
   String? _storedName;
+  bool _wasConnected = true;
 
   Map<String, int> _documentCounts = {};
   bool _isLoadingCounts = true;
@@ -76,6 +80,11 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   bool _lowPerformanceMode = false;
   int _jankyFrameScore = 0;
   bool _hydratedFromPrefetch = false;
+  bool _prefetchWasPartial = false;
+
+  String get _activeUserId =>
+      (_userData['id']?.toString() ?? _userData['_id']?.toString() ?? '')
+          .trim();
 
   bool get _reduceMotion =>
       _lowPerformanceMode ||
@@ -88,6 +97,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _userData = Map<String, dynamic>.from(widget.userData);
     _promoPageController = PageController(
       initialPage: _promoPageSeed,
@@ -105,12 +115,21 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
       _loadDashboardAds();
       _loadDashboardUiConfig();
     } else {
-      _isLoadingCounts = false;
-      _loadingTopDoctors = false;
+      _isLoadingCounts = _documentCounts.isEmpty;
+      _loadingTopDoctors = _topDoctors.isEmpty;
+      // Refresh in background so cached/prefetched data quickly converges online.
+      unawaited(_loadDocumentCounts());
+      if (_prefetchWasPartial) {
+        unawaited(_loadLinkedProfiles());
+        unawaited(_loadTopDoctors(forceRefresh: true));
+        unawaited(_loadDashboardAds(forceRefresh: true));
+        unawaited(_loadDashboardUiConfig(forceRefresh: true));
+      }
     }
     _loadStoredName();
     _startUiRefreshTimer();
     _startAlertExpiryTimer();
+    _initializeConnectivityObserver();
     _connectPublicConfigSocket();
     SchedulerBinding.instance.addTimingsCallback(_handleFrameTimings);
     _syncTickerAnimation();
@@ -119,7 +138,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Update global context for notifications
       GlobalNotificationHandler.setGlobalContext(context);
-      _refreshUserData();
+      _refreshUserData(forceRemote: true);
     });
 
     // Auto-scroll promo cards
@@ -160,6 +179,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
 
   void _applyPrefetchedData(DashboardPrefetchData data) {
     _hydratedFromPrefetch = true;
+    _prefetchWasPartial = data.partial;
     _userData = Map<String, dynamic>.from(data.userData);
     _documentCounts = Map<String, int>.from(data.documentCounts);
     _linkedProfiles = data.linkedProfiles
@@ -192,11 +212,14 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     SchedulerBinding.instance.removeTimingsCallback(_handleFrameTimings);
     _promoTimer?.cancel();
     _uiRefreshTimer?.cancel();
     _alertExpiryTimer?.cancel();
     _publicConfigReconnectTimer?.cancel();
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
     _publicConfigSubscription?.cancel();
     _publicConfigSubscription = null;
     _publicConfigChannel?.sink.close();
@@ -204,6 +227,14 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     _promoPageController.dispose();
     _alertController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshUserData(forceRemote: true));
+      unawaited(_loadDocumentCounts());
+    }
   }
 
   void _handleFrameTimings(List<FrameTiming> timings) {
@@ -311,6 +342,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   void _startUiRefreshTimer() {
     _uiRefreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       if (!mounted) return;
+      _loadDocumentCounts();
       _loadDashboardUiConfig(forceRefresh: true);
     });
   }
@@ -374,6 +406,47 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     );
   }
 
+  void _initializeConnectivityObserver() {
+    final connectivity = Connectivity();
+    unawaited(() async {
+      try {
+        final initialResult = await connectivity.checkConnectivity();
+        _wasConnected = _hasNetworkConnection(initialResult);
+      } catch (_) {
+        _wasConnected = true;
+      }
+    }());
+
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription =
+        connectivity.onConnectivityChanged.listen((dynamic result) {
+      final isConnected = _hasNetworkConnection(result);
+      final justReconnected = isConnected && !_wasConnected;
+      _wasConnected = isConnected;
+      if (!justReconnected) return;
+
+      unawaited(_refreshUserData(forceRemote: true));
+      unawaited(_loadDocumentCounts());
+      unawaited(_loadLinkedProfiles());
+      unawaited(_loadTopDoctors(forceRefresh: true));
+      unawaited(_loadDashboardAds(forceRefresh: true));
+      unawaited(_loadDashboardUiConfig(forceRefresh: true));
+    });
+  }
+
+  bool _hasNetworkConnection(dynamic result) {
+    if (result is ConnectivityResult) {
+      return result != ConnectivityResult.none;
+    }
+    if (result is List<ConnectivityResult>) {
+      return result.any((entry) => entry != ConnectivityResult.none);
+    }
+    if (result is Iterable) {
+      return result.any((entry) => entry != ConnectivityResult.none);
+    }
+    return true;
+  }
+
   void _handlePublicConfigSocketMessage(dynamic rawMessage) {
     try {
       final decoded = jsonDecode(rawMessage.toString());
@@ -423,16 +496,35 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
   }
 
   Future<void> _loadDocumentCounts() async {
+    if (_documentCounts.isEmpty && mounted) {
+      setState(() {
+        _isLoadingCounts = true;
+      });
+    }
+
     try {
       final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString("userId") ?? "";
+      final userId = _activeUserId.isNotEmpty
+          ? _activeUserId
+          : ((prefs.getString("activeProfileId") ?? "").trim().isNotEmpty
+              ? (prefs.getString("activeProfileId") ?? "").trim()
+              : (prefs.getString("userId") ?? "").trim());
 
-      if (userId.isNotEmpty) {
-        final grouped = await ApiService.fetchGroupedDocs(userId);
+      if (userId.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _isLoadingCounts = false;
+        });
+        return;
+      }
 
-        if (grouped != null) {
-          final counts = grouped["counts"] as Map<String, dynamic>;
-
+      // Immediately hydrate from local cache so offline mode keeps last values.
+      final cachedGrouped = await ApiService.getCachedGroupedDocs(userId);
+      if (cachedGrouped != null) {
+        final counts = cachedGrouped["counts"] is Map
+            ? Map<String, dynamic>.from(cachedGrouped["counts"])
+            : <String, dynamic>{};
+        if (mounted) {
           setState(() {
             _documentCounts = {
               "Reports": counts["reports"] ?? 0,
@@ -444,8 +536,59 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
           });
         }
       }
+
+      final grouped = await ApiService.fetchGroupedDocs(userId);
+      if (grouped != null) {
+        final counts = grouped["counts"] is Map
+            ? Map<String, dynamic>.from(grouped["counts"])
+            : <String, dynamic>{};
+        if (mounted) {
+          setState(() {
+            _documentCounts = {
+              "Reports": counts["reports"] ?? 0,
+              "Prescription": counts["prescriptions"] ?? 0,
+              "Bill": counts["bills"] ?? 0,
+              "Insurance": counts["insurance"] ?? 0,
+            };
+            _isLoadingCounts = false;
+          });
+        }
+      } else if (_documentCounts.isEmpty) {
+        // If startup used stale local identity, recover from latest authenticated profile.
+        final refreshedUser = await ApiService.me();
+        final refreshedUserId = (refreshedUser?['id']?.toString() ??
+                refreshedUser?['_id']?.toString() ??
+                '')
+            .trim();
+        if (refreshedUserId.isNotEmpty && refreshedUserId != userId) {
+          await prefs.setString("userId", refreshedUserId);
+          if (refreshedUser != null && refreshedUser.isNotEmpty) {
+            await prefs.setString("userData", jsonEncode(refreshedUser));
+          }
+
+          final retriedGrouped = await ApiService.fetchGroupedDocs(
+            refreshedUserId,
+          );
+          if (retriedGrouped != null && mounted) {
+            final counts = retriedGrouped["counts"] is Map
+                ? Map<String, dynamic>.from(retriedGrouped["counts"])
+                : <String, dynamic>{};
+            setState(() {
+              _userData = refreshedUser ?? _userData;
+              _documentCounts = {
+                "Reports": counts["reports"] ?? 0,
+                "Prescription": counts["prescriptions"] ?? 0,
+                "Bill": counts["bills"] ?? 0,
+                "Insurance": counts["insurance"] ?? 0,
+              };
+              _isLoadingCounts = false;
+            });
+          }
+        }
+      }
     } catch (e) {
-      print("Error loading document counts: $e");
+      debugPrint("Error loading document counts: $e");
+      if (!mounted) return;
       setState(() {
         _isLoadingCounts = false;
       });
@@ -713,17 +856,55 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _refreshUserData() async {
+  Future<void> _refreshUserData({bool forceRemote = false}) async {
+    final previousUserId = _activeUserId;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final stored = prefs.getString("userData");
-      if (stored == null) return;
-      final decoded = jsonDecode(stored);
-      if (decoded is Map<String, dynamic>) {
-        if (!mounted) return;
-        setState(() {
-          _userData = Map<String, dynamic>.from(decoded);
-        });
+      Map<String, dynamic>? nextUserData;
+
+      if (forceRemote) {
+        final remoteUser = await ApiService.me();
+        if (remoteUser != null && remoteUser.isNotEmpty) {
+          nextUserData = Map<String, dynamic>.from(remoteUser);
+          await prefs.setString('userData', jsonEncode(nextUserData));
+          final remoteUserId = (nextUserData['id']?.toString() ??
+                  nextUserData['_id']?.toString() ??
+                  '')
+              .trim();
+          if (remoteUserId.isNotEmpty) {
+            await prefs.setString('userId', remoteUserId);
+          }
+        }
+      }
+
+      if (nextUserData == null) {
+        final stored = prefs.getString("userData");
+        if (stored != null && stored.trim().isNotEmpty) {
+          final decoded = jsonDecode(stored);
+          if (decoded is Map) {
+            nextUserData = decoded.map(
+              (key, value) => MapEntry(key.toString(), value),
+            );
+          }
+        }
+      }
+
+      if (nextUserData == null || nextUserData.isEmpty) {
+        return;
+      }
+
+      final nextUserId = (nextUserData['id']?.toString() ??
+              nextUserData['_id']?.toString() ??
+              '')
+          .trim();
+      if (!mounted) return;
+      setState(() {
+        _userData = Map<String, dynamic>.from(nextUserData!);
+      });
+
+      if (nextUserId.isNotEmpty &&
+          (nextUserId != previousUserId || forceRemote)) {
+        unawaited(_loadDocumentCounts());
       }
     } catch (e) {
       print("Error refreshing user data: $e");
@@ -1256,7 +1437,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
                 ? TickerMode(
                     enabled: _currentIndex == 1,
                     child: MyVault(
-                      userId: (_userData["id"] ?? "").toString(),
+                      userId: _activeUserId,
                     ),
                   )
                 : const SizedBox.shrink(),
@@ -1499,7 +1680,7 @@ class _Dashboard1State extends State<Dashboard1> with TickerProviderStateMixin {
           MaterialPageRoute(
             builder: (context) => CategoryVaultPage(
               category: category,
-              userId: (_userData["id"] ?? "").toString(),
+              userId: _activeUserId,
             ),
           ),
         );

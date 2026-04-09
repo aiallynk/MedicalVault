@@ -72,7 +72,18 @@ class _LoginScreenState extends State<LoginScreen> {
         }
 
         await SecureTokenStorage.saveToken(token);
+        final refreshToken = (data['refreshToken'] ?? '').toString().trim();
+        if (refreshToken.isNotEmpty) {
+          await SecureTokenStorage.saveRefreshToken(refreshToken);
+        }
         await prefs.setString('userData', jsonEncode(data['user']));
+        final user = data['user'];
+        if (user is Map) {
+          await prefs.setString(
+            'userId',
+            (user['id'] ?? user['_id'] ?? '').toString(),
+          );
+        }
 
         return data['user'];
       } else {
@@ -438,16 +449,15 @@ class _LoginScreenState extends State<LoginScreen> {
                                             if (result['success'] != true &&
                                                 code ==
                                                     'LOGIN_APPROVAL_REQUIRED') {
-                                              final attemptId = (result[
-                                                          'loginAttemptId'] ??
-                                                      '')
-                                                  .toString()
-                                                  .trim();
-                                              final attemptToken = (result[
-                                                          'attemptToken'] ??
-                                                      '')
-                                                  .toString()
-                                                  .trim();
+                                              final attemptId =
+                                                  (result['loginAttemptId'] ??
+                                                          '')
+                                                      .toString()
+                                                      .trim();
+                                              final attemptToken =
+                                                  (result['attemptToken'] ?? '')
+                                                      .toString()
+                                                      .trim();
                                               if (attemptId.isNotEmpty &&
                                                   attemptToken.isNotEmpty) {
                                                 messenger.showSnackBar(
@@ -535,11 +545,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                               await _animateLoginSuccessAndNavigate(
                                                   userData);
                                             } else {
-                                              final denyCode = (result['code'] ??
-                                                      '')
-                                                  .toString()
-                                                  .trim()
-                                                  .toUpperCase();
+                                              final denyCode =
+                                                  (result['code'] ?? '')
+                                                      .toString()
+                                                      .trim()
+                                                      .toUpperCase();
                                               final message = denyCode ==
                                                       'LOGIN_DENIED_BY_ACTIVE_SESSION'
                                                   ? 'Login denied by active session'

@@ -1,9 +1,13 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:lottie/lottie.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 // import 'package:permission_handler/permission_handler.dart';
 
@@ -27,9 +31,12 @@ class CategoryVaultPage extends StatefulWidget {
   State<CategoryVaultPage> createState() => _CategoryVaultPageState();
 }
 
-class _CategoryVaultPageState extends State<CategoryVaultPage> {
+class _CategoryVaultPageState extends State<CategoryVaultPage>
+    with WidgetsBindingObserver {
   List<Document> files = [];
   List<Document> filteredFiles = [];
+  StreamSubscription<dynamic>? _connectivitySubscription;
+  bool _wasConnected = true;
   bool _isLoading = true;
   final Dio dio = Dio();
 
@@ -111,14 +118,70 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initializeConnectivityObserver();
     _searchController.addListener(_onSearchChanged);
     _loadFiles();
   }
 
   @override
+  void didUpdateWidget(covariant CategoryVaultPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userId.trim() != widget.userId.trim() ||
+        oldWidget.category != widget.category) {
+      _loadFiles();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadFiles();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _initializeConnectivityObserver() {
+    final connectivity = Connectivity();
+    unawaited(() async {
+      try {
+        final initialResult = await connectivity.checkConnectivity();
+        _wasConnected = _hasNetworkConnection(initialResult);
+      } catch (_) {
+        _wasConnected = true;
+      }
+    }());
+
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription =
+        connectivity.onConnectivityChanged.listen((dynamic result) {
+      final isConnected = _hasNetworkConnection(result);
+      final justReconnected = isConnected && !_wasConnected;
+      _wasConnected = isConnected;
+      if (!justReconnected) return;
+      unawaited(_loadFiles());
+    });
+  }
+
+  bool _hasNetworkConnection(dynamic result) {
+    if (result is ConnectivityResult) {
+      return result != ConnectivityResult.none;
+    }
+    if (result is List<ConnectivityResult>) {
+      return result.any((entry) => entry != ConnectivityResult.none);
+    }
+    if (result is Iterable) {
+      return result.any((entry) => entry != ConnectivityResult.none);
+    }
+    return true;
   }
 
   // Helper method to apply date filter
@@ -169,40 +232,83 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
   }
 
   Future<void> _loadFiles() async {
-    setState(() => _isLoading = true);
+    if (mounted && files.isEmpty) {
+      setState(() => _isLoading = true);
+    }
+
     try {
-      final docs = await ApiService.fetchMyDocs(widget.userId);
+      final prefs = await SharedPreferences.getInstance();
+      final fromWidget = widget.userId.trim();
+      final fromActiveProfile =
+          (prefs.getString("activeProfileId") ?? "").trim();
+      final fromPrefs = (prefs.getString("userId") ?? "").trim();
+      var resolvedUserId = fromWidget.isNotEmpty
+          ? fromWidget
+          : (fromActiveProfile.isNotEmpty ? fromActiveProfile : fromPrefs);
 
-      // ✅ Filter by normalizedType from model
-      final categoryFiltered = docs.where((d) {
-        switch (widget.category.toLowerCase()) {
-          case "reports":
-          case "report":
-            return d.normalizedType == "report";
-          case "prescriptions":
-          case "prescription":
-            return d.normalizedType == "prescription";
-          case "bills":
-          case "bill":
-            return d.normalizedType == "bill";
-          case "insurance":
-          case "insurance details":
-            return d.normalizedType == "insurance";
-          default:
-            return false;
+      if (resolvedUserId.isEmpty) {
+        final remoteUser = await ApiService.me();
+        resolvedUserId = (remoteUser?['id']?.toString() ??
+                remoteUser?['_id']?.toString() ??
+                '')
+            .trim();
+        if (resolvedUserId.isNotEmpty) {
+          await prefs.setString("userId", resolvedUserId);
+          if (remoteUser != null && remoteUser.isNotEmpty) {
+            await prefs.setString("userData", jsonEncode(remoteUser));
+          }
         }
-      }).toList();
+      }
 
+      if (resolvedUserId.isEmpty) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      // First paint from local cache for offline/slow network UX.
+      final cachedDocs = await ApiService.getCachedMyDocs(resolvedUserId);
+      if (cachedDocs.isNotEmpty && mounted) {
+        files = _filterDocsByCurrentCategory(cachedDocs);
+        setState(() {
+          filteredFiles = _recomputeFilteredFiles();
+          _isLoading = false;
+        });
+      }
+
+      final docs = await ApiService.fetchMyDocs(resolvedUserId);
+      final categoryFiltered = _filterDocsByCurrentCategory(docs);
+
+      if (!mounted) return;
       setState(() {
-        files = categoryFiltered; // Store all category files
-        filteredFiles =
-            _recomputeFilteredFiles(); // Apply all filters for display
+        files = categoryFiltered;
+        filteredFiles = _recomputeFilteredFiles();
         _isLoading = false;
       });
     } catch (e) {
-      setState(() => _isLoading = false);
-      debugPrint("⚠️ Error loading files: $e");
+      if (mounted) setState(() => _isLoading = false);
+      debugPrint("Error loading files: $e");
     }
+  }
+
+  List<Document> _filterDocsByCurrentCategory(List<Document> docs) {
+    return docs.where((d) {
+      switch (widget.category.toLowerCase()) {
+        case "reports":
+        case "report":
+          return d.normalizedType == "report";
+        case "prescriptions":
+        case "prescription":
+          return d.normalizedType == "prescription";
+        case "bills":
+        case "bill":
+          return d.normalizedType == "bill";
+        case "insurance":
+        case "insurance details":
+          return d.normalizedType == "insurance";
+        default:
+          return false;
+      }
+    }).toList(growable: false);
   }
 
   // Handle filter change
@@ -316,17 +422,17 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
 
     final fileType = (document.fileType ?? "").toLowerCase();
     final fileName = document.fileName ?? "";
-    debugPrint("🔍 Opening file: $fileName ($fileType)");
+    debugPrint("ðŸ” Opening file: $fileName ($fileType)");
 
     try {
       if (fileType.contains("pdf")) {
-        // ✅ Always download and open PDFs externally
+        // âœ… Always download and open PDFs externally
         await _downloadAndOpenFile(document);
       } else if (fileType.startsWith("image/") ||
           fileName.toLowerCase().endsWith(".jpg") ||
           fileName.toLowerCase().endsWith(".jpeg") ||
           fileName.toLowerCase().endsWith(".png")) {
-        // ✅ Use backend preview endpoint for images
+        // âœ… Use backend preview endpoint for images
         final previewUrl = await _getPreviewUrl(document.id!);
         Navigator.push(
           context,
@@ -338,11 +444,11 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
           ),
         );
       } else {
-        // ✅ Fallback: download & open locally
+        // âœ… Fallback: download & open locally
         await _downloadAndOpenFile(document);
       }
     } catch (e) {
-      debugPrint("❌ Preview error: $e");
+      debugPrint("âŒ Preview error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -379,7 +485,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
         );
       }
     } catch (e) {
-      debugPrint("❌ Error getting preview URL: $e");
+      debugPrint("âŒ Error getting preview URL: $e");
       throw Exception(
         context.l10n
             .format('documentDetail.previewUrlFailed', {'message': '$e'}),
@@ -396,7 +502,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
       final filePath = '${dir.path}/${document.fileName ?? "file"}';
       final url = '${ApiService.baseUrl}/files/${document.id}/download';
 
-      // ✅ Add authentication headers for this specific request
+      // âœ… Add authentication headers for this specific request
       final token = await ApiService.getToken();
       final options = Options(
         headers: token != null ? {'Authorization': 'Bearer $token'} : {},
@@ -409,7 +515,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
       await dio.download(url, filePath, options: options);
       await OpenFile.open(filePath);
     } catch (e) {
-      debugPrint("❌ Download and open error: $e");
+      debugPrint("âŒ Download and open error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -441,7 +547,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
               await getApplicationDocumentsDirectory();
       final filePath = '${dir.path}/${document.fileName ?? "file"}';
 
-      // ✅ All files → use backend download endpoint with auth
+      // âœ… All files â†’ use backend download endpoint with auth
       final downloadUrl = '${ApiService.baseUrl}/files/${document.id}/download';
 
       final token = await ApiService.getToken();
@@ -464,7 +570,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
         ),
       );
     } catch (e) {
-      debugPrint("❌ Download error: $e");
+      debugPrint("âŒ Download error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -490,7 +596,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     try {
       previewUrl = await _getPreviewUrl(document.id!);
     } catch (e) {
-      debugPrint("⚠️ Could not get preview URL: $e");
+      debugPrint("âš ï¸ Could not get preview URL: $e");
     }
 
     // Controllers for editing
@@ -875,7 +981,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
     if (confirmed != true) return;
 
     try {
-      debugPrint("🗑 Deleting file with id=${document.id}");
+      debugPrint("ðŸ—‘ Deleting file with id=${document.id}");
       final success = await ApiService.deleteDocument(document.id!);
 
       if (success) {
@@ -890,7 +996,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage> {
         throw Exception("Server rejected delete for id=${document.id}");
       }
     } catch (e) {
-      debugPrint("❌ Delete error: $e");
+      debugPrint("âŒ Delete error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -1571,7 +1677,7 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
               _error = context.l10n.format(
                   'common.errorWithMessage', {'message': details.error});
             });
-            // ✅ Fallback: open externally if viewer fails
+            // âœ… Fallback: open externally if viewer fails
             OpenFile.open(widget.url);
           },
           onDocumentLoaded: (PdfDocumentLoadedDetails details) {

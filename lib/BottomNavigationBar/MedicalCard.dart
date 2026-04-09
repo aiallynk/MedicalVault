@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:ui' as ui;
-import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -10,7 +9,7 @@ import 'package:hello/localization/app_localizations.dart';
 
 /// Medical Card URL base (update with your actual domain)
 const String kMedicalCardBaseUrl =
-    'https://health-vault-web.vercel.app/medical-card';
+    'https://medicalvault-aially.vercel.app/medical-card';
 
 class MedicalCardPage extends StatefulWidget {
   final Map<String, dynamic> userData;

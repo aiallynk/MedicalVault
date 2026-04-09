@@ -73,6 +73,9 @@ class ApiService {
   static const Duration _publicCacheTtl = Duration(minutes: 5);
   static const Duration _appointmentsCacheTtl = Duration(minutes: 3);
   static const Duration _publicGeoCacheTtl = Duration(minutes: 20);
+  static const Duration _documentsRequestTimeout = Duration(seconds: 12);
+  static const String _docsCachePrefix = "docs_cache_v1_";
+  static const String _groupedDocsCachePrefix = "grouped_docs_cache_v1_";
   static const String _publicGeoCountryKey = "public_geo_country";
   static const String _publicGeoStateKey = "public_geo_state";
   static const String _publicGeoRegionKey = "public_geo_region";
@@ -84,9 +87,12 @@ class ApiService {
   static const String _sessionInvalidCode = "SESSION_INVALID";
   static const String _defaultSessionInvalidMessage =
       "You have been logged out due to login from another device";
+  static const String _defaultSessionExpiredMessage =
+      "Your session expired. Please log in again.";
   static const String _deviceIdPrefsKey = "auth_device_id";
   static final StreamController<Map<String, String>> _sessionEventsController =
       StreamController<Map<String, String>>.broadcast();
+  static Future<bool>? _refreshInFlight;
 
   static Stream<Map<String, String>> get sessionEvents =>
       _sessionEventsController.stream;
@@ -464,27 +470,38 @@ class ApiService {
   static Future<void> _persistAuthSessionPayload(
     Map<String, dynamic> payload,
   ) async {
-    final token = payload['token']?.toString();
+    final token = extractTokenFromResponseData(payload);
     if (token == null || token.trim().isEmpty) return;
+    final refreshToken = extractRefreshTokenFromResponseData(payload);
 
-    final userRaw = payload['user'];
-    final user = userRaw is Map
+    final userRaw = payload['user'] ??
+        (payload['data'] is Map ? payload['data']['user'] : null);
+    final userMap = userRaw is Map
         ? userRaw.map((key, value) => MapEntry(key.toString(), value))
         : <String, dynamic>{};
+    final user = _normalizeUserForClient(userMap);
 
     final prefs = await SharedPreferences.getInstance();
     await SecureTokenStorage.saveToken(token);
-    await prefs.setString("userId", user['id']?.toString() ?? "");
-    await prefs.setString("email", user['email']?.toString() ?? "");
-    await prefs.setString("name", user['name']?.toString() ?? "Patient");
-    await prefs.setString("userData", jsonEncode(user));
-    if (user['emailVerified'] != null) {
-      await prefs.setBool('emailVerified', user['emailVerified'] == true);
+    if (refreshToken != null && refreshToken.isNotEmpty) {
+      await SecureTokenStorage.saveRefreshToken(refreshToken);
     }
-    await OfflineStorageService.instance.cacheUserData(user);
-    await OfflineStorageService.instance.cacheEmergencyContactsFromUserData(
-      user,
-    );
+    if (user.isNotEmpty) {
+      await prefs.setString(
+        "userId",
+        user['id']?.toString() ?? user['_id']?.toString() ?? "",
+      );
+      await prefs.setString("email", user['email']?.toString() ?? "");
+      await prefs.setString("name", user['name']?.toString() ?? "Patient");
+      await prefs.setString("userData", jsonEncode(user));
+      if (user['emailVerified'] != null) {
+        await prefs.setBool('emailVerified', user['emailVerified'] == true);
+      }
+      await OfflineStorageService.instance.cacheUserData(user);
+      await OfflineStorageService.instance.cacheEmergencyContactsFromUserData(
+        user,
+      );
+    }
 
     await FCMService().registerToken();
   }
@@ -512,6 +529,24 @@ class ApiService {
     return null;
   }
 
+  static String? extractRefreshTokenFromResponseData(
+      Map<String, dynamic>? data) {
+    if (data == null) return null;
+
+    final direct = data['refreshToken']?.toString().trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+
+    final nested = data['data'];
+    if (nested is Map) {
+      final nestedToken = nested['refreshToken']?.toString().trim();
+      if (nestedToken != null && nestedToken.isNotEmpty) {
+        return nestedToken;
+      }
+    }
+
+    return null;
+  }
+
   // ---------------- PASSWORD FLOWS ----------------
   // ---------------- EMAIL VERIFICATION ----------------
   static Future<Map<String, dynamic>?> verifyEmailWithToken(
@@ -524,6 +559,18 @@ class ApiService {
       );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
+        if (extractTokenFromResponseData(
+              data is Map
+                  ? data.map((key, value) => MapEntry(key.toString(), value))
+                  : null,
+            ) !=
+            null) {
+          await _persistAuthSessionPayload(
+            data is Map
+                ? data.map((key, value) => MapEntry(key.toString(), value))
+                : <String, dynamic>{},
+          );
+        }
         // Persist updated user
         final prefs = await SharedPreferences.getInstance();
         final user = data['user'];
@@ -553,6 +600,18 @@ class ApiService {
       );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
+        if (extractTokenFromResponseData(
+              data is Map
+                  ? data.map((key, value) => MapEntry(key.toString(), value))
+                  : null,
+            ) !=
+            null) {
+          await _persistAuthSessionPayload(
+            data is Map
+                ? data.map((key, value) => MapEntry(key.toString(), value))
+                : <String, dynamic>{},
+          );
+        }
         final prefs = await SharedPreferences.getInstance();
         final user = data['user'];
         if (user != null) {
@@ -657,12 +716,157 @@ class ApiService {
     };
   }
 
+  static Future<void> _persistUserSnapshotIfPresent(
+    Map<String, dynamic> payload,
+  ) async {
+    final userRaw = payload['user'] ??
+        (payload['data'] is Map ? payload['data']['user'] : null);
+    if (userRaw is! Map) return;
+
+    final user = _normalizeUserForClient(
+      userRaw.map((key, value) => MapEntry(key.toString(), value)),
+    );
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString("userData", jsonEncode(user));
+    await prefs.setString(
+      "userId",
+      user['id']?.toString() ?? user['_id']?.toString() ?? "",
+    );
+    await prefs.setString("email", user['email']?.toString() ?? "");
+    await prefs.setString("name", user['name']?.toString() ?? "Patient");
+    await OfflineStorageService.instance.cacheUserData(user);
+    await OfflineStorageService.instance.cacheEmergencyContactsFromUserData(
+      user,
+    );
+  }
+
+  static Future<bool> _refreshAccessTokenIfPossible() async {
+    final existing = _refreshInFlight;
+    if (existing != null) return existing;
+
+    final operation = () async {
+      final refreshToken = await SecureTokenStorage.getRefreshToken();
+      if (refreshToken == null || refreshToken.trim().isEmpty) {
+        return false;
+      }
+
+      try {
+        final headers = await _deviceHeaders();
+        final response = await http
+            .post(
+              Uri.parse("$authUrl/refresh"),
+              headers: {
+                ...headers,
+                "Content-Type": "application/json",
+              },
+              body: jsonEncode({"refreshToken": refreshToken}),
+            )
+            .timeout(const Duration(seconds: 10));
+        final data = _decodeJsonMap(response.body);
+
+        if (response.statusCode == 200 && data['success'] != false) {
+          final nextToken = extractTokenFromResponseData(data);
+          if (nextToken == null || nextToken.trim().isEmpty) {
+            return false;
+          }
+          await SecureTokenStorage.saveToken(nextToken);
+          final nextRefresh = extractRefreshTokenFromResponseData(data);
+          if (nextRefresh != null && nextRefresh.isNotEmpty) {
+            await SecureTokenStorage.saveRefreshToken(nextRefresh);
+          }
+          await _persistUserSnapshotIfPresent(data);
+          return true;
+        }
+
+        final unauthorized =
+            response.statusCode == 401 || response.statusCode == 403;
+        if (unauthorized || _isSessionInvalidResponse(response, data)) {
+          await SecureTokenStorage.clearToken();
+          final message = (data['message'] ?? _defaultSessionExpiredMessage)
+              .toString()
+              .trim();
+          _emitSessionInvalid(
+            message.isEmpty ? _defaultSessionExpiredMessage : message,
+          );
+        }
+      } catch (error) {
+        _debugLog("Token refresh failed: $error");
+      }
+      return false;
+    }();
+
+    _refreshInFlight = operation;
+    try {
+      return await operation;
+    } finally {
+      _refreshInFlight = null;
+    }
+  }
+
   static Map<String, dynamic> _asStringKeyMap(dynamic value) {
     if (value is Map<String, dynamic>) return value;
     if (value is Map) {
       return value.map((key, data) => MapEntry(key.toString(), data));
     }
     return <String, dynamic>{};
+  }
+
+  static bool _looksEncryptedBlob(dynamic value) {
+    final raw = (value ?? '').toString().trim().toLowerCase();
+    return raw.startsWith('enc:v');
+  }
+
+  static Map<String, dynamic> _normalizeUserForClient(
+    Map<String, dynamic> source, {
+    List<Map<String, dynamic>> fallbackEmergencyContacts = const [],
+  }) {
+    final user = Map<String, dynamic>.from(source);
+
+    final emergencyRaw = user['emergencyContact'];
+    if (emergencyRaw is Map) {
+      final emergency =
+          emergencyRaw.map((key, value) => MapEntry(key.toString(), value));
+      final phoneCandidate = (emergency['phone'] ??
+              emergency['mobile'] ??
+              emergency['number'] ??
+              '')
+          .toString()
+          .trim();
+
+      String resolvedPhone = phoneCandidate;
+      if (_looksEncryptedBlob(resolvedPhone) &&
+          fallbackEmergencyContacts.isNotEmpty) {
+        resolvedPhone =
+            (fallbackEmergencyContacts.first['phone'] ?? '').toString().trim();
+      }
+      if (_looksEncryptedBlob(resolvedPhone)) {
+        resolvedPhone = '';
+      }
+
+      if (resolvedPhone.isNotEmpty) {
+        emergency['phone'] = resolvedPhone;
+      } else {
+        emergency['phone'] = '';
+      }
+      user['emergencyContact'] = emergency;
+    }
+
+    final mobile = (user['mobile'] ?? '').toString().trim();
+    if (_looksEncryptedBlob(mobile)) {
+      user['mobile'] = '';
+    }
+
+    final allergies = (user['allergies'] ?? '').toString().trim();
+    if (_looksEncryptedBlob(allergies)) {
+      user['allergies'] = '';
+    }
+
+    final aadhaar = (user['aadhaar'] ?? '').toString().trim();
+    if (_looksEncryptedBlob(aadhaar)) {
+      user['aadhaar'] = '';
+    }
+
+    return user;
   }
 
   static bool? _parseAllowMultipleSessionsValue(dynamic value) {
@@ -1100,12 +1304,24 @@ class ApiService {
       final token = await _getToken();
       if (token == null || token.trim().isEmpty) return false;
 
-      final headers = await _authHeaders();
-      final res = await http.post(
-        Uri.parse("$authUrl/session/heartbeat"),
-        headers: headers,
-      );
-      final data = _decodeJsonMap(res.body);
+      Future<http.Response> send() async {
+        final headers = await _authHeaders();
+        return http.post(
+          Uri.parse("$authUrl/session/heartbeat"),
+          headers: headers,
+        );
+      }
+
+      var res = await send();
+      var data = _decodeJsonMap(res.body);
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        final refreshed = await _refreshAccessTokenIfPossible();
+        if (refreshed) {
+          res = await send();
+          data = _decodeJsonMap(res.body);
+        }
+      }
+
       if (_isSessionInvalidResponse(res, data)) {
         _emitSessionInvalid(data['message']?.toString());
       }
@@ -1119,18 +1335,37 @@ class ApiService {
   // ---------------- PROFILE ----------------
   static Future<Map<String, dynamic>?> me() async {
     try {
-      final headers = await _authHeaders();
-      final res = await http
-          .get(Uri.parse("$authUrl/me"), headers: headers)
-          .timeout(const Duration(seconds: 8));
-      final data = _decodeJsonMap(res.body);
+      Future<http.Response> fetch() async {
+        final headers = await _authHeaders();
+        return http
+            .get(Uri.parse("$authUrl/me"), headers: headers)
+            .timeout(const Duration(seconds: 8));
+      }
+
+      var res = await fetch();
+      var data = _decodeJsonMap(res.body);
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        final refreshed = await _refreshAccessTokenIfPossible();
+        if (refreshed) {
+          res = await fetch();
+          data = _decodeJsonMap(res.body);
+        }
+      }
       if (res.statusCode == 200) {
-        final user = data['data'] is Map
+        final rawUser = data['data'] is Map
             ? (data['data']['user'] is Map
                 ? (data['data']['user'] as Map)
                     .map((key, value) => MapEntry(key.toString(), value))
                 : null)
             : null;
+        final fallbackContacts =
+            await OfflineStorageService.instance.getEmergencyContacts();
+        final user = rawUser == null
+            ? null
+            : _normalizeUserForClient(
+                rawUser,
+                fallbackEmergencyContacts: fallbackContacts,
+              );
         if (user != null) {
           await OfflineStorageService.instance.cacheUserData(user);
           await OfflineStorageService.instance
@@ -1145,6 +1380,9 @@ class ApiService {
         return null;
       }
       if (res.statusCode == 401 || res.statusCode == 403) {
+        _emitSessionInvalid(
+          (data['message'] ?? _defaultSessionExpiredMessage).toString(),
+        );
         _debugLog("Profile fetch denied: ${res.statusCode}");
         return null;
       }
@@ -1176,11 +1414,16 @@ class ApiService {
       final data = _decodeJsonMap(res.body);
       if (res.statusCode == 200 && data['success'] == true) {
         final prefs = await SharedPreferences.getInstance();
-        final userData = data['data'] is Map
+        final rawUserData = data['data'] is Map
             ? (data['data'] as Map)
                 .map((key, value) => MapEntry(key.toString(), value))
             : null;
-        if (userData != null) {
+        if (rawUserData != null) {
+          final userData = _normalizeUserForClient(
+            rawUserData,
+            fallbackEmergencyContacts: pendingEmergencyContacts,
+          );
+
           final allergiesRaw = (userData['allergies'] ?? '').toString().trim();
           if (allergiesRaw.toLowerCase().startsWith('enc:v') &&
               updates['allergies'] is String) {
@@ -1220,6 +1463,9 @@ class ApiService {
           await OfflineStorageService.instance.cacheUserData(userData);
           await OfflineStorageService.instance
               .cacheEmergencyContactsFromUserData(userData);
+
+          // Keep return payload aligned with normalized data used by UI.
+          data['data'] = userData;
         }
       }
       return data;
@@ -1411,7 +1657,12 @@ class ApiService {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = response.data;
-        final user = data?['data']?['user'];
+        final rawUser = data?['data']?['user'];
+        final user = rawUser is Map
+            ? _normalizeUserForClient(
+                rawUser.map((key, value) => MapEntry(key.toString(), value)),
+              )
+            : null;
         if (user != null) {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('userData', jsonEncode(user));
@@ -1523,40 +1774,251 @@ class ApiService {
   }
 
   // ---------------- FETCH FILES ----------------
-  static Future<List<Document>> fetchMyDocs(String userId) async {
+  static String _normalizeUserCacheId(String userId) => userId.trim();
+
+  static String _docsCacheKey(String userId) =>
+      "$_docsCachePrefix${_normalizeUserCacheId(userId)}";
+
+  static String _groupedDocsCacheKey(String userId) =>
+      "$_groupedDocsCachePrefix${_normalizeUserCacheId(userId)}";
+
+  static List<Document> _documentsFromDynamicList(dynamic rawList) {
+    if (rawList is! List) return const <Document>[];
+    return rawList
+        .whereType<Map>()
+        .map((entry) => Document.fromApi(Map<String, dynamic>.from(entry)))
+        .toList(growable: false);
+  }
+
+  static Map<String, int> _sanitizeGroupedCounts(dynamic countsRaw) {
+    int asInt(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+
+    final source = countsRaw is Map ? countsRaw : const <String, dynamic>{};
+    return {
+      "reports": asInt(source["reports"]),
+      "prescriptions": asInt(source["prescriptions"]),
+      "bills": asInt(source["bills"]),
+      "insurance": asInt(source["insurance"]),
+    };
+  }
+
+  static Map<String, dynamic> _buildGroupedFromDocs(List<Document> docs) {
+    final counts = {
+      "reports": 0,
+      "prescriptions": 0,
+      "bills": 0,
+      "insurance": 0,
+    };
+    for (final doc in docs) {
+      switch (doc.normalizedType) {
+        case "report":
+          counts["reports"] = (counts["reports"] ?? 0) + 1;
+          break;
+        case "prescription":
+          counts["prescriptions"] = (counts["prescriptions"] ?? 0) + 1;
+          break;
+        case "bill":
+          counts["bills"] = (counts["bills"] ?? 0) + 1;
+          break;
+        case "insurance":
+          counts["insurance"] = (counts["insurance"] ?? 0) + 1;
+          break;
+      }
+    }
+    return {
+      "counts": counts,
+      "source": "cache",
+      "generatedFrom": "documents",
+      "generatedAt": DateTime.now().toIso8601String(),
+    };
+  }
+
+  static Future<void> _cacheDocuments(
+    String userId,
+    List<Document> docs,
+  ) async {
+    final normalizedUserId = _normalizeUserCacheId(userId);
+    if (normalizedUserId.isEmpty) return;
+
     try {
-      final headers = await _authHeaders();
-      final res =
-          await http.get(Uri.parse("$filesUrl/user/$userId"), headers: headers);
+      final prefs = await SharedPreferences.getInstance();
+      final payload = {
+        "cachedAt": DateTime.now().toIso8601String(),
+        "documents": docs.map((doc) => doc.toJson()).toList(growable: false),
+      };
+      await prefs.setString(
+          _docsCacheKey(normalizedUserId), jsonEncode(payload));
+      await prefs.setString(
+        _groupedDocsCacheKey(normalizedUserId),
+        jsonEncode(_buildGroupedFromDocs(docs)),
+      );
+    } catch (error) {
+      _debugLog("cache documents failed: $error");
+    }
+  }
+
+  static Future<void> _cacheGroupedDocs(
+    String userId,
+    Map<String, dynamic> grouped,
+  ) async {
+    final normalizedUserId = _normalizeUserCacheId(userId);
+    if (normalizedUserId.isEmpty) return;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final payload = {
+        "cachedAt": DateTime.now().toIso8601String(),
+        "counts": _sanitizeGroupedCounts(grouped["counts"]),
+      };
+      await prefs.setString(
+        _groupedDocsCacheKey(normalizedUserId),
+        jsonEncode(payload),
+      );
+    } catch (error) {
+      _debugLog("cache grouped docs failed: $error");
+    }
+  }
+
+  static Future<List<Document>> getCachedMyDocs(String userId) async {
+    final normalizedUserId = _normalizeUserCacheId(userId);
+    if (normalizedUserId.isEmpty) return const <Document>[];
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_docsCacheKey(normalizedUserId));
+      if (raw == null || raw.trim().isEmpty) return const <Document>[];
+      final parsed = jsonDecode(raw);
+      if (parsed is Map) {
+        return _documentsFromDynamicList(parsed["documents"]);
+      }
+    } catch (error) {
+      _debugLog("read cached docs failed: $error");
+    }
+    return const <Document>[];
+  }
+
+  static Future<Map<String, dynamic>?> getCachedGroupedDocs(
+      String userId) async {
+    final normalizedUserId = _normalizeUserCacheId(userId);
+    if (normalizedUserId.isEmpty) return null;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_groupedDocsCacheKey(normalizedUserId));
+      if (raw != null && raw.trim().isNotEmpty) {
+        final parsed = jsonDecode(raw);
+        if (parsed is Map) {
+          return {
+            "counts": _sanitizeGroupedCounts(parsed["counts"]),
+            "source": "cache",
+          };
+        }
+      }
+
+      final cachedDocs = await getCachedMyDocs(normalizedUserId);
+      if (cachedDocs.isEmpty) return null;
+      return _buildGroupedFromDocs(cachedDocs);
+    } catch (error) {
+      _debugLog("read cached grouped docs failed: $error");
+      return null;
+    }
+  }
+
+  static Future<List<Document>> fetchMyDocs(String userId) async {
+    final normalizedUserId = _normalizeUserCacheId(userId);
+    if (normalizedUserId.isEmpty) return const <Document>[];
+
+    try {
+      Future<http.Response> fetch() async {
+        final headers = await _authHeaders();
+        return http
+            .get(
+              Uri.parse("$filesUrl/user/$normalizedUserId"),
+              headers: headers,
+            )
+            .timeout(_documentsRequestTimeout);
+      }
+
+      var res = await fetch();
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        final refreshed = await _refreshAccessTokenIfPossible();
+        if (refreshed) {
+          res = await fetch();
+        }
+      }
+
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        final docs = data['documents'] as List;
-        return docs.map((j) => Document.fromApi(j)).toList();
-      } else {
-        print("Fetch docs failed: ${res.body}");
+        final docs = _documentsFromDynamicList(data["documents"]);
+        await _cacheDocuments(normalizedUserId, docs);
+        return docs;
       }
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        final data = _decodeJsonMap(res.body);
+        _emitSessionInvalid(
+          (data['message'] ?? _defaultSessionExpiredMessage).toString(),
+        );
+      }
+      _debugLog("Fetch docs failed (${res.statusCode}): ${res.body}");
     } catch (e) {
-      print("Fetch error: $e");
+      _debugLog("Fetch docs error: $e");
     }
-    return [];
+
+    final cached = await getCachedMyDocs(normalizedUserId);
+    return cached;
   }
 
   static Future<Map<String, dynamic>?> fetchGroupedDocs(String userId) async {
+    final normalizedUserId = _normalizeUserCacheId(userId);
+    if (normalizedUserId.isEmpty) return null;
+
     try {
-      final headers = await _authHeaders();
-      final res = await http.get(
-        Uri.parse("$filesUrl/user/$userId/grouped"),
-        headers: headers,
-      );
+      Future<http.Response> fetch() async {
+        final headers = await _authHeaders();
+        return http
+            .get(
+              Uri.parse("$filesUrl/user/$normalizedUserId/grouped"),
+              headers: headers,
+            )
+            .timeout(_documentsRequestTimeout);
+      }
+
+      var res = await fetch();
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        final refreshed = await _refreshAccessTokenIfPossible();
+        if (refreshed) {
+          res = await fetch();
+        }
+      }
+
       if (res.statusCode == 200) {
-        return jsonDecode(res.body);
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          final normalized = {
+            ...Map<String, dynamic>.from(decoded),
+            "counts": _sanitizeGroupedCounts(decoded["counts"]),
+          };
+          await _cacheGroupedDocs(normalizedUserId, normalized);
+          return normalized;
+        }
+      } else if (res.statusCode == 401 || res.statusCode == 403) {
+        final data = _decodeJsonMap(res.body);
+        _emitSessionInvalid(
+          (data['message'] ?? _defaultSessionExpiredMessage).toString(),
+        );
       } else {
-        print("Grouped fetch failed: ${res.body}");
+        _debugLog("Grouped fetch failed (${res.statusCode}): ${res.body}");
       }
     } catch (e) {
-      print("Grouped fetch error: $e");
+      _debugLog("Grouped fetch error: $e");
     }
-    return null;
+
+    return getCachedGroupedDocs(normalizedUserId);
   }
 
   // ---------------- FETCH GROUPED DOCS BY EMAIL (for ProfilePageSettings) ----------------
@@ -1939,18 +2401,25 @@ class ApiService {
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        final token = data['data']['token'];
-        final user = data['data']['user'];
+        final dataMap = data is Map
+            ? data.map((key, value) => MapEntry(key.toString(), value))
+            : <String, dynamic>{};
+        final payload = dataMap['data'] is Map
+            ? (dataMap['data'] as Map)
+                .map((key, value) => MapEntry(key.toString(), value))
+            : <String, dynamic>{};
+        final user = payload['user'] is Map
+            ? (payload['user'] as Map)
+                .map((key, value) => MapEntry(key.toString(), value))
+            : <String, dynamic>{};
 
-        if (token != null) {
+        if (payload['token'] != null) {
+          await _persistAuthSessionPayload(payload);
           final prefs = await SharedPreferences.getInstance();
-          await SecureTokenStorage.saveToken(token.toString());
-          await prefs.setString("userId", user['id']?.toString() ?? "");
-          await prefs.setString("email", user['email']?.toString() ?? "");
-          await prefs.setString("name", user['name']?.toString() ?? "Patient");
-          await prefs.setString("userData", jsonEncode(user));
           await prefs.setString(
-              "activeProfileId", user['id']?.toString() ?? "");
+            "activeProfileId",
+            user['id']?.toString() ?? user['_id']?.toString() ?? "",
+          );
         }
 
         return data;

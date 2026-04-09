@@ -39,6 +39,14 @@ class _ProfileNameState extends State<ProfileName> {
     return raw;
   }
 
+  dynamic _firstNonEmptyValue(Iterable<dynamic> values) {
+    for (final value in values) {
+      final sanitized = _sanitizeSensitiveValue(value);
+      if (sanitized.isNotEmpty) return sanitized;
+    }
+    return '';
+  }
+
   Map<String, dynamic> _sanitizeUserPayload(Map<String, dynamic> incoming) {
     final sanitized = Map<String, dynamic>.from(incoming);
 
@@ -71,9 +79,14 @@ class _ProfileNameState extends State<ProfileName> {
                   .isNotEmpty
               ? _sanitizeSensitiveValue(incomingEmergencyMap['relationship'])
               : _sanitizeSensitiveValue(previousEmergencyMap['relationship']),
-      'phone': _sanitizeSensitiveValue(incomingEmergencyMap['phone']).isNotEmpty
-          ? _sanitizeSensitiveValue(incomingEmergencyMap['phone'])
-          : _sanitizeSensitiveValue(previousEmergencyMap['phone']),
+      'phone': _firstNonEmptyValue([
+        incomingEmergencyMap['phone'],
+        incomingEmergencyMap['mobile'],
+        incomingEmergencyMap['number'],
+        previousEmergencyMap['phone'],
+        previousEmergencyMap['mobile'],
+        previousEmergencyMap['number'],
+      ]),
     };
     sanitized['emergencyContact'] = mergedEmergency;
 
@@ -496,7 +509,10 @@ class _ProfileNameState extends State<ProfileName> {
                 _infoRow(
                     Icons.phone,
                     l10n.t('profile.emergencyPhone'),
-                    user['emergencyContact']?['phone'] ?? '',
+                    user['emergencyContact']?['phone'] ??
+                        user['emergencyContact']?['mobile'] ??
+                        user['emergencyContact']?['number'] ??
+                        '',
                     'emergencyContact.phone'),
                 _sectionTitle(l10n.t('profile.medicalHistory')),
                 _listSection(
@@ -1472,7 +1488,15 @@ class _EditProfilePageState extends State<EditProfilePage> {
         if (field == "Emergency Contact Name") ecField = 'name';
         if (field == "Emergency Contact Relationship") ecField = 'relationship';
         if (field == "Emergency Contact Phone") ecField = 'phone';
-        value = widget.userData["emergencyContact"]?[ecField]?.toString() ?? "";
+        if (ecField == 'phone') {
+          value = widget.userData["emergencyContact"]?['phone']?.toString() ??
+              widget.userData["emergencyContact"]?['mobile']?.toString() ??
+              widget.userData["emergencyContact"]?['number']?.toString() ??
+              "";
+        } else {
+          value =
+              widget.userData["emergencyContact"]?[ecField]?.toString() ?? "";
+        }
       } else {
         value = widget.userData[field]?.toString() ?? "";
       }

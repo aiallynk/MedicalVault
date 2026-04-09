@@ -7,6 +7,9 @@ class AIResponse {
   final String language;
   final String responseType;
   final Map<String, dynamic>? structuredData;
+  final List<Map<String, dynamic>>? sections;
+  final Map<String, dynamic>? safety;
+  final Map<String, dynamic>? context;
   final Map<String, dynamic>? documentMetadata;
   final List<Map<String, dynamic>>? data;
   final String? type;
@@ -20,6 +23,9 @@ class AIResponse {
     this.language = 'english',
     this.responseType = 'text',
     this.structuredData,
+    this.sections,
+    this.safety,
+    this.context,
     this.documentMetadata,
     this.data,
     this.type,
@@ -29,21 +35,37 @@ class AIResponse {
   });
 
   factory AIResponse.fromJson(Map<String, dynamic> json) {
+    List<Map<String, dynamic>>? parseMapList(dynamic value) {
+      if (value is! List) return null;
+      final parsed = value
+          .whereType<Map>()
+          .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
+          .toList(growable: false);
+      return parsed.isEmpty ? null : parsed;
+    }
+
+    Map<String, dynamic>? parseMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) {
+        return value.map((k, v) => MapEntry(k.toString(), v));
+      }
+      return null;
+    }
+
     return AIResponse(
       success: json['success'] ?? false,
       reply: json['reply'] ?? '',
       language: json['language'] ?? 'english',
       responseType: json['responseType'] ?? 'text',
-      structuredData: json['structuredData'],
-      documentMetadata: json['documentMetadata'],
-      data: json['data'] != null
-          ? List<Map<String, dynamic>>.from(json['data'])
-          : null,
+      structuredData: parseMap(json['structuredData']),
+      sections: parseMapList(json['sections']),
+      safety: parseMap(json['safety']),
+      context: parseMap(json['context']),
+      documentMetadata: parseMap(json['documentMetadata']),
+      data: parseMapList(json['data']),
       type: json['type'],
       title: json['title'],
-      items: json['items'] != null
-          ? List<Map<String, dynamic>>.from(json['items'])
-          : null,
+      items: parseMapList(json['items']),
       message: json['message'],
     );
   }
@@ -86,6 +108,7 @@ class AIService {
   static Future<AIResponse> sendMessage({
     required String prompt,
     String? documentId,
+    Map<String, dynamic>? context,
   }) async {
     try {
       final token = await ApiService.getToken();
@@ -104,6 +127,7 @@ class AIService {
           'prompt': prompt,
           'model': model,
           if (documentId != null) 'documentId': documentId,
+          if (context != null) 'context': context,
         },
         options: Options(
           headers: {
@@ -125,6 +149,74 @@ class AIService {
         reply: 'Sorry, I encountered an error. Please try again.',
         message: e.toString(),
       );
+    }
+  }
+
+  /// Load persisted chat history for current authorized user scope.
+  static Future<Map<String, dynamic>?> getChatHistory({
+    String? patientId,
+  }) async {
+    try {
+      final token = await ApiService.getToken();
+      if (token == null) {
+        return null;
+      }
+
+      final response = await _dio.get(
+        '${ApiService.baseUrl}/ai/chat',
+        queryParameters: {
+          if (patientId != null && patientId.trim().isNotEmpty)
+            'patientId': patientId.trim(),
+        },
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data['success'] == true) {
+        return response.data is Map
+            ? (response.data as Map)
+                .map((key, value) => MapEntry(key.toString(), value))
+            : null;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Clear persisted chat history for current authorized user scope.
+  static Future<bool> clearChatHistory({
+    String? patientId,
+  }) async {
+    try {
+      final token = await ApiService.getToken();
+      if (token == null) {
+        return false;
+      }
+
+      final response = await _dio.delete(
+        '${ApiService.baseUrl}/ai/chat',
+        queryParameters: {
+          if (patientId != null && patientId.trim().isNotEmpty)
+            'patientId': patientId.trim(),
+        },
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        ),
+      );
+
+      return response.statusCode == 200 &&
+          response.data is Map &&
+          response.data['success'] == true;
+    } catch (e) {
+      return false;
     }
   }
 

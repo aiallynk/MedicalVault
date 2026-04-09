@@ -57,6 +57,7 @@ class _SettingsPageState extends State<SettingsPage> {
   List<Map<String, dynamic>> deviceSessions = [];
   late Map<String, dynamic> _userData;
   final ValueNotifier<int> _sectionRefreshToken = ValueNotifier<int>(0);
+  bool _sectionRefreshQueued = false;
 
   final NotificationSettingsService _settingsService =
       NotificationSettingsService();
@@ -95,7 +96,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _notifySectionRefresh() {
-    _sectionRefreshToken.value++;
+    if (!mounted || _sectionRefreshQueued) return;
+    _sectionRefreshQueued = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _sectionRefreshQueued = false;
+      if (!mounted) return;
+      _sectionRefreshToken.value = _sectionRefreshToken.value + 1;
+    });
   }
 
   bool? _parseBoolLike(dynamic value) {

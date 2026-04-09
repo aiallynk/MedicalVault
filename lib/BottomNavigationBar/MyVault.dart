@@ -1,5 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:lottie/lottie.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
@@ -33,7 +36,7 @@ class DocumentDetailPage extends StatelessWidget {
       final ext = document.fileName?.split('.').last.toLowerCase() ?? '';
 
       if (ext == 'pdf') {
-        // ✅ Use backend preview endpoint to get signed URL for PDFs
+        // âœ… Use backend preview endpoint to get signed URL for PDFs
         final previewUrl = await _getPreviewUrl(context, document.id!);
         Navigator.push(
           context,
@@ -47,7 +50,7 @@ class DocumentDetailPage extends StatelessWidget {
           ),
         );
       } else if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].contains(ext)) {
-        // ✅ Use backend preview endpoint for images too
+        // âœ… Use backend preview endpoint for images too
         final previewUrl = await _getPreviewUrl(context, document.id!);
         Navigator.push(
           context,
@@ -63,7 +66,7 @@ class DocumentDetailPage extends StatelessWidget {
         await _downloadAndOpenFile(context);
       }
     } catch (e) {
-      debugPrint("❌ Error previewing: $e");
+      debugPrint("âŒ Error previewing: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -99,7 +102,7 @@ class DocumentDetailPage extends StatelessWidget {
         }));
       }
     } catch (e) {
-      debugPrint("❌ Error getting preview URL: $e");
+      debugPrint("âŒ Error getting preview URL: $e");
       throw Exception(
           l10n.format('documentDetail.previewUrlFailed', {'message': '$e'}));
     }
@@ -119,7 +122,7 @@ class DocumentDetailPage extends StatelessWidget {
           "${ApiService.baseUrl}/files/${document.id}/download", filePath);
       await OpenFile.open(filePath);
     } catch (e) {
-      debugPrint("❌ Download+Open error: $e");
+      debugPrint("âŒ Download+Open error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -173,7 +176,7 @@ class DocumentDetailPage extends StatelessWidget {
         ),
       );
     } catch (e) {
-      debugPrint("❌ Download error: $e");
+      debugPrint("âŒ Download error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -191,7 +194,7 @@ class DocumentDetailPage extends StatelessWidget {
         ? formatDateTimeForContext(
             context,
             document.date,
-            pattern: 'MMM d, yyyy • h:mm a',
+            pattern: 'MMM d, yyyy - h:mm a',
             fallback: l10n.t('common.unknown'),
           )
         : l10n.t('common.unknown');
@@ -212,8 +215,7 @@ class DocumentDetailPage extends StatelessWidget {
                 "${l10n.t('documentDetail.categoryLabel')} ${document.category ?? l10n.t('common.unknown')}",
                 style: const TextStyle(fontSize: 18)),
             const SizedBox(height: 10),
-            Text(
-                "${l10n.t('documentDetail.uploadedOn')} $uploadedOnLabel",
+            Text("${l10n.t('documentDetail.uploadedOn')} $uploadedOnLabel",
                 style: const TextStyle(fontSize: 16)),
             const SizedBox(height: 20),
             Row(
@@ -268,8 +270,10 @@ class MyVault extends StatefulWidget {
   State<MyVault> createState() => _MyVaultState();
 }
 
-class _MyVaultState extends State<MyVault> {
+class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
   final TextEditingController _searchController = TextEditingController();
+  StreamSubscription<dynamic>? _connectivitySubscription;
+  bool _wasConnected = true;
   bool _isLoading = true;
 
   final List<String> _categories = [
@@ -352,6 +356,8 @@ class _MyVaultState extends State<MyVault> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initializeConnectivityObserver();
     _searchController.addListener(() {
       if (!mounted) return;
       setState(() {});
@@ -360,28 +366,117 @@ class _MyVaultState extends State<MyVault> {
   }
 
   @override
+  void didUpdateWidget(covariant MyVault oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userId.trim() != widget.userId.trim()) {
+      _loadDocumentsFromAPI();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadDocumentsFromAPI();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
     _searchController.dispose();
     super.dispose();
   }
 
+  void _initializeConnectivityObserver() {
+    final connectivity = Connectivity();
+    unawaited(() async {
+      try {
+        final initialResult = await connectivity.checkConnectivity();
+        _wasConnected = _hasNetworkConnection(initialResult);
+      } catch (_) {
+        _wasConnected = true;
+      }
+    }());
+
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription =
+        connectivity.onConnectivityChanged.listen((dynamic result) {
+      final isConnected = _hasNetworkConnection(result);
+      final justReconnected = isConnected && !_wasConnected;
+      _wasConnected = isConnected;
+      if (!justReconnected) return;
+      unawaited(_loadDocumentsFromAPI());
+    });
+  }
+
+  bool _hasNetworkConnection(dynamic result) {
+    if (result is ConnectivityResult) {
+      return result != ConnectivityResult.none;
+    }
+    if (result is List<ConnectivityResult>) {
+      return result.any((entry) => entry != ConnectivityResult.none);
+    }
+    if (result is Iterable) {
+      return result.any((entry) => entry != ConnectivityResult.none);
+    }
+    return true;
+  }
+
   Future<void> _loadDocumentsFromAPI() async {
-    setState(() => _isLoading = true);
-    MyVault._allDocuments.clear();
+    if (mounted && MyVault._allDocuments.isEmpty) {
+      setState(() => _isLoading = true);
+    }
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString("userId");
+      final fromWidget = widget.userId.trim();
+      final fromActiveProfile =
+          (prefs.getString("activeProfileId") ?? "").trim();
+      final fromPrefs = (prefs.getString("userId") ?? "").trim();
+      var resolvedUserId = fromWidget.isNotEmpty
+          ? fromWidget
+          : (fromActiveProfile.isNotEmpty ? fromActiveProfile : fromPrefs);
 
-      if (userId != null) {
-        final docs = await ApiService.fetchMyDocs(userId);
-        MyVault._allDocuments.addAll(docs);
-        debugPrint("✅ Loaded ${docs.length} documents for user: $userId");
-      } else {
-        debugPrint("❌ No userId found in SharedPreferences");
+      if (resolvedUserId.isEmpty) {
+        final remoteUser = await ApiService.me();
+        resolvedUserId = (remoteUser?['id']?.toString() ??
+                remoteUser?['_id']?.toString() ??
+                '')
+            .trim();
+        if (resolvedUserId.isNotEmpty) {
+          await prefs.setString("userId", resolvedUserId);
+          if (remoteUser != null && remoteUser.isNotEmpty) {
+            await prefs.setString("userData", jsonEncode(remoteUser));
+          }
+        }
       }
+
+      if (resolvedUserId.isEmpty) {
+        debugPrint("No userId available for document loading");
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      // Load cached documents first so offline/slow network still shows data.
+      final cachedDocs = await ApiService.getCachedMyDocs(resolvedUserId);
+      if (cachedDocs.isNotEmpty) {
+        MyVault._allDocuments
+          ..clear()
+          ..addAll(cachedDocs);
+        if (mounted) setState(() => _isLoading = false);
+      }
+
+      final docs = await ApiService.fetchMyDocs(resolvedUserId);
+      if (docs.isNotEmpty || MyVault._allDocuments.isEmpty) {
+        MyVault._allDocuments
+          ..clear()
+          ..addAll(docs);
+      }
+      debugPrint("Loaded ${docs.length} documents for user: $resolvedUserId");
     } catch (e) {
-      debugPrint("❌ Error loading documents: $e");
+      debugPrint("Error loading documents: $e");
     }
 
     if (mounted) setState(() => _isLoading = false);
@@ -516,17 +611,17 @@ class _MyVaultState extends State<MyVault> {
 
     final fileType = (document.fileType ?? "").toLowerCase();
     final fileName = document.fileName ?? "";
-    debugPrint("🔍 Opening file: $fileName ($fileType)");
+    debugPrint("ðŸ” Opening file: $fileName ($fileType)");
 
     try {
       if (fileType.contains("pdf")) {
-        // ✅ Always download and open PDFs externally
+        // âœ… Always download and open PDFs externally
         await _downloadAndOpenFile(document);
       } else if (fileType.startsWith("image/") ||
           fileName.toLowerCase().endsWith(".jpg") ||
           fileName.toLowerCase().endsWith(".jpeg") ||
           fileName.toLowerCase().endsWith(".png")) {
-        // ✅ Use backend preview endpoint for images
+        // âœ… Use backend preview endpoint for images
         final previewUrl = await _getPreviewUrl(document.id!);
         Navigator.push(
           context,
@@ -539,11 +634,11 @@ class _MyVaultState extends State<MyVault> {
           ),
         );
       } else {
-        // ✅ Fallback: download & open locally
+        // âœ… Fallback: download & open locally
         await _downloadAndOpenFile(document);
       }
     } catch (e) {
-      debugPrint("❌ Preview error: $e");
+      debugPrint("âŒ Preview error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -581,7 +676,7 @@ class _MyVaultState extends State<MyVault> {
         );
       }
     } catch (e) {
-      debugPrint("❌ Error getting preview URL: $e");
+      debugPrint("âŒ Error getting preview URL: $e");
       throw Exception(
         l10n.format('documentDetail.previewUrlFailed', {'message': '$e'}),
       );
@@ -638,7 +733,7 @@ class _MyVaultState extends State<MyVault> {
         ),
       );
     } catch (e) {
-      debugPrint("❌ Download error: $e");
+      debugPrint("âŒ Download error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -669,7 +764,7 @@ class _MyVaultState extends State<MyVault> {
           options: options);
       await OpenFile.open(filePath);
     } catch (e) {
-      debugPrint("❌ Download and open error: $e");
+      debugPrint("âŒ Download and open error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -694,7 +789,7 @@ class _MyVaultState extends State<MyVault> {
     try {
       previewUrl = await _getPreviewUrl(document.id!);
     } catch (e) {
-      debugPrint("⚠️ Could not get preview URL: $e");
+      debugPrint("âš ï¸ Could not get preview URL: $e");
     }
 
     // Controllers for editing
@@ -1080,7 +1175,7 @@ class _MyVaultState extends State<MyVault> {
         );
       }
     } catch (e) {
-      debugPrint("❌ Delete error: $e");
+      debugPrint("âŒ Delete error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -1102,7 +1197,7 @@ class _MyVaultState extends State<MyVault> {
       body: SafeArea(
         child: Column(
           children: [
-            // 🔍 Search Bar
+            // ðŸ” Search Bar
             Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
@@ -1138,7 +1233,7 @@ class _MyVaultState extends State<MyVault> {
               ),
             ),
 
-            // 🏷️ Categories
+            // ðŸ·ï¸ Categories
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1161,7 +1256,7 @@ class _MyVaultState extends State<MyVault> {
               ),
             ),
 
-            // ⏳ Filter & Sort Controls (Single Line)
+            // â³ Filter & Sort Controls (Single Line)
             Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
@@ -1252,7 +1347,7 @@ class _MyVaultState extends State<MyVault> {
               ),
             ),
 
-            // 📂 Documents List
+            // ðŸ“‚ Documents List
             Expanded(
               child: _isLoading
                   ? Center(
@@ -1289,7 +1384,7 @@ class _MyVaultState extends State<MyVault> {
                                       doc.fileName ??
                                       l10n.t('documentDetail.untitled'),
                                 ),
-                                subtitle: Text("$categoryLabel • $dateLabel",
+                                subtitle: Text("$categoryLabel - $dateLabel",
                                     style:
                                         Theme.of(context).textTheme.bodySmall),
                                 trailing: PopupMenuButton<String>(
@@ -1379,7 +1474,7 @@ class _MyVaultState extends State<MyVault> {
                         ),
             ),
 
-            // 📤 Upload Button
+            // ðŸ“¤ Upload Button
             Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -1597,7 +1692,7 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
               _error = context.l10n.format(
                   'common.errorWithMessage', {'message': details.error});
             });
-            // ✅ Fallback: open externally if viewer fails
+            // âœ… Fallback: open externally if viewer fails
             OpenFile.open(widget.url);
           },
           onDocumentLoaded: (PdfDocumentLoadedDetails details) {

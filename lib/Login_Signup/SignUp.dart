@@ -114,8 +114,15 @@ class _SignUpPageState extends State<SignUpPage> {
 
         final prefs = await SharedPreferences.getInstance();
         await SecureTokenStorage.saveToken((data['token'] ?? '').toString());
+        final refreshToken = (data['refreshToken'] ?? '').toString().trim();
+        if (refreshToken.isNotEmpty) {
+          await SecureTokenStorage.saveRefreshToken(refreshToken);
+        }
         final user = data['user'] ?? <String, dynamic>{};
-        await prefs.setString('userId', (user['id'] ?? '').toString());
+        await prefs.setString(
+          'userId',
+          (user['id'] ?? user['_id'] ?? '').toString(),
+        );
         await prefs.setString('email', (user['email'] ?? '').toString());
         await prefs.setString('name', (user['name'] ?? 'Patient').toString());
         await prefs.setString('userData', jsonEncode(user));

@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'dart:async';
 import '../services/ai_service.dart';
 import '../widgets/ai_structured_widgets.dart';
-import '../widgets/language_selector.dart';
 import 'package:hello/localization/app_localizations.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -25,7 +23,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
   bool _isTyping = false;
-  String _selectedLanguage = 'english';
+  String? _conversationId;
   late AnimationController _typingController;
   late Animation<double> _typingAnimation;
 
@@ -73,7 +71,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
       if (savedMessages.isNotEmpty) {
         setState(() {
-          _messages.addAll(savedMessages);
+          _messages
+            ..clear()
+            ..addAll(savedMessages);
         });
         _scrollToBottom();
       } else {
@@ -100,21 +100,88 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   Future<List<ChatMessage>> _getSavedMessages() async {
-    // This would typically use SharedPreferences
-    // For now, return empty list
-    return [];
+    final history = await AIService.getChatHistory();
+    if (history == null) return const <ChatMessage>[];
+
+    _conversationId = history['conversationId']?.toString();
+    final rawMessages = history['messages'];
+    if (rawMessages is! List) return const <ChatMessage>[];
+
+    final parsed = <ChatMessage>[];
+    for (final entry in rawMessages) {
+      if (entry is! Map) continue;
+      final mapped = entry.map((key, value) => MapEntry(key.toString(), value));
+      final role = (mapped['role'] ?? '').toString().trim().toLowerCase();
+      final content = (mapped['content'] ?? '').toString();
+      if (content.trim().isEmpty) continue;
+
+      final metadataRaw = mapped['metadata'];
+      final metadata = metadataRaw is Map
+          ? metadataRaw.map((k, v) => MapEntry(k.toString(), v))
+          : <String, dynamic>{};
+
+      List<Map<String, dynamic>>? asMapList(dynamic value) {
+        if (value is! List) return null;
+        final out = value
+            .whereType<Map>()
+            .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
+            .toList(growable: false);
+        return out.isEmpty ? null : out;
+      }
+
+      Map<String, dynamic>? asMap(dynamic value) {
+        if (value is Map<String, dynamic>) return value;
+        if (value is Map) {
+          return value.map((k, v) => MapEntry(k.toString(), v));
+        }
+        return null;
+      }
+
+      List<DocumentInfo>? docs;
+      final dataList = asMapList(metadata['data']);
+      if (dataList != null) {
+        final docLike = dataList.where((item) {
+          final name = (item['name'] ?? item['title'] ?? '').toString().trim();
+          return name.isNotEmpty;
+        }).toList(growable: false);
+        if (docLike.isNotEmpty) {
+          docs = docLike
+              .map((item) => DocumentInfo.fromJson(item))
+              .toList(growable: false);
+        }
+      }
+
+      DateTime timestamp;
+      try {
+        timestamp = DateTime.parse((mapped['timestamp'] ?? '').toString());
+      } catch (_) {
+        timestamp = DateTime.now();
+      }
+
+      parsed.add(
+        ChatMessage(
+          text: content,
+          isUser: role == 'user',
+          timestamp: timestamp,
+          responseType: metadata['responseType']?.toString(),
+          structuredData: asMap(metadata['structuredData']),
+          sections: asMapList(metadata['sections']),
+          safety: asMap(metadata['safety']),
+          context: asMap(metadata['context']),
+          documentMetadata: asMap(metadata['documentMetadata']),
+          documents: docs,
+        ),
+      );
+    }
+    return parsed;
   }
 
-  Future<void> _saveMessages() async {
-    // This would typically save to SharedPreferences
-    // For now, just a placeholder
-  }
-
-  void _clearChat() {
+  Future<void> _clearChat() async {
+    await AIService.clearChatHistory();
     setState(() {
       _messages.clear();
+      _conversationId = null;
     });
-    _saveMessages();
 
     // Add welcome message
     _addMessage(
@@ -140,6 +207,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     bool isUser, {
     String? responseType,
     Map<String, dynamic>? structuredData,
+    List<Map<String, dynamic>>? sections,
+    Map<String, dynamic>? safety,
+    Map<String, dynamic>? context,
     Map<String, dynamic>? documentMetadata,
     List<DocumentInfo>? documents,
   }) {
@@ -150,14 +220,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         timestamp: DateTime.now(),
         responseType: responseType,
         structuredData: structuredData,
+        sections: sections,
+        safety: safety,
+        context: context,
         documentMetadata: documentMetadata,
         documents: documents,
       ));
     });
     _scrollToBottom();
-
-    // Save messages to storage
-    _saveMessages();
   }
 
   void _scrollToBottom() {
@@ -191,6 +261,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       // Send message to AI service
       final response = await AIService.sendMessage(
         prompt: userMessage,
+        context: {
+          'preferredLanguage': Localizations.localeOf(context).languageCode,
+          'userInputLanguage': AIService.detectLanguage(userMessage),
+          'voiceMode': false,
+          'activeProfile': null,
+          'selectedPatientProfile': null,
+          'authorizedSessionScope': 'self_profile',
+          if (_conversationId != null) 'conversationId': _conversationId,
+          'appLocale': Localizations.localeOf(context).languageCode,
+        },
       );
 
       setState(() {
@@ -199,6 +279,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _typingController.stop();
 
       if (response.success) {
+        _conversationId =
+            response.context?['conversationId']?.toString() ?? _conversationId;
         // Convert document data to DocumentInfo objects if present
         List<DocumentInfo>? documentInfos;
         if (response.data != null) {
@@ -211,6 +293,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           false,
           responseType: response.responseType,
           structuredData: response.structuredData,
+          sections: response.sections,
+          safety: response.safety,
+          context: response.context,
           documentMetadata: response.documentMetadata,
           documents: documentInfos,
         );
@@ -258,6 +343,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       final response = await AIService.sendMessage(
         prompt: context.l10n.t('chat.aiAnalyzePrompt'),
         documentId: documentId,
+        context: {
+          'preferredLanguage': Localizations.localeOf(context).languageCode,
+          'userInputLanguage': AIService.detectLanguage(
+            context.l10n.t('chat.aiAnalyzePrompt'),
+          ),
+          'voiceMode': false,
+          'activeProfile': null,
+          'selectedPatientProfile': null,
+          'authorizedSessionScope': 'self_profile',
+          if (_conversationId != null) 'conversationId': _conversationId,
+          'appLocale': Localizations.localeOf(context).languageCode,
+        },
       );
 
       setState(() {
@@ -266,11 +363,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _typingController.stop();
 
       if (response.success) {
+        _conversationId =
+            response.context?['conversationId']?.toString() ?? _conversationId;
         _addMessage(
           response.reply,
           false,
           responseType: response.responseType,
           structuredData: response.structuredData,
+          sections: response.sections,
+          safety: response.safety,
+          context: response.context,
           documentMetadata: response.documentMetadata,
         );
       } else {
@@ -289,12 +391,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         false,
       );
     }
-  }
-
-  void _onLanguageChanged(String language) {
-    setState(() {
-      _selectedLanguage = language;
-    });
   }
 
   @override
@@ -325,10 +421,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               _showClearChatDialog();
             },
             tooltip: context.l10n.t('chat.tooltip.clear'),
-          ),
-          LanguageSelector(
-            selectedLanguage: _selectedLanguage,
-            onLanguageChanged: _onLanguageChanged,
           ),
           const SizedBox(width: 8),
         ],
@@ -412,17 +504,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   String _getHintText() {
-    final l10n = context.l10n;
-    switch (_selectedLanguage) {
-      case 'hindi':
-        return l10n.t('chat.inputHint.hindi');
-      case 'marathi':
-        return l10n.t('chat.inputHint.marathi');
-      case 'hinglish':
-        return l10n.t('chat.inputHint.hinglish');
-      default:
-        return l10n.t('chat.inputHint.english');
-    }
+    return context.l10n.t('chat.inputHint.english');
   }
 
   Widget _buildMessageBubble(ChatMessage message) {
@@ -469,34 +551,21 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SelectableText(
-                    _cleanMessageText(message.text),
-                    style: TextStyle(
-                      color: message.isUser
-                          ? Colors.white
-                          : theme.textTheme.bodyLarge?.color,
-                      fontSize: 16,
-                    ),
-                    onSelectionChanged: (selection, cause) {
-                      // Handle selection changes
-                      if (selection.isValid && !selection.isCollapsed) {
-                        // Optional: Show selection feedback
-                      }
-                    },
-                  ),
-                  // Add structured data if present
-                  if (!message.isUser &&
-                      message.responseType == 'table' &&
-                      message.structuredData != null)
-                    AITableWidget(
-                      data: message.structuredData!,
-                    ),
-                  if (!message.isUser &&
-                      message.responseType == 'chart' &&
-                      message.structuredData != null)
-                    AIChartWidget(
-                      data: message.structuredData!,
-                      chartType: 'bar',
+                  if (message.isUser)
+                    SelectableText(
+                      message.text.trim(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                      ),
+                    )
+                  else
+                    AIMessageStructuredWidget(
+                      text: message.text,
+                      sections: message.sections,
+                      structuredData: message.structuredData,
+                      responseType: message.responseType,
+                      safety: message.safety,
                     ),
                   // Add document list if present
                   if (!message.isUser &&
@@ -628,41 +697,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  String _cleanMessageText(String text) {
-    // Remove markdown formatting for clean output
-    String cleaned = text;
-
-    // Remove bold formatting **text**
-    cleaned = cleaned.replaceAll(RegExp(r'\*\*'), '');
-
-    // Remove italic formatting *text*
-    cleaned = cleaned.replaceAll(RegExp(r'(?<!\*)\*(?!\*)'), '');
-
-    // Remove headers ### Header
-    cleaned = cleaned.replaceAll(RegExp(r'### '), '');
-
-    // Remove headers ## Header
-    cleaned = cleaned.replaceAll(RegExp(r'## '), '');
-
-    // Remove headers # Header
-    cleaned = cleaned.replaceAll(RegExp(r'# '), '');
-
-    // Remove inline code `code`
-    cleaned = cleaned.replaceAll(RegExp(r'`'), '');
-
-    // Remove code blocks ```code```
-    cleaned = cleaned.replaceAll(RegExp(r'```'), '');
-
-    // Clean up extra whitespace and lines
-    cleaned = cleaned
-        .replaceAll(
-            RegExp(r'\n\s*\n\s*\n'), '\n\n') // Remove multiple empty lines
-        .replaceAll(RegExp(r'^\s+|\s+$'), '') // Trim each line
-        .trim();
-
-    return cleaned;
-  }
-
   void _showClearChatDialog() {
     showDialog(
       context: context,
@@ -678,9 +712,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               child: Text(context.l10n.t('common.cancel')),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 Navigator.of(context).pop();
-                _clearChat();
+                await _clearChat();
               },
               child: Text(context.l10n.t('chat.clearDialog.confirm')),
             ),
@@ -697,6 +731,9 @@ class ChatMessage {
   final DateTime timestamp;
   final String? responseType;
   final Map<String, dynamic>? structuredData;
+  final List<Map<String, dynamic>>? sections;
+  final Map<String, dynamic>? safety;
+  final Map<String, dynamic>? context;
   final Map<String, dynamic>? documentMetadata;
   final List<DocumentInfo>? documents;
 
@@ -706,6 +743,9 @@ class ChatMessage {
     required this.timestamp,
     this.responseType,
     this.structuredData,
+    this.sections,
+    this.safety,
+    this.context,
     this.documentMetadata,
     this.documents,
   });

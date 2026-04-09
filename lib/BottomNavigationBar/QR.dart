@@ -7,7 +7,6 @@ import 'package:flutter/rendering.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:hello/HowQrAcessWorks.dart';
@@ -25,7 +24,6 @@ class _QRPageState extends State<QRPage> {
   String _qrData = '';
   String? _lastError;
   final GlobalKey _repaintKey = GlobalKey();
-  final Uuid _uuid = const Uuid();
   bool _loading = false;
   List<Map<String, dynamic>> _qrAds = [];
   List<Map<String, dynamic>> _qrActions = [];
@@ -69,7 +67,7 @@ class _QRPageState extends State<QRPage> {
       if (token != null) {
         if (!mounted) return;
         setState(() {
-          _qrData = token; // Or show QR URL instead if you prefer
+          _qrData = token;
           _loading = false;
         });
       } else {
@@ -78,7 +76,7 @@ class _QRPageState extends State<QRPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _qrData = "DoctorAccess:${_uuid.v4()}"; // fallback
+        // Keep the previous QR (if any) instead of showing a random invalid token.
         _lastError =
             context.l10n.format('qr.generateError', {'error': e.toString()});
         _loading = false;

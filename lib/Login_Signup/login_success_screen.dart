@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../api_service.dart';
 import '../BottomNavigationBar/dashboard1.dart';
 import '../providers/dashboard_prefetch_provider.dart';
 import '../providers/timezone_provider.dart';
@@ -100,7 +101,7 @@ class _LoginSuccessScreenState extends State<LoginSuccessScreen>
       try {
         prefetched = await prefetchFuture;
       } catch (_) {
-        prefetched = _fallbackPrefetch(widget.userData);
+        prefetched = await _fallbackPrefetch(widget.userData);
         if (mounted) {
           setState(() {
             _prefetchDone = true;
@@ -113,19 +114,32 @@ class _LoginSuccessScreenState extends State<LoginSuccessScreen>
       _navigateToDashboard(prefetched);
     } catch (_) {
       if (!mounted || _didNavigate) return;
-      _navigateToDashboard(_fallbackPrefetch(widget.userData));
+      final fallback = await _fallbackPrefetch(widget.userData);
+      _navigateToDashboard(fallback);
     }
   }
 
-  DashboardPrefetchData _fallbackPrefetch(Map<String, dynamic> userData) {
+  Future<DashboardPrefetchData> _fallbackPrefetch(
+    Map<String, dynamic> userData,
+  ) async {
+    final userId =
+        (userData['id']?.toString() ?? userData['_id']?.toString() ?? '')
+            .trim();
+    final cachedGrouped = userId.isNotEmpty
+        ? await ApiService.getCachedGroupedDocs(userId)
+        : null;
+    final countsRaw = cachedGrouped?['counts'];
+    final documentCounts = <String, int>{
+      'Reports': _asInt(countsRaw is Map ? countsRaw['reports'] : null),
+      'Prescription':
+          _asInt(countsRaw is Map ? countsRaw['prescriptions'] : null),
+      'Bill': _asInt(countsRaw is Map ? countsRaw['bills'] : null),
+      'Insurance': _asInt(countsRaw is Map ? countsRaw['insurance'] : null),
+    };
+
     return DashboardPrefetchData(
       userData: Map<String, dynamic>.from(userData),
-      documentCounts: const {
-        'Reports': 0,
-        'Prescription': 0,
-        'Bill': 0,
-        'Insurance': 0,
-      },
+      documentCounts: documentCounts,
       linkedProfiles: const <Map<String, dynamic>>[],
       topDoctors: const <Map<String, dynamic>>[],
       dashboardAds: const <Map<String, dynamic>>[],
@@ -137,6 +151,13 @@ class _LoginSuccessScreenState extends State<LoginSuccessScreen>
       fetchedAt: DateTime.now(),
       partial: true,
     );
+  }
+
+  static int _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
   }
 
   void _navigateToDashboard(DashboardPrefetchData prefetched) {
