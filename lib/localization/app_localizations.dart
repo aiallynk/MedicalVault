@@ -1575,6 +1575,28 @@ class AppLocalizations {
       'mr': '❌ अपलोड अयशस्वी',
       'gu': '❌ અપલોડ નિષ્ફળ',
     },
+    'uploadDocument.success.verified': {
+      'en': 'Medical document verified and uploaded',
+    },
+    'uploadDocument.success.accepted': {
+      'en': 'Document accepted for your medical vault',
+    },
+    'uploadDocument.verifying.title': {
+      'en': 'Verifying medical file',
+    },
+    'uploadDocument.verifying.message': {
+      'en':
+          'Your file has uploaded. AI is checking whether this is a valid medical document. Please wait.',
+    },
+    'uploadDocument.verifying.inline': {
+      'en': 'Verifying medical file...',
+    },
+    'documents.verification.verified': {
+      'en': 'Medical file verified',
+    },
+    'documents.verification.accepted': {
+      'en': 'Medical file accepted',
+    },
     'uploadDocument.datePicker.help': {
       'en': 'Select document date',
       'hi': 'दस्तावेज़ की तारीख चुनें',

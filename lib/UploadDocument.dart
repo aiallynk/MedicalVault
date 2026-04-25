@@ -5,7 +5,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'api_service.dart';
 import 'localization/app_localizations.dart';
-import 'Document_model.dart';
 import 'utils/timezone_utils.dart';
 
 class UploadDocument extends StatefulWidget {
@@ -29,6 +28,9 @@ class _UploadDocumentState extends State<UploadDocument> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
   bool _isUploading = false;
+  bool _isVerifyingFile = false;
+  bool _verificationDialogRequested = false;
+  bool _verificationDialogOpen = false;
   double _uploadProgress = 0.0;
 
   @override
@@ -38,6 +40,13 @@ class _UploadDocumentState extends State<UploadDocument> {
     if (widget.initialCategory != null) {
       _selectedCategory = _normalizeCategory(widget.initialCategory!);
     }
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _notesController.dispose();
+    super.dispose();
   }
 
   // Normalize category to match valid backend categories
@@ -52,10 +61,26 @@ class _UploadDocumentState extends State<UploadDocument> {
 
   /// File picker
   Future<void> _pickFile() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles();
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png'],
+    );
     if (result != null) {
+      final selectedPath = result.files.single.path;
+      if (selectedPath == null || selectedPath.trim().isEmpty) return;
+      final extension = selectedPath.split('.').last.toLowerCase();
+      const allowed = {'pdf', 'jpg', 'jpeg', 'png'};
+      if (!allowed.contains(extension)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Only PDF, JPG, and PNG files are allowed.'),
+          ),
+        );
+        return;
+      }
       setState(() {
-        _selectedFile = File(result.files.single.path!);
+        _selectedFile = File(selectedPath);
       });
     }
   }
@@ -66,6 +91,18 @@ class _UploadDocumentState extends State<UploadDocument> {
     final XFile? photo = await picker.pickImage(source: ImageSource.camera);
 
     if (photo != null) {
+      final extension = photo.path.split('.').last.toLowerCase();
+      const allowed = {'jpg', 'jpeg', 'png'};
+      if (!allowed.contains(extension)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Captured image format is unsupported. Use JPG or PNG.'),
+          ),
+        );
+        return;
+      }
       setState(() {
         _selectedFile = File(photo.path);
       });
@@ -110,7 +147,7 @@ class _UploadDocumentState extends State<UploadDocument> {
   /// Check if file is an image
   bool _isImageFile(File file) {
     final extension = file.path.split('.').last.toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].contains(extension);
+    return ['jpg', 'jpeg', 'png'].contains(extension);
   }
 
   Future<void> _pickDate() async {
@@ -153,28 +190,38 @@ class _UploadDocumentState extends State<UploadDocument> {
     // Initialize progress to 0
     setState(() {
       _isUploading = true;
+      _isVerifyingFile = false;
       _uploadProgress = 0.0;
     });
+
+    final uploadDate = _selectedDate?.toIso8601String() ??
+        nowForContextTimeZone(context).toIso8601String();
 
     // Small delay to ensure UI updates
     await Future.delayed(const Duration(milliseconds: 50));
 
-    Document? doc;
+    DocumentUploadResult? result;
     try {
-      doc = await ApiService.uploadDocument(
+      result = await ApiService.uploadDocumentDetailed(
         file: _selectedFile!,
         title: _titleController.text,
         category:
             _selectedCategory == "Reports" ? "Lab Report" : _selectedCategory!,
         notes: _notesController.text,
-        date: _selectedDate?.toIso8601String() ??
-            nowForContextTimeZone(context).toIso8601String(),
+        date: uploadDate,
         onProgress: (progress) {
           // Ensure state updates happen on the main thread
           if (mounted) {
+            final reachedServerValidation = progress >= 99.5;
             setState(() {
               _uploadProgress = progress;
+              if (reachedServerValidation) {
+                _isVerifyingFile = true;
+              }
             });
+            if (reachedServerValidation) {
+              _showVerificationDialog();
+            }
           }
         },
       );
@@ -182,24 +229,93 @@ class _UploadDocumentState extends State<UploadDocument> {
       debugPrint("Upload error: $e");
     }
 
+    _closeVerificationDialog();
+
     if (mounted) {
       setState(() {
         _isUploading = false;
+        _isVerifyingFile = false;
         _uploadProgress = 0.0;
       });
     }
 
-    if (doc != null) {
+    final doc = result?.document;
+    if (result?.success == true && doc != null) {
       if (mounted) {
-        Navigator.pop(context, true);
+        final message = doc.isMedicalVerified
+            ? l10n.t('uploadDocument.success.verified')
+            : l10n.t('uploadDocument.success.accepted');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message), backgroundColor: Colors.green),
+        );
+        await Future.delayed(const Duration(milliseconds: 700));
+        if (!mounted) return;
+        Navigator.pop(context, doc);
       }
     } else {
       if (mounted) {
+        final message = result?.message.trim().isNotEmpty == true
+            ? result!.message
+            : l10n.t('uploadDocument.error.uploadFailed');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.t('uploadDocument.error.uploadFailed'))),
+          SnackBar(content: Text(message), backgroundColor: Colors.red),
         );
       }
     }
+  }
+
+  void _showVerificationDialog() {
+    if (_verificationDialogRequested || _verificationDialogOpen) return;
+    _verificationDialogRequested = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verificationDialogRequested = false;
+      if (!mounted || !_isVerifyingFile || _verificationDialogOpen) return;
+
+      _verificationDialogOpen = true;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          final l10n = dialogContext.l10n;
+          final scheme = Theme.of(dialogContext).colorScheme;
+          return PopScope(
+            canPop: false,
+            child: AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: Row(
+                children: [
+                  Icon(Icons.verified_user_outlined, color: scheme.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(l10n.t('uploadDocument.verifying.title')),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(l10n.t('uploadDocument.verifying.message')),
+                  const SizedBox(height: 18),
+                  const LinearProgressIndicator(),
+                ],
+              ),
+            ),
+          );
+        },
+      ).whenComplete(() {
+        _verificationDialogOpen = false;
+      });
+    });
+  }
+
+  void _closeVerificationDialog() {
+    _verificationDialogRequested = false;
+    if (!_verificationDialogOpen || !mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
   }
 
   @override
@@ -373,10 +489,18 @@ class _UploadDocumentState extends State<UploadDocument> {
                                 ),
                                 const SizedBox(width: 12),
                                 Text(
-                                  l10n.format('uploadDocument.progressLabel', {
-                                    'percent':
-                                        _uploadProgress.toInt().toString()
-                                  }),
+                                  _isVerifyingFile
+                                      ? l10n
+                                          .t('uploadDocument.verifying.inline')
+                                      : l10n.format(
+                                          'uploadDocument.progressLabel',
+                                          {
+                                            'percent': _uploadProgress
+                                                .floor()
+                                                .clamp(0, 99)
+                                                .toString()
+                                          },
+                                        ),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 16,
@@ -387,8 +511,11 @@ class _UploadDocumentState extends State<UploadDocument> {
                             ),
                             const SizedBox(height: 12),
                             LinearProgressIndicator(
-                              value: _uploadProgress / 100,
-                              backgroundColor: Colors.white.withOpacity(0.3),
+                              value: _isVerifyingFile
+                                  ? null
+                                  : (_uploadProgress.clamp(0, 99) / 100),
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.3),
                               valueColor: const AlwaysStoppedAnimation<Color>(
                                 Colors.white,
                               ),
@@ -504,7 +631,7 @@ class _UploadDocumentState extends State<UploadDocument> {
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
+                        color: Colors.black.withValues(alpha: 0.2),
                         blurRadius: 4,
                         offset: const Offset(0, 2),
                       ),

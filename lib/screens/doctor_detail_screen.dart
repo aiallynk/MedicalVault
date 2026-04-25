@@ -10,7 +10,7 @@ import '../utils/timezone_utils.dart';
 import '../widgets/app_text.dart';
 import '../widgets/custom_button.dart';
 import '../widgets/custom_card.dart';
-import 'appointment_detail_screen.dart';
+import 'appointments_page.dart';
 import 'doctor_sessions_screen.dart';
 import 'direct_chat_screen.dart';
 
@@ -29,17 +29,27 @@ class DoctorDetailScreen extends StatefulWidget {
 }
 
 class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
+  static const int _slotStartMinutes = 9 * 60;
+  static const int _slotEndMinutes = 18 * 60;
+  static const int _slotStepMinutes = 30;
+
   late final List<DateTime> _dateOptions;
+  late List<Map<String, dynamic>> _knownAppointments;
   DateTime? _selectedDate;
   String? _selectedTime;
+  bool _bookingAppointment = false;
 
   @override
   void initState() {
     super.initState();
+    _knownAppointments = widget.appointments
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: true);
     _dateOptions = _buildDateOptions();
     _selectedDate = _dateOptions.isNotEmpty ? _dateOptions.first : null;
     final times = _timesForSelectedDate();
     _selectedTime = times.isNotEmpty ? times.first : null;
+    _loadDoctorUpcomingAppointments();
   }
 
   @override
@@ -236,9 +246,8 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                             setState(() {
                               _selectedDate = date;
                               final newTimes = _timesForSelectedDate();
-                              if (newTimes.isNotEmpty) {
-                                _selectedTime = newTimes.first;
-                              }
+                              _selectedTime =
+                                  newTimes.isNotEmpty ? newTimes.first : null;
                             });
                           },
                           child: AnimatedContainer(
@@ -277,33 +286,52 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                   const SizedBox(height: 10),
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 220),
-                    child: Wrap(
-                      key: ValueKey(_selectedDate.toString()),
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: times.map((time) {
-                        final selected = _selectedTime == time;
-                        return ChoiceChip(
-                          selected: selected,
-                          label: Text(time),
-                          onSelected: (_) {
-                            setState(() {
-                              _selectedTime = time;
-                            });
-                          },
-                        );
-                      }).toList(),
-                    ),
+                    child: times.isEmpty
+                        ? Container(
+                            key: ValueKey(_selectedDate.toString()),
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary
+                                  .withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const AppText(
+                              'No future slots available for this date. Try another day.',
+                              variant: AppTextVariant.caption,
+                            ),
+                          )
+                        : Wrap(
+                            key: ValueKey(_selectedDate.toString()),
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: times.map((time) {
+                              final selected = _selectedTime == time;
+                              return ChoiceChip(
+                                selected: selected,
+                                label: Text(time),
+                                onSelected: (_) {
+                                  setState(() {
+                                    _selectedTime = time;
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
                   ),
                   const SizedBox(height: 24),
                   CustomButton(
-                    label: 'Book Appointment',
+                    label: _bookingAppointment
+                        ? 'Submitting...'
+                        : 'Request Appointment',
                     icon: Icons.calendar_month_rounded,
                     gradient: [
                       theme.colorScheme.primary,
                       theme.colorScheme.secondary,
                     ],
-                    onPressed: _bookSelectedSlot,
+                    onPressed: (_bookingAppointment || _selectedTime == null)
+                        ? null
+                        : _bookSelectedSlot,
                   ),
                   const SizedBox(height: 10),
                   Row(
@@ -344,33 +372,152 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
     );
   }
 
-  void _bookSelectedSlot() {
-    final match = _findMatchingAppointment();
-    if (match == null) {
+  Future<void> _bookSelectedSlot() async {
+    final selectedDate = _selectedDate;
+    final selectedTime = _selectedTime;
+    final doctorId = _doctorField(['_id', 'id', 'doctorId']);
+
+    if (doctorId.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        const SnackBar(content: Text('Doctor details are unavailable.')),
+      );
+      return;
+    }
+    if (selectedDate == null || selectedTime == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a date and time slot.')),
+      );
+      return;
+    }
+
+    final bookingInput = await _collectAppointmentInput();
+    if (bookingInput == null || !mounted) return;
+
+    setState(() {
+      _bookingAppointment = true;
+    });
+
+    try {
+      final response = await ApiService.requestAppointment(
+        doctorId: doctorId,
+        appointmentDate: selectedDate,
+        appointmentTime: selectedTime,
+        reason: bookingInput.reason,
+        notes: bookingInput.notes,
+      );
+
+      if (!mounted) return;
+      final success = response['success'] == true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
           content: Text(
-            'No exact slot found in your records. Please pick another date/time.',
+            (response['message'] ??
+                    (success
+                        ? 'Appointment request submitted.'
+                        : 'Failed to request appointment.'))
+                .toString(),
           ),
+          backgroundColor: success
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.error,
         ),
       );
-      return;
-    }
 
-    final id = match['_id']?.toString();
-    if (id == null || id.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Appointment details are not available.')),
-      );
-      return;
+      if (success) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const AppointmentsPage(initialTab: 0),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _bookingAppointment = false;
+        });
+      }
     }
+  }
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => AppointmentDetailScreen(appointmentId: id),
-      ),
+  Future<_AppointmentInput?> _collectAppointmentInput() async {
+    final reasonController = TextEditingController();
+    final notesController = TextEditingController();
+    String? localError;
+
+    final result = await showDialog<_AppointmentInput>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: const Text('Request Appointment'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: reasonController,
+                      autofocus: true,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Reason *',
+                        hintText: 'Describe why you need this appointment',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: notesController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Notes (optional)',
+                      ),
+                    ),
+                    if (localError != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        localError!,
+                        style: TextStyle(
+                          color: Theme.of(dialogContext).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final reason = reasonController.text.trim();
+                    final notes = notesController.text.trim();
+                    if (reason.isEmpty) {
+                      setDialogState(() {
+                        localError = 'Reason is required.';
+                      });
+                      return;
+                    }
+                    Navigator.pop(
+                      dialogContext,
+                      _AppointmentInput(reason: reason, notes: notes),
+                    );
+                  },
+                  child: const Text('Submit'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
+
+    reasonController.dispose();
+    notesController.dispose();
+    return result;
   }
 
   Future<void> _openDoctorChat({
@@ -555,67 +702,212 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
     return '';
   }
 
-  Map<String, dynamic>? _findMatchingAppointment() {
-    if (_selectedDate == null || _selectedTime == null) return null;
-    for (final apt in widget.appointments) {
-      final date = _parseDate(apt['appointmentDate']);
-      final time = apt['appointmentTime']?.toString();
-      if (date == null || time == null) continue;
-      if (_isSameDay(date, _selectedDate!) &&
-          _normalizeTime(time) == _selectedTime) {
-        return apt;
-      }
-    }
-    return null;
-  }
-
   List<DateTime> _buildDateOptions() {
-    final dates = <DateTime>[];
-    for (final apt in widget.appointments) {
-      final parsed = _parseDate(apt['appointmentDate']);
-      if (parsed != null && !dates.any((d) => _isSameDay(d, parsed))) {
-        dates.add(parsed);
-      }
-    }
-    dates.sort((a, b) => a.compareTo(b));
-
-    if (dates.isNotEmpty) return dates.take(7).toList();
-
     final now = nowForContextTimeZone(context);
-    return List.generate(7, (i) => now.add(Duration(days: i)));
+    return List.generate(
+      10,
+      (index) => DateTime(now.year, now.month, now.day + index),
+    );
   }
 
   List<String> _timesForSelectedDate() {
-    if (_selectedDate == null) return _fallbackTimes();
-    final times = <String>[];
-    for (final apt in widget.appointments) {
-      final date = _parseDate(apt['appointmentDate']);
-      if (date == null || !_isSameDay(date, _selectedDate!)) continue;
-      final raw = apt['appointmentTime']?.toString();
-      if (raw == null || raw.isEmpty) continue;
-      final normalized = _normalizeTime(raw);
-      if (!times.contains(normalized)) times.add(normalized);
+    final selectedDate = _selectedDate;
+    if (selectedDate == null) return const [];
+
+    final blockedSlots = _blockedSlotsForDate(selectedDate);
+    final now = nowForContextTimeZone(context);
+    final today = DateTime(now.year, now.month, now.day);
+    final isToday = _isSameDay(selectedDate, today);
+
+    final slots = <String>[];
+    for (var minute = _slotStartMinutes;
+        minute <= _slotEndMinutes - _slotStepMinutes;
+        minute += _slotStepMinutes) {
+      final hour = minute ~/ 60;
+      final minutePart = minute % 60;
+      final slot = '${hour.toString().padLeft(2, '0')}:'
+          '${minutePart.toString().padLeft(2, '0')}';
+
+      if (blockedSlots.contains(slot)) continue;
+
+      if (isToday) {
+        final slotDateTime = DateTime(
+          selectedDate.year,
+          selectedDate.month,
+          selectedDate.day,
+          hour,
+          minutePart,
+        );
+        if (!slotDateTime.isAfter(now.add(const Duration(minutes: 15)))) {
+          continue;
+        }
+      }
+
+      slots.add(slot);
     }
-    times.sort();
-    return times.isEmpty ? _fallbackTimes() : times;
+    return slots;
   }
 
-  List<String> _fallbackTimes() => const ['09:00', '11:00', '13:30', '16:00'];
+  Set<String> _blockedSlotsForDate(DateTime date) {
+    final blocked = <String>{};
+    for (final apt in _knownAppointments) {
+      final status = (apt['status'] ?? '').toString().trim().toLowerCase();
+      if (!_blocksSlotStatus(status)) continue;
+
+      final parsedDate = _parseDate(apt['appointmentDate']);
+      if (parsedDate == null || !_isSameDay(parsedDate, date)) continue;
+
+      final rawTime = apt['appointmentTime']?.toString().trim() ?? '';
+      final startMinutes = _parseMinutesOfDay(rawTime);
+      if (startMinutes == null) continue;
+
+      final durationMinutes = _parseDurationMinutes(apt['duration']);
+      final blockStart = (startMinutes ~/ _slotStepMinutes) * _slotStepMinutes;
+      final blockEnd = startMinutes + durationMinutes;
+
+      for (var minute = blockStart;
+          minute < blockEnd;
+          minute += _slotStepMinutes) {
+        if (minute < _slotStartMinutes ||
+            minute > _slotEndMinutes - _slotStepMinutes) {
+          continue;
+        }
+        blocked.add(_slotLabelFromMinutes(minute));
+      }
+    }
+    return blocked;
+  }
+
+  bool _blocksSlotStatus(String status) {
+    if (status.isEmpty) return true;
+    const activeStatuses = {
+      'pending',
+      'scheduled',
+      'confirmed',
+      'approved',
+      'booked',
+      'accepted',
+      'ongoing',
+      'active',
+      'in_progress',
+      'in-progress',
+    };
+    return activeStatuses.contains(status);
+  }
 
   DateTime? _parseDate(dynamic value) {
     final timezoneId = context.read<TimezoneProvider>().timeZoneId;
     return convertToSelectedTimeZone(value, timezoneId);
   }
 
-  String _normalizeTime(String raw) {
-    final parts = raw.split(':');
-    if (parts.isEmpty) return raw;
-    final hour = int.tryParse(parts[0]) ?? 0;
-    final minute = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
-    return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+  int _parseDurationMinutes(dynamic raw) {
+    final parsed = int.tryParse((raw ?? '').toString().trim()) ?? 30;
+    if (parsed <= 0) return 30;
+    return parsed.clamp(_slotStepMinutes, 240).toInt();
+  }
+
+  int? _parseMinutesOfDay(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+
+    final match = RegExp(
+      r'^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?$',
+    ).firstMatch(text);
+    if (match == null) return null;
+
+    var hour = int.tryParse(match.group(1) ?? '');
+    final minute = int.tryParse(match.group(2) ?? '');
+    final period = match.group(3)?.toUpperCase();
+
+    if (hour == null || minute == null) return null;
+    if (minute < 0 || minute > 59) return null;
+
+    if (period != null) {
+      if (hour < 1 || hour > 12) return null;
+      hour = hour % 12;
+      if (period == 'PM') hour += 12;
+    } else if (hour < 0 || hour > 23) {
+      return null;
+    }
+
+    return hour * 60 + minute;
+  }
+
+  String _slotLabelFromMinutes(int minute) {
+    final hour = minute ~/ 60;
+    final minutePart = minute % 60;
+    return '${hour.toString().padLeft(2, '0')}:'
+        '${minutePart.toString().padLeft(2, '0')}';
   }
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
+
+  Future<void> _loadDoctorUpcomingAppointments() async {
+    final doctorId = _doctorField(['_id', 'id', 'doctorId']).trim();
+    if (doctorId.isEmpty) return;
+
+    try {
+      final upcoming = await ApiService.fetchUpcomingAppointments();
+      if (!mounted) return;
+
+      final merged = <String, Map<String, dynamic>>{};
+      void addIfRelevant(Map<String, dynamic> appointment) {
+        if (!_matchesDoctor(appointment, doctorId)) return;
+        final key = _appointmentKey(appointment);
+        merged[key] = appointment;
+      }
+
+      for (final appointment in _knownAppointments) {
+        addIfRelevant(appointment);
+      }
+
+      for (final raw in upcoming) {
+        if (raw is! Map<String, dynamic>) continue;
+        addIfRelevant(Map<String, dynamic>.from(raw));
+      }
+
+      final updated = merged.values.toList(growable: false);
+      if (!mounted) return;
+      setState(() {
+        _knownAppointments = updated;
+        final slots = _timesForSelectedDate();
+        if (_selectedTime == null || !slots.contains(_selectedTime)) {
+          _selectedTime = slots.isNotEmpty ? slots.first : null;
+        }
+      });
+    } catch (_) {
+      // Keep existing local doctor appointments when refresh fails.
+    }
+  }
+
+  bool _matchesDoctor(Map<String, dynamic> appointment, String doctorId) {
+    final doctor = appointment['doctorId'];
+    final resolvedId = doctor is Map
+        ? (doctor['_id'] ?? doctor['id'] ?? doctor['doctorId'])
+            ?.toString()
+            .trim()
+        : doctor?.toString().trim();
+    return resolvedId != null && resolvedId == doctorId;
+  }
+
+  String _appointmentKey(Map<String, dynamic> appointment) {
+    final id = appointment['_id']?.toString().trim() ?? '';
+    if (id.isNotEmpty) return id;
+    final date = appointment['appointmentDate']?.toString().trim() ?? '';
+    final time = appointment['appointmentTime']?.toString().trim() ?? '';
+    final status = appointment['status']?.toString().trim() ?? '';
+    return '$date|$time|$status';
+  }
+}
+
+class _AppointmentInput {
+  final String reason;
+  final String notes;
+
+  const _AppointmentInput({
+    required this.reason,
+    required this.notes,
+  });
 }

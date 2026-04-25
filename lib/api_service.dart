@@ -14,6 +14,22 @@ import 'package:hello/helpers/google_auth_helper.dart';
 import 'package:hello/services/offline/offline_storage_service.dart';
 import 'package:hello/services/secure_token_storage.dart';
 
+class DocumentUploadResult {
+  final bool success;
+  final Document? document;
+  final String message;
+  final String? code;
+  final int? statusCode;
+
+  const DocumentUploadResult({
+    required this.success,
+    this.document,
+    this.message = '',
+    this.code,
+    this.statusCode,
+  });
+}
+
 class ApiService {
   static void _debugLog(String message) {
     if (!kReleaseMode) {
@@ -73,6 +89,7 @@ class ApiService {
   static const Duration _publicCacheTtl = Duration(minutes: 5);
   static const Duration _appointmentsCacheTtl = Duration(minutes: 3);
   static const Duration _publicGeoCacheTtl = Duration(minutes: 20);
+  static const Duration _nearbyFreshnessTtl = Duration(hours: 24);
   static const Duration _documentsRequestTimeout = Duration(seconds: 12);
   static const String _docsCachePrefix = "docs_cache_v1_";
   static const String _groupedDocsCachePrefix = "grouped_docs_cache_v1_";
@@ -84,9 +101,15 @@ class ApiService {
   static _TimedCacheEntry<Map<String, dynamic>>? _uiConfigCache;
   static _TimedCacheEntry<List<dynamic>>? _pastAppointmentsCache;
   static _TimedCacheEntry<_PublicGeoScope>? _publicGeoScopeCache;
-  static const String _sessionInvalidCode = "SESSION_INVALID";
+  static const Set<String> _forcedLogoutCodes = {
+    "SESSION_INVALID",
+    "USER_DISABLED",
+    "TOKEN_VERSION_MISMATCH",
+  };
   static const String _defaultSessionInvalidMessage =
       "You have been logged out due to login from another device";
+  static const String _defaultUserDisabledMessage =
+      "Your account has been deactivated by admin.";
   static const String _defaultSessionExpiredMessage =
       "Your session expired. Please log in again.";
   static const String _deviceIdPrefsKey = "auth_device_id";
@@ -429,13 +452,21 @@ class ApiService {
     });
   }
 
+  static String _resolveForcedLogoutMessage(Map<String, dynamic> payload) {
+    final code = (payload['code'] ?? '').toString().trim().toUpperCase();
+    final message = (payload['message'] ?? '').toString().trim();
+    if (message.isNotEmpty) return message;
+    if (code == 'USER_DISABLED') return _defaultUserDisabledMessage;
+    return _defaultSessionInvalidMessage;
+  }
+
   static bool _isSessionInvalidResponse(
     http.Response response,
     Map<String, dynamic> payload,
   ) {
-    if (response.statusCode != 401) return false;
+    if (response.statusCode != 401 && response.statusCode != 403) return false;
     final code = (payload['code'] ?? '').toString().trim().toUpperCase();
-    return code == _sessionInvalidCode;
+    return _forcedLogoutCodes.contains(code);
   }
 
   static Future<String> _ensureDeviceId() async {
@@ -465,6 +496,29 @@ class ApiService {
       'x-device-id': deviceId,
       'x-device-info': _deviceInfo(),
     };
+  }
+
+  static Future<http.Response> _sendAuthorizedRequestWithRetry(
+    Future<http.Response> Function(Map<String, String> headers) sender,
+  ) async {
+    Map<String, String> headers = await _authHeaders();
+    http.Response response = await sender(headers);
+    Map<String, dynamic> payload = _decodeJsonMap(response.body);
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      final refreshed = await _refreshAccessTokenIfPossible();
+      if (refreshed) {
+        headers = await _authHeaders();
+        response = await sender(headers);
+        payload = _decodeJsonMap(response.body);
+      }
+    }
+
+    if (_isSessionInvalidResponse(response, payload)) {
+      _emitSessionInvalid(_resolveForcedLogoutMessage(payload));
+    }
+
+    return response;
   }
 
   static Future<void> _persistAuthSessionPayload(
@@ -1484,11 +1538,38 @@ class ApiService {
     String? date,
     Function(double)? onProgress,
   }) async {
+    final result = await uploadDocumentDetailed(
+      file: file,
+      title: title,
+      category: category,
+      notes: notes,
+      date: date,
+      onProgress: onProgress,
+    );
+    return result.success ? result.document : null;
+  }
+
+  static Future<DocumentUploadResult> uploadDocumentDetailed({
+    required File file,
+    required String title,
+    String? category,
+    String? notes,
+    String? date,
+    Function(double)? onProgress,
+  }) async {
     try {
-      // ✅ Force category to match backend accepted values
-      final validCategories = ["Report", "Prescription", "Bill", "Insurance"];
-      final normalizedCategory =
-          validCategories.contains(category) ? category : "Report";
+      // If category is omitted, backend auto-detects it after verification.
+      final rawCategory = (category ?? "").toLowerCase().trim();
+      String? normalizedCategory;
+      if (rawCategory.contains("report")) {
+        normalizedCategory = "Report";
+      } else if (rawCategory.contains("prescription")) {
+        normalizedCategory = "Prescription";
+      } else if (rawCategory.contains("bill")) {
+        normalizedCategory = "Bill";
+      } else if (rawCategory.contains("insurance")) {
+        normalizedCategory = "Insurance";
+      }
 
       // Get authentication token
       final token = await _getToken();
@@ -1506,9 +1587,21 @@ class ApiService {
       }
 
       // ✅ Detect MIME type by file extension
-      String filename = file.path.split("/").last;
+      String filename = file.path.replaceAll('\\', '/').split('/').last;
       final lowerName = filename.toLowerCase();
       String mimeType = _detectMimeType(lowerName);
+      const allowedUploadMimeTypes = {
+        'application/pdf',
+        'image/jpeg',
+        'image/png',
+      };
+      if (!allowedUploadMimeTypes.contains(mimeType)) {
+        _debugLog('Unsupported upload file type: $mimeType');
+        return const DocumentUploadResult(
+          success: false,
+          message: 'Only PDF, JPG, and PNG files are supported.',
+        );
+      }
 
       // Get file size for progress tracking
       final fileSize = await file.length();
@@ -1519,9 +1612,8 @@ class ApiService {
       }
 
       // Use stream-based approach for better progress tracking
-      final fileStream = file.openRead();
-      final multipartFile = MultipartFile(
-        fileStream,
+      final multipartFile = MultipartFile.fromStream(
+        () => file.openRead(),
         fileSize,
         filename: filename,
         contentType: MediaType.parse(mimeType),
@@ -1531,7 +1623,7 @@ class ApiService {
       final formData = FormData.fromMap({
         'file': multipartFile,
         'title': title,
-        'category': normalizedCategory,
+        if (normalizedCategory != null) 'category': normalizedCategory,
         if (notes != null) 'notes': notes,
         if (date != null) 'date': date,
       });
@@ -1565,24 +1657,82 @@ class ApiService {
               onProgress(progress.clamp(0.0, 100.0));
               lastReportedProgress = progress;
               // Debug print to verify progress is being tracked
-              print(
+              _debugLog(
                   "📤 Upload progress: ${progress.toStringAsFixed(2)}% ($sent/$total bytes)");
             }
           }
         },
       );
 
-      if (response.statusCode == 200) {
+      if ((response.statusCode ?? 0) >= 200 &&
+          (response.statusCode ?? 0) < 300) {
         final json = response.data;
-        return Document.fromApi(json['document']);
+        return DocumentUploadResult(
+          success: true,
+          document: Document.fromApi(json['document']),
+          message: _extractApiMessage(json, fallback: 'Upload complete'),
+          statusCode: response.statusCode,
+        );
       } else {
-        print("Upload failed: ${response.data}");
-        return null;
+        _debugLog("Upload failed: ${response.data}");
+        final payload = _responseDataAsMap(response.data);
+        return DocumentUploadResult(
+          success: false,
+          message: _extractApiMessage(payload, fallback: 'Upload failed'),
+          code: payload['code']?.toString(),
+          statusCode: response.statusCode,
+        );
       }
+    } on DioException catch (e) {
+      final payload = _responseDataAsMap(e.response?.data);
+      final message = _extractApiMessage(
+        payload,
+        fallback: e.message ?? 'Upload failed',
+      );
+      _debugLog("Upload error: $message");
+      return DocumentUploadResult(
+        success: false,
+        message: message,
+        code: payload['code']?.toString(),
+        statusCode: e.response?.statusCode,
+      );
     } catch (e) {
-      print("Upload error: $e");
-      return null;
+      _debugLog("Upload error: $e");
+      return DocumentUploadResult(
+        success: false,
+        message: e.toString().replaceFirst('Exception: ', ''),
+      );
     }
+  }
+
+  static Map<String, dynamic> _responseDataAsMap(dynamic raw) {
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is Map) {
+      return raw.map((key, value) => MapEntry(key.toString(), value));
+    }
+    if (raw is String && raw.trim().isNotEmpty) {
+      return _decodeJsonMap(raw);
+    }
+    return <String, dynamic>{};
+  }
+
+  static String _extractApiMessage(
+    dynamic raw, {
+    String fallback = 'Request failed',
+  }) {
+    final payload = _responseDataAsMap(raw);
+    for (final key in const ['message', 'msg', 'error']) {
+      final value = payload[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    final nested = payload['data'];
+    if (nested is Map) {
+      for (final key in const ['message', 'msg', 'error']) {
+        final value = nested[key]?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+    }
+    return fallback;
   }
 
   // ---------------- MIME TYPE HELPERS ----------------
@@ -2564,6 +2714,151 @@ class ApiService {
     return false;
   }
 
+  static String _formatDateOnly(DateTime value) {
+    final local = value.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
+  }
+
+  static Future<Map<String, dynamic>> requestAppointment({
+    required String doctorId,
+    required DateTime appointmentDate,
+    required String appointmentTime,
+    required String reason,
+    int duration = 30,
+    String appointmentType = 'consultation',
+    String mode = 'in-person',
+    String notes = '',
+    String? patientId,
+    String? patientName,
+    String? patientEmail,
+    String? patientPhone,
+  }) async {
+    final normalizedDoctorId = doctorId.trim();
+    final normalizedTime = appointmentTime.trim();
+    final normalizedReason = reason.trim();
+    final normalizedType = appointmentType.trim().isEmpty
+        ? 'consultation'
+        : appointmentType.trim();
+    final normalizedMode =
+        mode.trim().toLowerCase() == 'online' ? 'online' : 'in-person';
+
+    if (normalizedDoctorId.isEmpty ||
+        normalizedTime.isEmpty ||
+        normalizedReason.isEmpty) {
+      return {
+        "success": false,
+        "message": "Doctor, date, time, and reason are required.",
+      };
+    }
+
+    final payload = <String, dynamic>{
+      "doctorId": normalizedDoctorId,
+      "appointmentDate": _formatDateOnly(appointmentDate),
+      "appointmentTime": normalizedTime,
+      "duration": duration.clamp(15, 180),
+      "reason": normalizedReason,
+      "appointmentType": normalizedType,
+      "mode": normalizedMode,
+    };
+
+    final normalizedNotes = notes.trim();
+    if (normalizedNotes.isNotEmpty) payload["notes"] = normalizedNotes;
+    if (patientId != null && patientId.trim().isNotEmpty) {
+      payload["patientId"] = patientId.trim();
+    }
+    if (patientName != null && patientName.trim().isNotEmpty) {
+      payload["patientName"] = patientName.trim();
+    }
+    if (patientEmail != null && patientEmail.trim().isNotEmpty) {
+      payload["patientEmail"] = patientEmail.trim();
+    }
+    if (patientPhone != null && patientPhone.trim().isNotEmpty) {
+      payload["patientPhone"] = patientPhone.trim();
+    }
+
+    try {
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.post(
+          Uri.parse("$patientAppointmentsUrl/request"),
+          headers: {...headers, "Content-Type": "application/json"},
+          body: jsonEncode(payload),
+        ),
+      );
+      final data = _decodeJsonMap(response.body);
+      if ((response.statusCode == 200 || response.statusCode == 201) &&
+          data['success'] == true) {
+        return {
+          "success": true,
+          "message":
+              (data['message'] ?? "Appointment request submitted successfully.")
+                  .toString(),
+          "appointment": data['appointment'],
+        };
+      }
+      return {
+        "success": false,
+        "message":
+            (data['message'] ?? "Failed to request appointment.").toString(),
+      };
+    } catch (_) {
+      return {
+        "success": false,
+        "message": "Failed to request appointment.",
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> respondToSessionExtensionRequest({
+    required String sessionId,
+    required bool accept,
+  }) async {
+    final normalizedSessionId = sessionId.trim();
+    if (normalizedSessionId.isEmpty) {
+      return {
+        "success": false,
+        "message": "Invalid session id.",
+      };
+    }
+
+    final status = accept ? 'accepted' : 'declined';
+
+    try {
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.post(
+          Uri.parse("$baseUrl/sessions/extend/$normalizedSessionId/respond"),
+          headers: {...headers, "Content-Type": "application/json"},
+          body: jsonEncode({"status": status}),
+        ),
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          data['success'] == true) {
+        return {
+          "success": true,
+          "message": (data['message'] ??
+                  (accept
+                      ? "Session extension approved."
+                      : "Session extension declined."))
+              .toString(),
+          "data": data['data'],
+        };
+      }
+      return {
+        "success": false,
+        "message":
+            (data['message'] ?? "Failed to respond to extension.").toString(),
+      };
+    } catch (_) {
+      return {
+        "success": false,
+        "message": "Failed to respond to extension.",
+      };
+    }
+  }
+
   static Future<Map<String, dynamic>?> getAppointmentAISummary(
       String id) async {
     try {
@@ -2890,6 +3185,406 @@ class ApiService {
     } catch (e) {
       print("fetchPublicProducts error: $e");
       return [];
+    }
+  }
+
+  // ---------------- STORE ----------------
+  static Future<Map<String, dynamic>> fetchStoreProducts({
+    String search = "",
+    String category = "",
+    double? minPrice,
+    double? maxPrice,
+    double? minRating,
+    String sort = "newest",
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final query = <String, String>{
+        "page": page.clamp(1, 100000).toString(),
+        "limit": limit.clamp(1, 60).toString(),
+      };
+      final normalizedSearch = search.trim();
+      final normalizedCategory = category.trim();
+      if (normalizedSearch.isNotEmpty) query["search"] = normalizedSearch;
+      if (normalizedCategory.isNotEmpty) query["category"] = normalizedCategory;
+      if (minPrice != null && minPrice >= 0) {
+        query["minPrice"] = minPrice.toStringAsFixed(2);
+      }
+      if (maxPrice != null && maxPrice >= 0) {
+        query["maxPrice"] = maxPrice.toStringAsFixed(2);
+      }
+      if (minRating != null && minRating >= 0) {
+        query["minRating"] = minRating.toStringAsFixed(1);
+      }
+      if (sort.trim().isNotEmpty) {
+        query["sort"] = sort.trim().toLowerCase();
+      }
+
+      final uri = Uri.parse("$baseUrl/products").replace(
+        queryParameters: query,
+      );
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.get(uri, headers: headers),
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode != 200 || data['success'] == false) {
+        return {
+          "success": false,
+          "message": (data['message'] ?? "Failed to fetch products").toString(),
+          "products": <Map<String, dynamic>>[],
+          "pagination": const <String, dynamic>{},
+        };
+      }
+
+      final productsRaw = data['products'];
+      final products = productsRaw is List
+          ? productsRaw
+              .whereType<Map>()
+              .map(
+                (item) => item.map(
+                  (key, value) => MapEntry(key.toString(), value),
+                ),
+              )
+              .toList(growable: false)
+          : <Map<String, dynamic>>[];
+
+      final pagination = data['pagination'] is Map
+          ? (data['pagination'] as Map)
+              .map((key, value) => MapEntry(key.toString(), value))
+          : <String, dynamic>{};
+
+      return {
+        "success": true,
+        "products": products,
+        "pagination": pagination,
+      };
+    } catch (e) {
+      return {
+        "success": false,
+        "message": "Failed to fetch products",
+        "products": <Map<String, dynamic>>[],
+        "pagination": const <String, dynamic>{},
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> fetchStoreCart() async {
+    try {
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.get(Uri.parse("$baseUrl/cart"), headers: headers),
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode != 200 || data['success'] == false) {
+        return {
+          "success": false,
+          "message": (data['message'] ?? "Failed to fetch cart").toString(),
+          "cart": {
+            "items": <Map<String, dynamic>>[],
+            "totals": {"itemCount": 0, "subtotal": 0},
+          },
+        };
+      }
+      final cart = data['cart'] is Map
+          ? (data['cart'] as Map)
+              .map((key, value) => MapEntry(key.toString(), value))
+          : <String, dynamic>{};
+      return {"success": true, "cart": cart};
+    } catch (e) {
+      return {
+        "success": false,
+        "message": "Failed to fetch cart",
+        "cart": {
+          "items": <Map<String, dynamic>>[],
+          "totals": {"itemCount": 0, "subtotal": 0},
+        },
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> addStoreCartItem({
+    required String productId,
+    int quantity = 1,
+  }) async {
+    try {
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.post(
+          Uri.parse("$baseUrl/cart/items"),
+          headers: {...headers, "Content-Type": "application/json"},
+          body: jsonEncode({
+            "productId": productId.trim(),
+            "quantity": quantity.clamp(1, 20),
+          }),
+        ),
+      );
+      final data = _decodeJsonMap(response.body);
+      if ((response.statusCode != 200 && response.statusCode != 201) ||
+          data['success'] == false) {
+        return {
+          "success": false,
+          "message": (data['message'] ?? "Failed to update cart").toString(),
+          "cart": data['cart'],
+        };
+      }
+      return {"success": true, "cart": data['cart']};
+    } catch (e) {
+      return {
+        "success": false,
+        "message": "Failed to update cart",
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> updateStoreCartItem({
+    required String itemId,
+    required int quantity,
+  }) async {
+    try {
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.patch(
+          Uri.parse("$baseUrl/cart/items/${itemId.trim()}"),
+          headers: {...headers, "Content-Type": "application/json"},
+          body: jsonEncode({
+            "quantity": quantity.clamp(0, 20),
+          }),
+        ),
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode != 200 || data['success'] == false) {
+        return {
+          "success": false,
+          "message": (data['message'] ?? "Failed to update cart").toString(),
+          "cart": data['cart'],
+        };
+      }
+      return {"success": true, "cart": data['cart']};
+    } catch (e) {
+      return {
+        "success": false,
+        "message": "Failed to update cart",
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> removeStoreCartItem({
+    required String itemId,
+  }) async {
+    try {
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.delete(
+          Uri.parse("$baseUrl/cart/items/${itemId.trim()}"),
+          headers: headers,
+        ),
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode != 200 || data['success'] == false) {
+        return {
+          "success": false,
+          "message": (data['message'] ?? "Failed to remove item").toString(),
+          "cart": data['cart'],
+        };
+      }
+      return {"success": true, "cart": data['cart']};
+    } catch (e) {
+      return {
+        "success": false,
+        "message": "Failed to remove item",
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> createStoreOrder({
+    required Map<String, dynamic> delivery,
+  }) async {
+    try {
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.post(
+          Uri.parse("$baseUrl/orders"),
+          headers: {...headers, "Content-Type": "application/json"},
+          body: jsonEncode({"delivery": delivery}),
+        ),
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode != 201 || data['success'] == false) {
+        return {
+          "success": false,
+          "message": (data['message'] ?? "Failed to place order").toString(),
+          "order": data['order'],
+        };
+      }
+      return {"success": true, "order": data['order']};
+    } catch (e) {
+      return {
+        "success": false,
+        "message": "Failed to place order",
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> fetchStoreOrders({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final uri = Uri.parse("$baseUrl/orders").replace(
+        queryParameters: {
+          "page": page.clamp(1, 100000).toString(),
+          "limit": limit.clamp(1, 60).toString(),
+        },
+      );
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.get(uri, headers: headers),
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode != 200 || data['success'] == false) {
+        return {
+          "success": false,
+          "message": (data['message'] ?? "Failed to fetch orders").toString(),
+          "orders": const <Map<String, dynamic>>[],
+          "pagination": const <String, dynamic>{},
+        };
+      }
+      final ordersRaw = data['orders'];
+      final orders = ordersRaw is List
+          ? ordersRaw
+              .whereType<Map>()
+              .map(
+                (item) => item.map(
+                  (key, value) => MapEntry(key.toString(), value),
+                ),
+              )
+              .toList(growable: false)
+          : <Map<String, dynamic>>[];
+      final pagination = data['pagination'] is Map
+          ? (data['pagination'] as Map)
+              .map((key, value) => MapEntry(key.toString(), value))
+          : <String, dynamic>{};
+      return {"success": true, "orders": orders, "pagination": pagination};
+    } catch (e) {
+      return {
+        "success": false,
+        "message": "Failed to fetch orders",
+        "orders": const <Map<String, dynamic>>[],
+        "pagination": const <String, dynamic>{},
+      };
+    }
+  }
+
+  // ---------------- NEARBY ----------------
+  static bool isNearbyCacheStale(Map<String, dynamic>? cachedPayload) {
+    if (cachedPayload == null) return true;
+    final lastUpdatedRaw =
+        (cachedPayload['lastUpdatedAt'] ?? cachedPayload['cachedAt'] ?? '')
+            .toString()
+            .trim();
+    if (lastUpdatedRaw.isEmpty) return true;
+    final parsed = DateTime.tryParse(lastUpdatedRaw);
+    if (parsed == null) return true;
+    final age = DateTime.now().difference(parsed.toLocal());
+    return age > _nearbyFreshnessTtl;
+  }
+
+  static Future<Map<String, dynamic>?> getCachedNearbyServices() async {
+    return OfflineStorageService.instance.getCachedNearbyServices();
+  }
+
+  static Future<Map<String, dynamic>> fetchNearbyServices({
+    required double latitude,
+    required double longitude,
+    int radius = 5000,
+    List<String> types = const ["HOSPITAL", "CLINIC", "AMBULANCE", "DOCTOR"],
+  }) async {
+    final normalizedRadius = radius.clamp(1000, 30000);
+    final normalizedTypes = types
+        .map((entry) => entry.trim().toUpperCase())
+        .where((entry) => entry.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+
+    try {
+      final uri = Uri.parse("$baseUrl/nearby/services").replace(
+        queryParameters: {
+          "lat": latitude.toStringAsFixed(6),
+          "lng": longitude.toStringAsFixed(6),
+          "radius": normalizedRadius.toString(),
+          "types": normalizedTypes.join(","),
+        },
+      );
+
+      final response = await _sendAuthorizedRequestWithRetry(
+        (headers) => http.get(uri, headers: headers),
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        final payload = {
+          "services": data['services'],
+          "criticalServices": data['criticalServices'],
+          "lastUpdatedAt": (data['lastUpdatedAt'] ??
+                  DateTime.now().toUtc().toIso8601String())
+              .toString(),
+          "cachedAt": DateTime.now().toUtc().toIso8601String(),
+          "radius": normalizedRadius,
+          "types": normalizedTypes,
+        };
+        await OfflineStorageService.instance.cacheNearbyServices(payload);
+
+        return {
+          "success": true,
+          "services": data['services'] ?? const <Map<String, dynamic>>[],
+          "criticalServices":
+              data['criticalServices'] ?? const <Map<String, dynamic>>[],
+          "lastUpdatedAt": payload["lastUpdatedAt"],
+          "isCached": false,
+          "isStale": false,
+        };
+      }
+
+      final cached = await getCachedNearbyServices();
+      if (cached != null) {
+        return {
+          "success": true,
+          "services": cached['services'] ?? const <Map<String, dynamic>>[],
+          "criticalServices":
+              cached['criticalServices'] ?? const <Map<String, dynamic>>[],
+          "lastUpdatedAt": cached['lastUpdatedAt'] ?? cached['cachedAt'] ?? '',
+          "isCached": true,
+          "isStale": isNearbyCacheStale(cached),
+          "message":
+              (data['message'] ?? "Showing cached nearby services").toString(),
+        };
+      }
+
+      return {
+        "success": false,
+        "message":
+            (data['message'] ?? "Failed to fetch nearby services").toString(),
+        "services": const <Map<String, dynamic>>[],
+        "criticalServices": const <Map<String, dynamic>>[],
+        "isCached": false,
+        "isStale": true,
+      };
+    } catch (e) {
+      final cached = await getCachedNearbyServices();
+      if (cached != null) {
+        return {
+          "success": true,
+          "services": cached['services'] ?? const <Map<String, dynamic>>[],
+          "criticalServices":
+              cached['criticalServices'] ?? const <Map<String, dynamic>>[],
+          "lastUpdatedAt": cached['lastUpdatedAt'] ?? cached['cachedAt'] ?? '',
+          "isCached": true,
+          "isStale": isNearbyCacheStale(cached),
+          "message": "Showing cached nearby services",
+        };
+      }
+      return {
+        "success": false,
+        "message": "Failed to fetch nearby services",
+        "services": const <Map<String, dynamic>>[],
+        "criticalServices": const <Map<String, dynamic>>[],
+        "isCached": false,
+        "isStale": true,
+      };
     }
   }
 

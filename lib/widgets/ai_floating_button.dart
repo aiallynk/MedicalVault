@@ -9,6 +9,21 @@ import '../screens/chat_screen.dart';
 const String _aiFabXKey = 'ai_fab_x';
 const String _aiFabYKey = 'ai_fab_y';
 
+class AIAssistantOverlayController {
+  AIAssistantOverlayController._();
+
+  static final ValueNotifier<bool> _visible = ValueNotifier<bool>(true);
+
+  static ValueListenable<bool> get visibilityListenable => _visible;
+
+  static bool get isVisible => _visible.value;
+
+  static void setVisible(bool visible) {
+    if (_visible.value == visible) return;
+    _visible.value = visible;
+  }
+}
+
 Future<void> resetAIAssistantButtonPosition() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.remove(_aiFabXKey);
@@ -160,6 +175,7 @@ class _DraggableAIAssistantOverlayState
     required Size size,
     required EdgeInsets insets,
     required bool showFab,
+    required bool aiVisible,
   }) {
     final position =
         _clampOffset(_position ?? _defaultOffset(size, insets), size, insets);
@@ -172,48 +188,56 @@ class _DraggableAIAssistantOverlayState
           Positioned(
             left: position.dx,
             top: position.dy,
-            child: GestureDetector(
-              onPanStart: (_) {
-                _dragMoved = false;
-                _dragDistance = 0;
-              },
-              onPanUpdate: (details) {
-                final next = _clampOffset(
-                  Offset(
-                    (_position?.dx ?? position.dx) + details.delta.dx,
-                    (_position?.dy ?? position.dy) + details.delta.dy,
+            child: IgnorePointer(
+              ignoring: !aiVisible,
+              child: AnimatedOpacity(
+                opacity: aiVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                child: GestureDetector(
+                  onPanStart: (_) {
+                    _dragMoved = false;
+                    _dragDistance = 0;
+                  },
+                  onPanUpdate: (details) {
+                    final next = _clampOffset(
+                      Offset(
+                        (_position?.dx ?? position.dx) + details.delta.dx,
+                        (_position?.dy ?? position.dy) + details.delta.dy,
+                      ),
+                      size,
+                      insets,
+                    );
+
+                    _dragDistance += details.delta.distance;
+                    if (_dragDistance > _dragThreshold) {
+                      _dragMoved = true;
+                    }
+
+                    setState(() {
+                      _position = next;
+                    });
+                  },
+                  onPanEnd: (_) {
+                    if (_position != null) {
+                      _persistPosition(_position!);
+                    }
+                    _dragMoved = false;
+                    _dragDistance = 0;
+                  },
+                  onPanCancel: () {
+                    _dragMoved = false;
+                    _dragDistance = 0;
+                  },
+                  child: AIFloatingButton(
+                    onPressed: () {
+                      if (!_dragMoved) {
+                        _navigateToChat();
+                      }
+                    },
+                    size: _fabSize,
                   ),
-                  size,
-                  insets,
-                );
-
-                _dragDistance += details.delta.distance;
-                if (_dragDistance > _dragThreshold) {
-                  _dragMoved = true;
-                }
-
-                setState(() {
-                  _position = next;
-                });
-              },
-              onPanEnd: (_) {
-                if (_position != null) {
-                  _persistPosition(_position!);
-                }
-                _dragMoved = false;
-                _dragDistance = 0;
-              },
-              onPanCancel: () {
-                _dragMoved = false;
-                _dragDistance = 0;
-              },
-              child: AIFloatingButton(
-                onPressed: () {
-                  if (!_dragMoved) {
-                    _navigateToChat();
-                  }
-                },
-                size: _fabSize,
+                ),
               ),
             ),
           ),
@@ -235,15 +259,31 @@ class _DraggableAIAssistantOverlayState
 
         if (widget.routeNameListenable == null) {
           final showFab = widget.visibleRouteNames.isEmpty;
-          return _buildOverlay(size: size, insets: insets, showFab: showFab);
+          return ValueListenableBuilder<bool>(
+            valueListenable: AIAssistantOverlayController.visibilityListenable,
+            builder: (context, aiVisible, _) => _buildOverlay(
+              size: size,
+              insets: insets,
+              showFab: showFab,
+              aiVisible: aiVisible,
+            ),
+          );
         }
 
         return ValueListenableBuilder<String?>(
           valueListenable: widget.routeNameListenable!,
-          builder: (context, routeName, child) {
-            final showFab = _shouldShowFabForRoute(routeName);
-            return _buildOverlay(size: size, insets: insets, showFab: showFab);
-          },
+          builder: (context, routeName, child) => ValueListenableBuilder<bool>(
+            valueListenable: AIAssistantOverlayController.visibilityListenable,
+            builder: (context, aiVisible, _) {
+              final showFab = _shouldShowFabForRoute(routeName);
+              return _buildOverlay(
+                size: size,
+                insets: insets,
+                showFab: showFab,
+                aiVisible: aiVisible,
+              );
+            },
+          ),
         );
       },
     );

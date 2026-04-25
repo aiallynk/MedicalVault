@@ -1,3 +1,48 @@
+class MedicalVerification {
+  final String status;
+  final String label;
+  final String method;
+  final String reason;
+  final String confidence;
+
+  const MedicalVerification({
+    this.status = 'pending',
+    this.label = 'UNKNOWN',
+    this.method = 'inconclusive',
+    this.reason = '',
+    this.confidence = 'unknown',
+  });
+
+  factory MedicalVerification.fromApi(dynamic raw) {
+    if (raw is! Map) return const MedicalVerification();
+    return MedicalVerification(
+      status: (raw['status'] ?? 'pending').toString(),
+      label: (raw['label'] ?? 'UNKNOWN').toString(),
+      method: (raw['method'] ?? 'inconclusive').toString(),
+      reason: (raw['reason'] ?? '').toString(),
+      confidence: (raw['confidence'] ?? 'unknown').toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'status': status,
+      'label': label,
+      'method': method,
+      'reason': reason,
+      'confidence': confidence,
+    };
+  }
+
+  bool get isVerified =>
+      status.toLowerCase() == 'verified' && label.toUpperCase() == 'MEDICAL';
+
+  bool get isAccepted =>
+      status.toLowerCase() == 'accepted' && label.toUpperCase() == 'MEDICAL';
+
+  bool get hasSignal => isVerified || isAccepted;
+}
+
 class Document {
   final String? id;
   final String? patientId;
@@ -8,10 +53,12 @@ class Document {
   final String? date;
   final String? fileName;
   final String? fileType;
-  final String? url; // ✅ S3 signed URL from backend
-  final String? category; // ✅ Logical grouping
-  final String? type; // ✅ Backend sometimes uses this
-  final String? s3Key; // ✅ S3 key for backend operations
+  final String? url; // S3 signed URL or backend/local file URL
+  final String? category; // Logical grouping
+  final String? type; // Backend sometimes uses this
+  final String? s3Key; // S3 key for backend operations
+  final bool? medicalVerified;
+  final MedicalVerification? medicalVerification;
 
   Document({
     this.id,
@@ -27,20 +74,17 @@ class Document {
     this.category,
     this.type,
     this.s3Key,
+    this.medicalVerified,
+    this.medicalVerification,
   });
 
-  /// ✅ Factory constructor for API response
   factory Document.fromApi(Map<String, dynamic> json) {
-    // ✅ URL comes from backend as signed S3 URL
     final resolvedUrl = json['url'];
-
-    // ✅ Normalize category/type to lowercase for consistent comparison
     final rawType = (json['type'] ?? json['category'] ?? "")
         .toString()
         .toLowerCase()
         .trim();
 
-    // ✅ Normalize to only 4 values
     String normalized;
     if (rawType.contains("report")) {
       normalized = "report";
@@ -51,14 +95,18 @@ class Document {
     } else if (rawType.contains("insurance")) {
       normalized = "insurance";
     } else {
-      // ✅ Default to "report" if category is invalid
       normalized = "report";
     }
 
+    final verification =
+        MedicalVerification.fromApi(json['medicalVerification']);
+    final verified = json['medicalVerified'] == true ||
+        json['isMedicalVerified'] == true ||
+        verification.isVerified;
+
     return Document(
       id: json['id'] ?? json['_id'],
-      patientId: json['patientId'] ??
-          json['userId'], // ✅ Use userId as fallback for patientId
+      patientId: json['patientId'] ?? json['userId'],
       userId: json['userId'],
       title: json['title'] ??
           json['fileName'] ??
@@ -66,13 +114,16 @@ class Document {
           'Untitled',
       description: json['description'],
       notes: json['notes'],
-      date: json['date'] ?? json['uploadedAt'], // ✅ Use uploadedAt as fallback
+      date: json['date'] ?? json['uploadedAt'],
       fileName: json['fileName'] ?? json['originalName'],
       fileType: json['fileType'] ?? json['mimeType'],
       url: resolvedUrl,
       category: normalized,
       type: normalized,
       s3Key: json['s3Key'],
+      medicalVerified: verified,
+      medicalVerification:
+          json['medicalVerification'] is Map ? verification : null,
     );
   }
 
@@ -91,11 +142,18 @@ class Document {
       "category": category,
       "type": type,
       "s3Key": s3Key,
+      "medicalVerified": medicalVerified,
+      "medicalVerification": medicalVerification?.toJson(),
     };
   }
 
-  /// ✅ Always return one of the 4 allowed values
   String get normalizedType {
     return (type ?? category ?? "").toLowerCase();
   }
+
+  bool get isMedicalVerified =>
+      medicalVerified == true || (medicalVerification?.isVerified ?? false);
+
+  bool get hasMedicalVerification =>
+      isMedicalVerified || (medicalVerification?.hasSignal ?? false);
 }

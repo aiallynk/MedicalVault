@@ -425,15 +425,33 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
     debugPrint("ðŸ” Opening file: $fileName ($fileType)");
 
     try {
-      if (fileType.contains("pdf")) {
-        // âœ… Always download and open PDFs externally
-        await _downloadAndOpenFile(document);
-      } else if (fileType.startsWith("image/") ||
-          fileName.toLowerCase().endsWith(".jpg") ||
-          fileName.toLowerCase().endsWith(".jpeg") ||
-          fileName.toLowerCase().endsWith(".png")) {
+      final lowerFileName = fileName.toLowerCase();
+      final isPdf = fileType.contains("pdf") || lowerFileName.endsWith(".pdf");
+      final isImage = fileType.startsWith("image/") ||
+          lowerFileName.endsWith(".jpg") ||
+          lowerFileName.endsWith(".jpeg") ||
+          lowerFileName.endsWith(".png");
+
+      if (isPdf) {
+        final previewUrl = await _getPreviewUrl(document.id!);
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PdfPreviewPage(
+              url: previewUrl,
+              title: document.title ??
+                  document.fileName ??
+                  l10n.t('documentDetail.pdfPreviewTitle'),
+              fileName: document.fileName,
+              cacheKey: document.id,
+            ),
+          ),
+        );
+      } else if (isImage) {
         // âœ… Use backend preview endpoint for images
         final previewUrl = await _getPreviewUrl(document.id!);
+        if (!mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -449,6 +467,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
       }
     } catch (e) {
       debugPrint("âŒ Preview error: $e");
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -499,7 +518,12 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
     if (document.id == null) return;
     try {
       final dir = await getTemporaryDirectory();
-      final filePath = '${dir.path}/${document.fileName ?? "file"}';
+      final filePath = '${dir.path}/${_safeDocumentFileName(document)}';
+      final cachedFile = File(filePath);
+      if (await cachedFile.exists() && await cachedFile.length() > 0) {
+        await OpenFile.open(filePath);
+        return;
+      }
       final url = '${ApiService.baseUrl}/files/${document.id}/download';
 
       // âœ… Add authentication headers for this specific request
@@ -508,11 +532,13 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
         headers: token != null ? {'Authorization': 'Bearer $token'} : {},
         receiveTimeout: const Duration(seconds: 30),
         sendTimeout: const Duration(seconds: 30),
-        validateStatus: (status) =>
-            status! < 500, // Allow 4xx errors to be handled
+        validateStatus: (status) => status != null && status < 400,
       );
 
-      await dio.download(url, filePath, options: options);
+      final response = await dio.download(url, filePath, options: options);
+      if ((response.statusCode ?? 500) >= 400) {
+        throw Exception('Server returned ${response.statusCode}');
+      }
       await OpenFile.open(filePath);
     } catch (e) {
       debugPrint("âŒ Download and open error: $e");
@@ -524,6 +550,58 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
         ),
       );
     }
+  }
+
+  String _safeDocumentFileName(Document document) {
+    final rawName = (document.fileName?.trim().isNotEmpty == true
+            ? document.fileName
+            : null) ??
+        '${document.id ?? DateTime.now().millisecondsSinceEpoch}.file';
+    return rawName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+  }
+
+  Widget _buildMedicalVerificationChip(Document document) {
+    final verification = document.medicalVerification;
+    final isVerified = document.isMedicalVerified;
+    final isAccepted = verification?.isAccepted == true;
+    if (!isVerified && !isAccepted) return const SizedBox.shrink();
+
+    final scheme = Theme.of(context).colorScheme;
+    final label = context.l10n.t(isVerified
+        ? 'documents.verification.verified'
+        : 'documents.verification.accepted');
+    final color = isVerified ? Colors.green : scheme.secondary;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isVerified
+                ? Icons.verified_rounded
+                : Icons.medical_services_rounded,
+            size: 14,
+            color: color,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ---------------- DOWNLOAD ONLY ----------------
@@ -1060,7 +1138,17 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
             ),
           );
           // Refresh files if upload was successful
-          if (result == true) {
+          if (result is Document && mounted) {
+            final categoryFiltered = _filterDocsByCurrentCategory([result]);
+            if (categoryFiltered.isNotEmpty) {
+              setState(() {
+                files.removeWhere((doc) => doc.id == result.id);
+                files.insert(0, result);
+                filteredFiles = _recomputeFilteredFiles();
+              });
+            }
+          }
+          if (result == true || result is Document) {
             _loadFiles();
           }
         },
@@ -1420,6 +1508,10 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
                                                         color: theme.hintColor,
                                                       ),
                                                     ),
+                                                    if (file
+                                                        .hasMedicalVerification)
+                                                      _buildMedicalVerificationChip(
+                                                          file),
                                                   ],
                                                 ),
                                               ],
@@ -1531,8 +1623,16 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
 class PdfPreviewPage extends StatefulWidget {
   final String url;
   final String title;
+  final String? fileName;
+  final String? cacheKey;
 
-  const PdfPreviewPage({super.key, required this.url, required this.title});
+  const PdfPreviewPage({
+    super.key,
+    required this.url,
+    required this.title,
+    this.fileName,
+    this.cacheKey,
+  });
 
   @override
   State<PdfPreviewPage> createState() => _PdfPreviewPageState();
@@ -1541,8 +1641,11 @@ class PdfPreviewPage extends StatefulWidget {
 class _PdfPreviewPageState extends State<PdfPreviewPage> {
   bool _isLoading = true;
   String? _error;
+  String? _localPdfPath;
+  double? _downloadProgress;
   int _retryCount = 0;
-  static const int _maxRetries = 3;
+  CancelToken? _cancelToken;
+  static const int _maxRetries = 2;
 
   @override
   void initState() {
@@ -1550,30 +1653,140 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
     _loadPdf();
   }
 
-  Future<void> _loadPdf() async {
+  Future<void> _loadPdf({bool forceRefresh = false}) async {
+    _cancelToken?.cancel('Starting a new PDF load');
+    final cancelToken = CancelToken();
+    _cancelToken = cancelToken;
+
     try {
       setState(() {
         _isLoading = true;
         _error = null;
+        _downloadProgress = null;
       });
 
-      // Add a small delay to ensure UI updates
-      await Future.delayed(const Duration(milliseconds: 100));
+      final pdfFile = await _cachedPdfFile();
+      if (forceRefresh && await pdfFile.exists()) {
+        await pdfFile.delete();
+      }
 
-      // Set up a timeout for the PDF loading
-      await Future.delayed(const Duration(seconds: 1));
+      if (await pdfFile.exists() && await pdfFile.length() > 0) {
+        if (!mounted || cancelToken.isCancelled) return;
+        setState(() {
+          _localPdfPath = pdfFile.path;
+          _isLoading = false;
+        });
+        return;
+      }
 
-      // The SfPdfViewer will handle the actual loading
+      await _downloadPdf(pdfFile, cancelToken);
+      if (!mounted || cancelToken.isCancelled) return;
+      setState(() {
+        _localPdfPath = pdfFile.path;
+        _isLoading = false;
+        _downloadProgress = null;
+      });
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.cancel || !mounted) return;
       setState(() {
         _isLoading = false;
+        _error = _formatLoadError(e);
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _error = context.l10n
-            .format('common.errorWithMessage', {'message': e.toString()});
+        _error = _formatLoadError(e);
       });
     }
+  }
+
+  Future<File> _cachedPdfFile() async {
+    final dir = await getTemporaryDirectory();
+    final key = (widget.cacheKey?.trim().isNotEmpty == true
+            ? widget.cacheKey!.trim()
+            : widget.url)
+        .hashCode
+        .toUnsigned(32)
+        .toRadixString(16);
+    final rawName = (widget.fileName?.trim().isNotEmpty == true
+            ? widget.fileName!.trim()
+            : widget.title.trim())
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    var safeName = rawName.isEmpty ? 'document.pdf' : rawName;
+    if (!safeName.toLowerCase().endsWith('.pdf')) {
+      safeName = '$safeName.pdf';
+    }
+    if (safeName.length > 90) {
+      safeName = '${safeName.substring(0, 86)}.pdf';
+    }
+    return File('${dir.path}/pdf_preview_${key}_$safeName');
+  }
+
+  Future<void> _downloadPdf(File target, CancelToken cancelToken) async {
+    await target.parent.create(recursive: true);
+    final token = await ApiService.getToken();
+    final headers = <String, String>{
+      'Accept': 'application/pdf,application/octet-stream,*/*',
+    };
+    if (_shouldAttachAuthHeader(widget.url) && token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+
+    final dio = Dio();
+    final response = await dio.download(
+      widget.url,
+      target.path,
+      cancelToken: cancelToken,
+      options: Options(
+        headers: headers,
+        followRedirects: true,
+        receiveTimeout: const Duration(seconds: 45),
+        sendTimeout: const Duration(seconds: 15),
+        responseType: ResponseType.bytes,
+        validateStatus: (status) => status != null && status < 400,
+      ),
+      onReceiveProgress: (received, total) {
+        if (!mounted || total <= 0 || cancelToken.isCancelled) return;
+        final progress = received / total;
+        setState(() {
+          _downloadProgress = progress.clamp(0.0, 1.0).toDouble();
+        });
+      },
+    );
+
+    if ((response.statusCode ?? 500) >= 400) {
+      throw Exception('Server returned ${response.statusCode}');
+    }
+    if (!await target.exists() || await target.length() == 0) {
+      throw Exception('Downloaded PDF is empty');
+    }
+  }
+
+  bool _shouldAttachAuthHeader(String url) {
+    final apiUri = Uri.tryParse(ApiService.baseUrl);
+    final targetUri = Uri.tryParse(url);
+    if (apiUri == null ||
+        targetUri == null ||
+        targetUri.host.isEmpty ||
+        targetUri.scheme.isEmpty) {
+      return true;
+    }
+    return targetUri.host == apiUri.host &&
+        targetUri.port == apiUri.port &&
+        targetUri.scheme == apiUri.scheme;
+  }
+
+  String _formatLoadError(Object error) {
+    final message = error is DioException
+        ? (error.response?.data?.toString().trim().isNotEmpty == true
+            ? error.response!.data.toString()
+            : error.message ?? error.toString())
+        : error.toString();
+    return context.l10n.format(
+      'common.errorWithMessage',
+      {'message': message},
+    );
   }
 
   Future<void> _retryLoadPdf() async {
@@ -1584,9 +1797,7 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
         _error = null;
       });
 
-      // Add exponential backoff delay
-      await Future.delayed(Duration(seconds: _retryCount * 2));
-      _loadPdf();
+      await _loadPdf(forceRefresh: true);
     } else {
       setState(() {
         _error = context.l10n
@@ -1597,6 +1808,7 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
 
   @override
   void dispose() {
+    _cancelToken?.cancel('PDF preview closed');
     super.dispose();
   }
 
@@ -1606,6 +1818,17 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
+          if (_localPdfPath != null)
+            IconButton(
+              tooltip: 'Open with another app',
+              icon: const Icon(Icons.open_in_new),
+              onPressed: () => OpenFile.open(_localPdfPath!),
+            ),
+          IconButton(
+            tooltip: context.l10n.t('common.retry'),
+            icon: const Icon(Icons.refresh),
+            onPressed: _isLoading ? null : () => _loadPdf(forceRefresh: true),
+          ),
           if (_isLoading)
             const Padding(
               padding: EdgeInsets.all(16.0),
@@ -1627,37 +1850,81 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
   Widget _buildBody() {
     final l10n = context.l10n;
     if (_error != null) {
+      final hasLocalPdf =
+          _localPdfPath != null && File(_localPdfPath!).existsSync();
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.error_outline,
+                size: 64,
+                color: Colors.red,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                l10n.t('pdf.failedTitle'),
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Colors.grey[600],
+                    ),
+              ),
+              const SizedBox(height: 24),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _retryLoadPdf,
+                    icon: const Icon(Icons.refresh),
+                    label: Text(
+                      _retryCount > 0
+                          ? l10n.format('pdf.retryWithCount', {
+                              'current': '$_retryCount',
+                              'total': '$_maxRetries'
+                            })
+                          : l10n.t('common.retry'),
+                    ),
+                  ),
+                  if (hasLocalPdf)
+                    OutlinedButton.icon(
+                      onPressed: () => OpenFile.open(_localPdfPath!),
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open with another app'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_isLoading || _localPdfPath == null) {
+      final progressText = _downloadProgress == null
+          ? null
+          : '${(_downloadProgress! * 100).clamp(0, 100).toStringAsFixed(0)}%';
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.error_outline,
-              size: 64,
-              color: Colors.red,
-            ),
+            CircularProgressIndicator(value: _downloadProgress),
             const SizedBox(height: 16),
             Text(
-              l10n.t('pdf.failedTitle'),
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _error!,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.grey[600],
-                  ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: _retryLoadPdf,
-              icon: const Icon(Icons.refresh),
-              label: Text(
-                _retryCount > 0
-                    ? l10n.format('pdf.retryWithCount',
-                        {'current': '$_retryCount', 'total': '$_maxRetries'})
-                    : l10n.t('common.retry'),
+              progressText == null
+                  ? l10n.t('pdf.loading')
+                  : '${l10n.t('pdf.loading')} $progressText',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ],
@@ -1665,48 +1932,22 @@ class _PdfPreviewPageState extends State<PdfPreviewPage> {
       );
     }
 
-    return Stack(
-      children: [
-        SfPdfViewer.network(
-          widget.url,
-          enableDoubleTapZooming: true,
-          enableTextSelection: true,
-          onDocumentLoadFailed: (PdfDocumentLoadFailedDetails details) {
-            setState(() {
-              _isLoading = false;
-              _error = context.l10n.format(
-                  'common.errorWithMessage', {'message': details.error});
-            });
-            // âœ… Fallback: open externally if viewer fails
-            OpenFile.open(widget.url);
-          },
-          onDocumentLoaded: (PdfDocumentLoadedDetails details) {
-            setState(() {
-              _isLoading = false;
-            });
-          },
-        ),
-        if (_isLoading)
-          Container(
-            color: Colors.white.withOpacity(0.8),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
-                  Text(
-                    context.l10n.t('pdf.loading'),
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
+    return SfPdfViewer.file(
+      File(_localPdfPath!),
+      enableDoubleTapZooming: true,
+      enableTextSelection: true,
+      onDocumentLoadFailed: (PdfDocumentLoadFailedDetails details) {
+        setState(() {
+          _isLoading = false;
+          _error = context.l10n
+              .format('common.errorWithMessage', {'message': details.error});
+        });
+      },
+      onDocumentLoaded: (PdfDocumentLoadedDetails details) {
+        setState(() {
+          _isLoading = false;
+        });
+      },
     );
   }
 }

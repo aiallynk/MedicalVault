@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'dart:ui';
+import 'dart:math' as math;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -25,6 +27,8 @@ import 'package:hello/screens/appointments_page.dart';
 import 'package:hello/screens/doctor_detail_screen.dart';
 import 'package:hello/screens/chat_threads_screen.dart';
 import 'package:hello/screens/sos_page.dart';
+import 'package:hello/screens/medical_store_page.dart';
+import 'package:hello/screens/nearby_services_page.dart';
 import 'package:hello/Notifications/global_notification_handler.dart';
 import 'package:hello/SettingPages/ProfilePageSetting.dart';
 import 'package:hello/localization/app_localizations.dart';
@@ -34,6 +38,7 @@ import '../features/lost_found/my_lost_reports_page.dart';
 import '../providers/dashboard_prefetch_provider.dart';
 import '../providers/timezone_provider.dart';
 import '../utils/timezone_utils.dart';
+import '../widgets/ai_floating_button.dart';
 
 class Dashboard1 extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -81,6 +86,8 @@ class _Dashboard1State extends State<Dashboard1>
   int _jankyFrameScore = 0;
   bool _hydratedFromPrefetch = false;
   bool _prefetchWasPartial = false;
+  late final AnimationController _fabMenuController;
+  bool _fabMenuOpen = false;
 
   String get _activeUserId =>
       (_userData['id']?.toString() ?? _userData['_id']?.toString() ?? '')
@@ -102,6 +109,10 @@ class _Dashboard1State extends State<Dashboard1>
     _promoPageController = PageController(
       initialPage: _promoPageSeed,
       viewportFraction: 0.9,
+    );
+    _fabMenuController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
     );
     _alertController = AnimationController(
       vsync: this,
@@ -225,6 +236,8 @@ class _Dashboard1State extends State<Dashboard1>
     _publicConfigChannel?.sink.close();
     _publicConfigChannel = null;
     _promoPageController.dispose();
+    _fabMenuController.dispose();
+    AIAssistantOverlayController.setVisible(true);
     _alertController.dispose();
     super.dispose();
   }
@@ -851,6 +864,9 @@ class _Dashboard1State extends State<Dashboard1>
       _currentIndex = index;
       _loadedTabs.add(index);
     });
+    if (_fabMenuOpen) {
+      unawaited(_closeFabMenu());
+    }
     if (index == 0) {
       _refreshUserData();
     }
@@ -1127,6 +1143,10 @@ class _Dashboard1State extends State<Dashboard1>
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
+        if (_fabMenuOpen) {
+          await _closeFabMenu();
+          return;
+        }
         // Show confirmation dialog when back button is pressed on dashboard
         final shouldExit = await showDialog<bool>(
           context: context,
@@ -1150,344 +1170,384 @@ class _Dashboard1State extends State<Dashboard1>
           Navigator.of(context).pop();
         }
       },
-      child: Scaffold(
-        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        body: IndexedStack(
-          index: _currentIndex,
-          children: [
-            // Home tab
-            TickerMode(
-              enabled: _currentIndex == 0,
-              child: SafeArea(
-                bottom: false,
-                child: RefreshIndicator(
-                  onRefresh: () async {
-                    await _loadDocumentCounts();
-                    await _loadTopDoctors(forceRefresh: true);
-                    await _loadDashboardAds(forceRefresh: true);
-                    await _loadDashboardUiConfig(forceRefresh: true);
-                    await _refreshUserData();
-                  },
-                  child: ListView(
-                    key: const PageStorageKey<String>('dashboard-home-scroll'),
-                    cacheExtent: 1600,
-                    physics: const AlwaysScrollableScrollPhysics(
-                      parent: ClampingScrollPhysics(),
-                    ),
-                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-                    children: [
-                      _buildGreetingSection(context, userName),
-                      const SizedBox(height: AppSpacing.medium),
-                      if (hasActiveAlerts) ...[
-                        RepaintBoundary(
-                          child: _buildAlertTicker(context),
+      child: Stack(
+        children: [
+          Scaffold(
+            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+            body: IndexedStack(
+              index: _currentIndex,
+              children: [
+                // Home tab
+                TickerMode(
+                  enabled: _currentIndex == 0,
+                  child: SafeArea(
+                    bottom: false,
+                    child: RefreshIndicator(
+                      onRefresh: () async {
+                        await _loadDocumentCounts();
+                        await _loadTopDoctors(forceRefresh: true);
+                        await _loadDashboardAds(forceRefresh: true);
+                        await _loadDashboardUiConfig(forceRefresh: true);
+                        await _refreshUserData();
+                      },
+                      child: ListView(
+                        key: const PageStorageKey<String>(
+                            'dashboard-home-scroll'),
+                        cacheExtent: 1600,
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: ClampingScrollPhysics(),
                         ),
-                        const SizedBox(height: AppSpacing.medium),
-                      ],
-                      if (_dashboardAds.isNotEmpty) ...[
-                        _buildPromoCarousel(context),
-                        const SizedBox(height: AppSpacing.large),
-                      ],
-                      if (_loadingTopDoctors || _topDoctors.isNotEmpty) ...[
-                        _buildTopDoctorsSection(context),
-                        const SizedBox(height: AppSpacing.large),
-                      ],
-                      AppText(
-                        l10n.t('dashboard.quickActions'),
-                        variant: AppTextVariant.subtitle,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      const SizedBox(height: AppSpacing.medium),
-                      Row(
+                        padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
                         children: [
-                          Expanded(
-                            child: _buildQuickActionCard(
-                              context,
-                              icon: Icons.qr_code,
-                              title: l10n.t('dashboard.action.generateShareQR'),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => QRPage(),
-                                  ),
-                                );
-                              },
+                          _buildGreetingSection(context, userName),
+                          const SizedBox(height: AppSpacing.medium),
+                          if (hasActiveAlerts) ...[
+                            RepaintBoundary(
+                              child: _buildAlertTicker(context),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildQuickActionCard(
-                              context,
-                              icon: Icons.person_add_alt_1,
-                              title: l10n.t('dashboard.action.accessRequests'),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => RequestsPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildQuickActionCard(
-                              context,
-                              icon: Icons.emergency,
-                              title: l10n.t('dashboard.action.emergencySOS'),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        SosPage(userData: _userData),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildQuickActionCard(
-                              context,
-                              icon: Icons.report,
-                              title:
-                                  l10n.t('dashboard.action.reportLostPerson'),
-                              onTap: () async {
-                                await _openReportLost(context);
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildQuickActionCard(
-                              context,
-                              icon: Icons.handshake,
-                              title:
-                                  l10n.t('dashboard.action.reportFoundPerson'),
-                              onTap: () async {
-                                await _openReportFound(context);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildQuickActionCard(
-                              context,
-                              icon: Icons.list,
-                              title: l10n.t('dashboard.action.myLostReports'),
-                              onTap: () async {
-                                await _openMyLostReports(context);
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (activeDashboardCards.isNotEmpty) ...[
-                        const SizedBox(height: AppSpacing.large),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: AppText(
-                            l10n.auto('Featured'),
+                            const SizedBox(height: AppSpacing.medium),
+                          ],
+                          if (_dashboardAds.isNotEmpty) ...[
+                            _buildPromoCarousel(context),
+                            const SizedBox(height: AppSpacing.large),
+                          ],
+                          if (_loadingTopDoctors || _topDoctors.isNotEmpty) ...[
+                            _buildTopDoctorsSection(context),
+                            const SizedBox(height: AppSpacing.large),
+                          ],
+                          AppText(
+                            l10n.t('dashboard.quickActions'),
                             variant: AppTextVariant.subtitle,
                             fontWeight: FontWeight.w700,
                           ),
-                        ),
-                        const SizedBox(height: AppSpacing.medium),
-                        SizedBox(
-                          height: 124,
-                          child: ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: activeDashboardCards.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(width: 12),
-                            itemBuilder: (context, index) {
-                              final card = activeDashboardCards[index];
-                              final title = card['title']?.toString().trim();
-                              if (title == null || title.isEmpty) {
-                                return const SizedBox.shrink();
-                              }
-                              final subtitle =
-                                  card['subtitle']?.toString().trim() ?? '';
-                              final redirectUrl =
-                                  card['redirectUrl']?.toString().trim() ?? '';
-                              return SizedBox(
-                                width: 220,
-                                child: CustomCard(
-                                  onTap: redirectUrl.isEmpty
-                                      ? null
-                                      : () => _openExternalUrl(redirectUrl),
-                                  radius: AppRadii.medium,
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      AppText(
-                                        title,
-                                        variant: AppTextVariant.body,
-                                        fontWeight: FontWeight.w700,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
+                          const SizedBox(height: AppSpacing.medium),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildQuickActionCard(
+                                  context,
+                                  icon: Icons.qr_code,
+                                  title: l10n
+                                      .t('dashboard.action.generateShareQR'),
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => QRPage(),
                                       ),
-                                      if (subtitle.isNotEmpty) ...[
-                                        const SizedBox(height: 6),
-                                        AppText(
-                                          subtitle,
-                                          variant: AppTextVariant.caption,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                      if (redirectUrl.isNotEmpty) ...[
-                                        const SizedBox(height: 10),
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.open_in_new_rounded,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .primary,
-                                              size: 16,
-                                            ),
-                                            const SizedBox(width: 4),
+                                    );
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildQuickActionCard(
+                                  context,
+                                  icon: Icons.person_add_alt_1,
+                                  title:
+                                      l10n.t('dashboard.action.accessRequests'),
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => RequestsPage(),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildQuickActionCard(
+                                  context,
+                                  icon: Icons.emergency,
+                                  title:
+                                      l10n.t('dashboard.action.emergencySOS'),
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            SosPage(userData: _userData),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildQuickActionCard(
+                                  context,
+                                  icon: Icons.report,
+                                  title: l10n
+                                      .t('dashboard.action.reportLostPerson'),
+                                  onTap: () async {
+                                    await _openReportLost(context);
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildQuickActionCard(
+                                  context,
+                                  icon: Icons.handshake,
+                                  title: l10n
+                                      .t('dashboard.action.reportFoundPerson'),
+                                  onTap: () async {
+                                    await _openReportFound(context);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildQuickActionCard(
+                                  context,
+                                  icon: Icons.list,
+                                  title:
+                                      l10n.t('dashboard.action.myLostReports'),
+                                  onTap: () async {
+                                    await _openMyLostReports(context);
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (activeDashboardCards.isNotEmpty) ...[
+                            const SizedBox(height: AppSpacing.large),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: AppText(
+                                l10n.auto('Featured'),
+                                variant: AppTextVariant.subtitle,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.medium),
+                            SizedBox(
+                              height: 124,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: activeDashboardCards.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(width: 12),
+                                itemBuilder: (context, index) {
+                                  final card = activeDashboardCards[index];
+                                  final title =
+                                      card['title']?.toString().trim();
+                                  if (title == null || title.isEmpty) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  final subtitle =
+                                      card['subtitle']?.toString().trim() ?? '';
+                                  final redirectUrl =
+                                      card['redirectUrl']?.toString().trim() ??
+                                          '';
+                                  return SizedBox(
+                                    width: 220,
+                                    child: CustomCard(
+                                      onTap: redirectUrl.isEmpty
+                                          ? null
+                                          : () => _openExternalUrl(redirectUrl),
+                                      radius: AppRadii.medium,
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          AppText(
+                                            title,
+                                            variant: AppTextVariant.body,
+                                            fontWeight: FontWeight.w700,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          if (subtitle.isNotEmpty) ...[
+                                            const SizedBox(height: 6),
                                             AppText(
-                                              l10n.auto('Open'),
+                                              subtitle,
                                               variant: AppTextVariant.caption,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .primary,
-                                              fontWeight: FontWeight.w700,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
                                             ),
                                           ],
-                                        ),
-                                      ],
-                                    ],
-                                  ),
+                                          if (redirectUrl.isNotEmpty) ...[
+                                            const SizedBox(height: 10),
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.open_in_new_rounded,
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .primary,
+                                                  size: 16,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                AppText(
+                                                  l10n.auto('Open'),
+                                                  variant:
+                                                      AppTextVariant.caption,
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .primary,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: AppSpacing.large),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              AppText(
+                                l10n.t('dashboard.documentsTitle'),
+                                variant: AppTextVariant.subtitle,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              if (!_isLoadingCounts)
+                                AppText(
+                                  l10n.format('dashboard.documentsTotal', {
+                                    'count':
+                                        '${_documentCounts.values.fold(0, (sum, count) => sum + count)}'
+                                  }),
+                                  variant: AppTextVariant.caption,
+                                  fontWeight: FontWeight.w600,
                                 ),
+                            ],
+                          ),
+                          const SizedBox(height: AppSpacing.medium),
+                          GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: categories.length,
+                            addRepaintBoundaries: true,
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              crossAxisSpacing: 14,
+                              mainAxisSpacing: 14,
+                              childAspectRatio: 0.98,
+                            ),
+                            itemBuilder: (context, index) {
+                              final item = categories[index];
+                              return _buildCategoryCard(
+                                context,
+                                title: item['title'] as String,
+                                imagePath: item['image'] as String,
+                                category: item['category'] as String,
+                                count: item['count'] as int,
                               );
                             },
                           ),
-                        ),
-                      ],
-                      const SizedBox(height: AppSpacing.large),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          AppText(
-                            l10n.t('dashboard.documentsTitle'),
-                            variant: AppTextVariant.subtitle,
-                            fontWeight: FontWeight.w700,
-                          ),
-                          if (!_isLoadingCounts)
-                            AppText(
-                              l10n.format('dashboard.documentsTotal', {
-                                'count':
-                                    '${_documentCounts.values.fold(0, (sum, count) => sum + count)}'
-                              }),
-                              variant: AppTextVariant.caption,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          const SizedBox(height: 10),
+                          const Center(child: AppFooter()),
                         ],
                       ),
-                      const SizedBox(height: AppSpacing.medium),
-                      GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: categories.length,
-                        addRepaintBoundaries: true,
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 14,
-                          mainAxisSpacing: 14,
-                          childAspectRatio: 0.98,
-                        ),
-                        itemBuilder: (context, index) {
-                          final item = categories[index];
-                          return _buildCategoryCard(
-                            context,
-                            title: item['title'] as String,
-                            imagePath: item['image'] as String,
-                            category: item['category'] as String,
-                            count: item['count'] as int,
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 10),
-                      const Center(child: AppFooter()),
-                    ],
+                    ),
                   ),
+                ),
+
+                // 🔐 Vault tab
+                _loadedTabs.contains(1)
+                    ? TickerMode(
+                        enabled: _currentIndex == 1,
+                        child: MyVault(
+                          userId: _activeUserId,
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+                _loadedTabs.contains(2)
+                    ? TickerMode(
+                        enabled: _currentIndex == 2,
+                        child: QRPage(),
+                      )
+                    : const SizedBox.shrink(),
+                _loadedTabs.contains(3)
+                    ? TickerMode(
+                        enabled: _currentIndex == 3,
+                        child: RequestsPage(),
+                      )
+                    : const SizedBox.shrink(),
+                _loadedTabs.contains(4)
+                    ? TickerMode(
+                        enabled: _currentIndex == 4,
+                        child: SettingsPage(userData: _userData),
+                      )
+                    : const SizedBox.shrink(),
+              ],
+            ),
+            bottomNavigationBar: CustomBottomNavBar(
+              currentIndex: _currentIndex,
+              onTap: _onNavTapped,
+              reduceMotion: _bottomNavReduceMotion,
+              items: [
+                BottomNavItemData(
+                  icon: Icons.home_rounded,
+                  label: l10n.t('dashboard.nav.home'),
+                ),
+                BottomNavItemData(
+                  icon: Icons.lock_rounded,
+                  label: l10n.t('dashboard.nav.vault'),
+                ),
+                BottomNavItemData(
+                  icon: Icons.qr_code_rounded,
+                  label: l10n.t('dashboard.nav.qr'),
+                ),
+                BottomNavItemData(
+                  icon: Icons.list_alt_rounded,
+                  label: l10n.t('dashboard.nav.requests'),
+                ),
+                BottomNavItemData(
+                  icon: Icons.settings_rounded,
+                  label: l10n.t('dashboard.nav.settings'),
+                ),
+              ],
+            ),
+          ),
+          if (_fabMenuOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  unawaited(_closeFabMenu());
+                },
+                child: AnimatedBuilder(
+                  animation: _fabMenuController,
+                  builder: (context, _) {
+                    final opacity = Curves.easeOut.transform(
+                      _fabMenuController.value,
+                    );
+                    return BackdropFilter(
+                      filter: ImageFilter.blur(
+                        sigmaX: 3.2 * opacity,
+                        sigmaY: 3.2 * opacity,
+                      ),
+                      child: Container(
+                        color: Colors.black.withValues(alpha: 0.22 * opacity),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
-
-            // 🔐 Vault tab
-            _loadedTabs.contains(1)
-                ? TickerMode(
-                    enabled: _currentIndex == 1,
-                    child: MyVault(
-                      userId: _activeUserId,
-                    ),
-                  )
-                : const SizedBox.shrink(),
-            _loadedTabs.contains(2)
-                ? TickerMode(
-                    enabled: _currentIndex == 2,
-                    child: QRPage(),
-                  )
-                : const SizedBox.shrink(),
-            _loadedTabs.contains(3)
-                ? TickerMode(
-                    enabled: _currentIndex == 3,
-                    child: RequestsPage(),
-                  )
-                : const SizedBox.shrink(),
-            _loadedTabs.contains(4)
-                ? TickerMode(
-                    enabled: _currentIndex == 4,
-                    child: SettingsPage(userData: _userData),
-                  )
-                : const SizedBox.shrink(),
-          ],
-        ),
-        bottomNavigationBar: CustomBottomNavBar(
-          currentIndex: _currentIndex,
-          onTap: _onNavTapped,
-          reduceMotion: _bottomNavReduceMotion,
-          items: [
-            BottomNavItemData(
-              icon: Icons.home_rounded,
-              label: l10n.t('dashboard.nav.home'),
-            ),
-            BottomNavItemData(
-              icon: Icons.lock_rounded,
-              label: l10n.t('dashboard.nav.vault'),
-            ),
-            BottomNavItemData(
-              icon: Icons.qr_code_rounded,
-              label: l10n.t('dashboard.nav.qr'),
-            ),
-            BottomNavItemData(
-              icon: Icons.list_alt_rounded,
-              label: l10n.t('dashboard.nav.requests'),
-            ),
-            BottomNavItemData(
-              icon: Icons.settings_rounded,
-              label: l10n.t('dashboard.nav.settings'),
-            ),
-          ],
-        ),
+          _buildRadialFabMenu(context),
+        ],
       ),
     );
   }
@@ -1758,6 +1818,286 @@ class _Dashboard1State extends State<Dashboard1>
           ),
         );
       },
+    );
+  }
+
+  Future<void> _toggleFabMenu() async {
+    if (_fabMenuOpen) {
+      await _closeFabMenu();
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _fabMenuOpen = true;
+    });
+    AIAssistantOverlayController.setVisible(false);
+    await _fabMenuController.forward(from: _fabMenuController.value);
+  }
+
+  Future<void> _closeFabMenu() async {
+    if (!_fabMenuOpen) return;
+    if (_fabMenuController.isAnimating) {
+      _fabMenuController.stop();
+    }
+    await _fabMenuController.reverse();
+    if (!mounted) return;
+    setState(() {
+      _fabMenuOpen = false;
+    });
+    AIAssistantOverlayController.setVisible(true);
+  }
+
+  Future<void> _handleFabAction(Future<void> Function() action) async {
+    await _closeFabMenu();
+    if (!mounted) return;
+    await action();
+  }
+
+  Future<void> _openNearbyFromFab() async {
+    await Navigator.push(
+      context,
+      _buildFadeSlideRoute(const NearbyServicesPage()),
+    );
+  }
+
+  Future<void> _openStoreFromFab() async {
+    await Navigator.push(
+      context,
+      _buildFadeSlideRoute(const MedicalStorePage()),
+    );
+  }
+
+  Future<void> _openAppointmentsFromFab() async {
+    await Navigator.push(
+      context,
+      _buildFadeSlideRoute(const AppointmentsPage(initialTab: 0)),
+    );
+  }
+
+  Widget _buildRadialFabMenu(BuildContext context) {
+    const menuWidth = 270.0;
+    const menuHeight = 252.0;
+    const mainFabSize = 56.0;
+    const actionButtonSize = 48.0;
+    const actionSlotWidth = 84.0;
+    const staggerStep = 0.18;
+    const fabInset = 8.0;
+
+    final actions = <Map<String, dynamic>>[
+      {
+        'icon': Icons.local_hospital_rounded,
+        'label': 'Nearby Hospitals',
+        'onTap': _openNearbyFromFab,
+        'angle': 165.0,
+        'radius': 76.0,
+      },
+      {
+        'icon': Icons.calendar_month_rounded,
+        'label': 'Appointments',
+        'onTap': _openAppointmentsFromFab,
+        'angle': 225.0,
+        'radius': 92.0,
+      },
+      {
+        'icon': Icons.shopping_bag_rounded,
+        'label': 'Product Store',
+        'onTap': _openStoreFromFab,
+        'angle': 275.0,
+        'radius': 96.0,
+      },
+    ];
+
+    final primary = Theme.of(context).colorScheme.primary;
+    final secondary = Theme.of(context).colorScheme.secondary;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+
+    final fabLeft = menuWidth - mainFabSize - fabInset;
+    final fabTop = menuHeight - mainFabSize - fabInset;
+    final fabCenter = Offset(
+      fabLeft + (mainFabSize / 2),
+      fabTop + (mainFabSize / 2),
+    );
+
+    return Positioned(
+      right: 18,
+      bottom: 80 + bottomPadding,
+      child: SizedBox(
+        width: menuWidth,
+        height: menuHeight,
+        child: AnimatedBuilder(
+          animation: _fabMenuController,
+          builder: (context, _) {
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (var i = 0; i < actions.length; i++)
+                  () {
+                    final delay = (i * staggerStep).clamp(0.0, 0.36);
+                    final progress = CurvedAnimation(
+                      parent: _fabMenuController,
+                      curve: Interval(delay, 1.0, curve: Curves.easeOut),
+                      reverseCurve: Curves.easeOut,
+                    ).value;
+
+                    final angle =
+                        (actions[i]['angle'] as double) * (math.pi / 180);
+                    final distance = actions[i]['radius'] as double;
+                    final dx = math.cos(angle) * distance;
+                    final dy = math.sin(angle) * distance;
+                    final upward = (1 - progress) * 10;
+                    final centerX = fabCenter.dx + (dx * progress);
+                    final centerY = fabCenter.dy + (dy * progress) - upward;
+
+                    return Positioned(
+                      left: centerX - (actionSlotWidth / 2),
+                      top: centerY - (actionButtonSize / 2),
+                      child: IgnorePointer(
+                        ignoring: !_fabMenuOpen,
+                        child: Opacity(
+                          opacity: progress,
+                          child: Transform.scale(
+                            scale: 0.68 + (0.32 * progress),
+                            alignment: Alignment.center,
+                            child: _buildRadialMiniAction(
+                              context,
+                              icon: actions[i]['icon'] as IconData,
+                              label: actions[i]['label'] as String,
+                              onTap: () {
+                                unawaited(_handleFabAction(
+                                  actions[i]['onTap'] as Future<void>
+                                      Function(),
+                                ));
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }(),
+                Positioned(
+                  left: fabLeft,
+                  top: fabTop,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [primary, Color.lerp(primary, secondary, 0.5)!],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: primary.withValues(alpha: 0.36),
+                          blurRadius: 16,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: () {
+                          unawaited(_toggleFabMenu());
+                        },
+                        child: SizedBox(
+                          width: mainFabSize,
+                          height: mainFabSize,
+                          child: Center(
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              switchInCurve: Curves.easeOut,
+                              switchOutCurve: Curves.easeOut,
+                              transitionBuilder: (child, animation) {
+                                return RotationTransition(
+                                  turns: Tween<double>(begin: 0.85, end: 1)
+                                      .animate(animation),
+                                  child: FadeTransition(
+                                      opacity: animation, child: child),
+                                );
+                              },
+                              child: Icon(
+                                _fabMenuOpen
+                                    ? Icons.close_rounded
+                                    : Icons.medical_services_rounded,
+                                key: ValueKey<bool>(_fabMenuOpen),
+                                color: Colors.white,
+                                size: 30,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRadialMiniAction(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+    final secondary = theme.colorScheme.secondary;
+    final labelColor = theme.colorScheme.onSurface;
+
+    return SizedBox(
+      width: 84,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              customBorder: const CircleBorder(),
+              child: Ink(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [primary, Color.lerp(primary, secondary, 0.55)!],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: primary.withValues(alpha: 0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Icon(icon, size: 22, color: Colors.white),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: labelColor,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

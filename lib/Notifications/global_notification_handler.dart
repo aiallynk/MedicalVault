@@ -3,6 +3,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'notification_manager.dart';
 import 'notification_settings_service.dart';
 import '../BottomNavigationBar/Requests.dart';
+import '../api_service.dart';
 import '../screens/appointments_page.dart';
 import '../screens/appointment_detail_screen.dart';
 import '../screens/direct_chat_screen.dart';
@@ -16,6 +17,7 @@ class GlobalNotificationHandler {
       print(message);
     }
   }
+
   static final GlobalNotificationHandler _instance =
       GlobalNotificationHandler._internal();
   factory GlobalNotificationHandler() => _instance;
@@ -24,6 +26,7 @@ class GlobalNotificationHandler {
   final NotificationManager _notificationManager = NotificationManager();
   final NotificationSettingsService _settingsService =
       NotificationSettingsService();
+  final Set<String> _extensionPromptSessions = <String>{};
 
   // Global context for showing notifications
   static BuildContext? _globalContext;
@@ -133,6 +136,10 @@ class GlobalNotificationHandler {
   Future<void> handleNotificationTap(RemoteMessage message) async {
     final data = message.data;
     final type = data['type']?.toString() ?? '';
+    if (type.trim().toUpperCase() == 'SESSION_EXTENSION_REQUEST') {
+      await _showSessionExtensionConsentPrompt(data);
+      return;
+    }
     final action = _buildNavigationAction(data, type);
     if (action != null) {
       action();
@@ -164,6 +171,8 @@ class GlobalNotificationHandler {
         await _handleSessionResponse(data, title, body, onTap: onTap);
         break;
       case 'SESSION_EXTENSION_REQUEST':
+        await _handleSessionExtensionRequest(data, title, body, onTap: onTap);
+        break;
       case 'SESSION_EXTENSION_RESPONSE':
         await _handleSessionResponse(data, title, body, onTap: onTap);
         break;
@@ -270,6 +279,95 @@ class GlobalNotificationHandler {
       body,
       onTap: onTap,
     );
+  }
+
+  Future<void> _handleSessionExtensionRequest(
+    Map<String, dynamic> data,
+    String title,
+    String body, {
+    VoidCallback? onTap,
+  }) async {
+    final isEnabled =
+        await _settingsService.isNotificationEnabled('sessionExpiring');
+    if (!isEnabled) return;
+
+    _notificationManager.showSystemNotification(
+      _globalContext!,
+      title,
+      body,
+      onTap: onTap,
+    );
+
+    await _showSessionExtensionConsentPrompt(data);
+  }
+
+  Future<void> _showSessionExtensionConsentPrompt(
+    Map<String, dynamic> data,
+  ) async {
+    final context = _globalContext;
+    if (context == null || !context.mounted) return;
+
+    final sessionId = data['sessionId']?.toString().trim() ?? '';
+    if (sessionId.isEmpty || _extensionPromptSessions.contains(sessionId)) {
+      return;
+    }
+
+    final doctorName = data['doctorName']?.toString().trim();
+    final minutes = int.tryParse((data['minutes'] ?? '').toString()) ?? 20;
+    _extensionPromptSessions.add(sessionId);
+
+    try {
+      final accepted = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('Session Extension Request'),
+            content: Text(
+              'Dr. ${doctorName?.isNotEmpty == true ? doctorName : 'Doctor'} '
+              'wants to extend the session by $minutes minutes.\n\n'
+              'Do you want to allow this?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Deny'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Accept'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (accepted == null) return;
+
+      final response = await ApiService.respondToSessionExtensionRequest(
+        sessionId: sessionId,
+        accept: accepted,
+      );
+
+      final latestContext = _globalContext;
+      if (latestContext == null || !latestContext.mounted) return;
+
+      ScaffoldMessenger.of(latestContext).showSnackBar(
+        SnackBar(
+          content: Text(
+            response['message']?.toString() ??
+                (accepted
+                    ? 'Session extension approved'
+                    : 'Session extension declined'),
+          ),
+          backgroundColor: response['success'] == true
+              ? Colors.green
+              : Theme.of(latestContext).colorScheme.error,
+        ),
+      );
+    } finally {
+      _extensionPromptSessions.remove(sessionId);
+    }
   }
 
   // Handle appointment scheduled notification
@@ -412,7 +510,8 @@ class GlobalNotificationHandler {
     }
 
     final deepLink = data['deepLink']?.toString().trim() ?? '';
-    final deepLinkAllowed = deepLink.startsWith('/appointments') || deepLink.startsWith('/requests');
+    final deepLinkAllowed = deepLink.startsWith('/appointments') ||
+        deepLink.startsWith('/requests');
     if (deepLink.isNotEmpty && !deepLinkAllowed) {
       return null;
     }

@@ -18,6 +18,7 @@ class OfflineStorageService {
   static const String _lastKnownLocationKey = 'last_known_location';
   static const String _pendingActionsKey = 'pending_actions';
   static const String _localSosEventsKey = 'local_sos_events';
+  static const String _nearbyServicesCacheKey = 'nearby_services_cache';
 
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
@@ -309,6 +310,19 @@ class OfflineStorageService {
   Future<List<Map<String, dynamic>>> getLocalSosEvents() async {
     await _ensureReady();
     return _asMapList(_box!.get(_localSosEventsKey));
+  }
+
+  Future<void> cacheNearbyServices(Map<String, dynamic> payload) async {
+    await _ensureReady();
+    await _box!.put(
+      _nearbyServicesCacheKey,
+      Map<String, dynamic>.from(payload),
+    );
+  }
+
+  Future<Map<String, dynamic>?> getCachedNearbyServices() async {
+    await _ensureReady();
+    return _asMap(_box!.get(_nearbyServicesCacheKey));
   }
 
   void dispose() {
