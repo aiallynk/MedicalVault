@@ -1,8 +1,8 @@
-﻿name: hello
+name: hello
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.0.17+17
+version: 1.0.18+18
 
 environment:
   sdk: ^3.6.0
@@ -53,6 +53,8 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
   workmanager: ^0.6.0
+  google_maps_flutter: ^2.12.3
+  flutter_dotenv: ^6.0.1
 
 dev_dependencies:
   flutter_test:
@@ -85,6 +87,7 @@ flutter:
     - assets/AiAllyLogoWhite.png
     - assets/Toogle.json
     - assets/chatbot.json
+    - .env
 
 flutter_icons:
   android: true

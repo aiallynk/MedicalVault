@@ -19,6 +19,9 @@ class OfflineStorageService {
   static const String _pendingActionsKey = 'pending_actions';
   static const String _localSosEventsKey = 'local_sos_events';
   static const String _nearbyServicesCacheKey = 'nearby_services_cache';
+  static const String _nearbyPlacesCacheKey = 'nearby_places_cache_v1';
+  static const String _nearbyRecentSearchesKey = 'nearby_recent_searches_v1';
+  static const String _nearbyFavoritePlacesKey = 'nearby_favorite_places_v1';
 
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
@@ -323,6 +326,63 @@ class OfflineStorageService {
   Future<Map<String, dynamic>?> getCachedNearbyServices() async {
     await _ensureReady();
     return _asMap(_box!.get(_nearbyServicesCacheKey));
+  }
+
+  Future<Map<String, dynamic>?> getCachedNearbyPlaces(String cacheKey) async {
+    await _ensureReady();
+    final all = _asMap(_box!.get(_nearbyPlacesCacheKey)) ?? {};
+    return _asMap(all[cacheKey]);
+  }
+
+  Future<void> cacheNearbyPlaces({
+    required String cacheKey,
+    required Map<String, dynamic> payload,
+  }) async {
+    await _ensureReady();
+    final all = _asMap(_box!.get(_nearbyPlacesCacheKey)) ?? {};
+    all[cacheKey] = Map<String, dynamic>.from(payload);
+    await _box!.put(_nearbyPlacesCacheKey, all);
+  }
+
+  Future<List<String>> getNearbyRecentSearches() async {
+    await _ensureReady();
+    final raw = _box!.get(_nearbyRecentSearchesKey);
+    if (raw is! List) return const <String>[];
+    return raw
+        .map((entry) => entry?.toString().trim() ?? '')
+        .where((entry) => entry.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<void> cacheNearbyRecentSearches(List<String> searches) async {
+    await _ensureReady();
+    final normalized = <String>[];
+    for (final raw in searches) {
+      final value = raw.trim();
+      if (value.isEmpty) continue;
+      if (normalized
+          .any((entry) => entry.toLowerCase() == value.toLowerCase())) {
+        continue;
+      }
+      normalized.add(value);
+      if (normalized.length == 8) break;
+    }
+    await _box!.put(_nearbyRecentSearchesKey, normalized);
+  }
+
+  Future<List<Map<String, dynamic>>> getNearbyFavoritePlaces() async {
+    await _ensureReady();
+    return _asMapList(_box!.get(_nearbyFavoritePlacesKey));
+  }
+
+  Future<void> cacheNearbyFavoritePlaces(
+    List<Map<String, dynamic>> places,
+  ) async {
+    await _ensureReady();
+    final normalized = places
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .toList(growable: false);
+    await _box!.put(_nearbyFavoritePlacesKey, normalized);
   }
 
   void dispose() {

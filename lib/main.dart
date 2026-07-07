@@ -15,6 +15,7 @@ import 'Login_Signup/loginScreen.dart';
 import 'Notifications/fcm_service.dart';
 import 'Notifications/global_notification_handler.dart';
 import 'api_service.dart';
+import 'config/app_environment.dart';
 import 'core/navigation/app_navigator.dart';
 import 'core/navigation/app_route_observer.dart';
 import 'core/theme/theme.dart';
@@ -39,6 +40,7 @@ final AppRouteObserver appRouteObserver = AppRouteObserver();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   tzdata.initializeTimeZones();
+  await AppEnvironment.initialize();
 
   StatusBarHelper.configureSystemUiMode();
 
