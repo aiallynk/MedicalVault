@@ -13,14 +13,25 @@ if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
 }
 
-// Load the Flutter project's .env (KEY=VALUE) file so MAPS_API_KEY can be
-// configured in one place instead of requiring a shell environment variable.
-def dotenvFile = rootProject.file("../.env")
-def dotenv = new Properties()
-if (dotenvFile.exists()) {
-    dotenvFile.withInputStream { dotenv.load(it) }
+// Resolve the Google Maps API key from (in order): shell env, android/local.properties,
+// or the Flutter project's ../.env. Accepts both GOOGLE_MAPS_API_KEY and MAPS_API_KEY.
+def loadPropertiesFile = { File file ->
+    def props = new Properties()
+    if (file.exists()) {
+        file.withInputStream { props.load(it) }
+    }
+    return props
 }
-def mapsApiKey = System.getenv("MAPS_API_KEY") ?: dotenv.getProperty("MAPS_API_KEY", "")
+
+def localProperties = loadPropertiesFile(rootProject.file("local.properties"))
+def dotenvProperties = loadPropertiesFile(rootProject.file("../.env"))
+def mapsApiKey = System.getenv("GOOGLE_MAPS_API_KEY")
+        ?: localProperties.getProperty("GOOGLE_MAPS_API_KEY")
+        ?: dotenvProperties.getProperty("GOOGLE_MAPS_API_KEY")
+        ?: System.getenv("MAPS_API_KEY")
+        ?: localProperties.getProperty("MAPS_API_KEY")
+        ?: dotenvProperties.getProperty("MAPS_API_KEY")
+        ?: ""
 
 android {
     namespace = "com.example.hello"
@@ -42,7 +53,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        manifestPlaceholders += [MAPS_API_KEY: mapsApiKey]
+        manifestPlaceholders += [GOOGLE_MAPS_API_KEY: mapsApiKey]
     }
 
     signingConfigs {

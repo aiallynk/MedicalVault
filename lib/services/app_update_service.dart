@@ -531,6 +531,10 @@ class AppUpdateService {
         case DioExceptionType.badResponse:
         case DioExceptionType.unknown:
           return 'Unable to check for updates right now.';
+        // Newer dio versions add enum values (e.g. transformTimeout); keep this
+        // resilient to future additions.
+        default:
+          return 'Unable to check for updates right now.';
       }
     }
     return 'Unable to check for updates right now.';
