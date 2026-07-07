@@ -198,7 +198,7 @@ class _RequestsPageState extends State<RequestsPage> {
   final NotificationManager _notificationManager = NotificationManager();
   Set<String> _notifiedSessions = {}; // Track which sessions have been notified
 
-  static const String baseUrl = ApiService.baseUrl;
+  static final String baseUrl = ApiService.baseUrl;
   static const String _acceptedCacheKey =
       'patient.accepted_session_requests.v1';
 

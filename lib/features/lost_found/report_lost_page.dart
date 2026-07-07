@@ -215,7 +215,7 @@ class _ReportLostPageState extends State<ReportLostPage> {
     final l10n = context.l10n;
     final latController = TextEditingController();
     final lngController = TextEditingController();
-    
+
     if (_lastSeenPosition != null) {
       latController.text = _lastSeenPosition!.latitude.toStringAsFixed(6);
       lngController.text = _lastSeenPosition!.longitude.toStringAsFixed(6);
@@ -234,7 +234,8 @@ class _ReportLostPageState extends State<ReportLostPage> {
                 labelText: l10n.t('lostReport.latitude'),
                 hintText: '28.6139',
               ),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -243,7 +244,8 @@ class _ReportLostPageState extends State<ReportLostPage> {
                 labelText: l10n.t('lostReport.longitude'),
                 hintText: '77.2090',
               ),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
             ),
           ],
         ),
@@ -256,14 +258,18 @@ class _ReportLostPageState extends State<ReportLostPage> {
             onPressed: () {
               final lat = double.tryParse(latController.text.trim());
               final lng = double.tryParse(lngController.text.trim());
-              if (lat != null && lng != null && 
-                  lat >= -90 && lat <= 90 && 
-                  lng >= -180 && lng <= 180) {
+              if (lat != null &&
+                  lng != null &&
+                  lat >= -90 &&
+                  lat <= 90 &&
+                  lng >= -180 &&
+                  lng <= 180) {
                 Navigator.pop(context, true);
                 _setLocationFromCoordinates(lat, lng);
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(l10n.t('lostReport.invalidCoordinates'))),
+                  SnackBar(
+                      content: Text(l10n.t('lostReport.invalidCoordinates'))),
                 );
               }
             },
@@ -317,9 +323,10 @@ class _ReportLostPageState extends State<ReportLostPage> {
       // Open Google Maps app for location selection
       final currentLat = _lastSeenPosition?.latitude ?? 28.6139;
       final currentLng = _lastSeenPosition?.longitude ?? 77.2090;
-      
+
       // Open Google Maps with current location
-      final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$currentLat,$currentLng');
+      final url = Uri.parse(
+          'https://www.google.com/maps/search/?api=1&query=$currentLat,$currentLng');
       if (await canLaunchUrl(url)) {
         await launchUrl(url, mode: LaunchMode.externalApplication);
         // After opening maps, show dialog to enter coordinates
@@ -380,8 +387,9 @@ class _ReportLostPageState extends State<ReportLostPage> {
 
   void _showMessage(String message) {
     if (!mounted) return;
+    final normalized = message.replaceFirst('Exception: ', '').trim();
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+      SnackBar(content: Text(normalized.isEmpty ? message : normalized)),
     );
   }
 
@@ -417,6 +425,18 @@ class _ReportLostPageState extends State<ReportLostPage> {
 
     final double? lat = _lastSeenPosition?.latitude;
     final double? lng = _lastSeenPosition?.longitude;
+    final selectedProfileName = _selectedProfile == null
+        ? null
+        : _localizedProfileName(_selectedProfile!, l10n);
+    final emergencyContact = widget.currentUser['emergencyContact'] is Map
+        ? Map<String, dynamic>.from(widget.currentUser['emergencyContact'])
+        : <String, dynamic>{};
+    final reporterPhone = (widget.currentUser['mobile'] ??
+            emergencyContact['phone'] ??
+            emergencyContact['mobile'] ??
+            emergencyContact['number'])
+        ?.toString()
+        .trim();
 
     final payload = {
       "lostPersonUserId": _target == _LostReportTarget.profile
@@ -427,6 +447,10 @@ class _ReportLostPageState extends State<ReportLostPage> {
       "photoSource": _photoSelection == _PhotoSelection.vaultProfile
           ? "vault_profile"
           : "uploaded_family",
+      "reportForType": _target == _LostReportTarget.profile
+          ? "medicalvault_profile"
+          : "family_friend",
+      "selectedProfileName": selectedProfileName,
       "photoUrl":
           _photoSelection == _PhotoSelection.upload ? _uploadedPhotoUrl : null,
       "personName": _nameController.text.trim().isEmpty
@@ -440,6 +464,12 @@ class _ReportLostPageState extends State<ReportLostPage> {
       "lastSeenLat": lat,
       "lastSeenLng": lng,
       "lastSeenTime": _lastSeenTime.toUtc().toIso8601String(),
+      "lastSeenLocationText": _selectedLocationAddress,
+      "reporterName": widget.currentUser['name']?.toString().trim(),
+      "reporterPhone": reporterPhone,
+      "reporterEmail": widget.currentUser['email']?.toString().trim(),
+      "relationshipToPerson":
+          _target == _LostReportTarget.profile ? "MedicalVault profile" : null,
       "medicalNotes": _medicalNotesController.text.trim().isEmpty
           ? null
           : _medicalNotesController.text.trim(),
@@ -454,8 +484,7 @@ class _ReportLostPageState extends State<ReportLostPage> {
         Navigator.of(context).pop(true);
       } else {
         _showMessage(
-          response["message"]?.toString() ??
-              l10n.t('lostReport.submitFailure'),
+          response["message"]?.toString() ?? l10n.t('lostReport.submitFailure'),
         );
       }
     } catch (error) {
@@ -491,8 +520,7 @@ class _ReportLostPageState extends State<ReportLostPage> {
           final selected = _selectedProfile;
           if (selected != null &&
               (selected['name']?.toString().trim().isNotEmpty ?? false)) {
-            _nameController.text =
-                _localizedProfileName(selected, l10n);
+            _nameController.text = _localizedProfileName(selected, l10n);
           }
         });
       },
@@ -653,7 +681,8 @@ class _ReportLostPageState extends State<ReportLostPage> {
 
   String _formatLocation(Position? position) {
     if (position == null) return context.l10n.t('common.locationNotSet');
-    final coords = "${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}";
+    final coords =
+        "${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}";
     if (_selectedLocationAddress != null) {
       return "$coords\n$_selectedLocationAddress";
     }
@@ -662,10 +691,10 @@ class _ReportLostPageState extends State<ReportLostPage> {
 
   Widget _buildMapPreview() {
     if (_lastSeenPosition == null) return const SizedBox.shrink();
-    
+
     final lat = _lastSeenPosition!.latitude;
     final lng = _lastSeenPosition!.longitude;
-    
+
     return Container(
       margin: const EdgeInsets.only(top: 12),
       height: 200,
@@ -696,8 +725,8 @@ class _ReportLostPageState extends State<ReportLostPage> {
                     Text(
                       '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                     if (_selectedLocationAddress != null) ...[
                       const SizedBox(height: 4),
@@ -722,16 +751,19 @@ class _ReportLostPageState extends State<ReportLostPage> {
                 color: Colors.transparent,
                 child: InkWell(
                   onTap: () async {
-                    final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+                    final url = Uri.parse(
+                        'https://www.google.com/maps/search/?api=1&query=$lat,$lng');
                     if (await canLaunchUrl(url)) {
-                      await launchUrl(url, mode: LaunchMode.externalApplication);
+                      await launchUrl(url,
+                          mode: LaunchMode.externalApplication);
                     }
                   },
                   child: Container(
                     alignment: Alignment.bottomRight,
                     padding: const EdgeInsets.all(8),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: Theme.of(context).colorScheme.primary,
                         borderRadius: BorderRadius.circular(20),
@@ -967,7 +999,8 @@ class _ReportLostPageState extends State<ReportLostPage> {
                       icon: const Icon(Icons.my_location, size: 20),
                       label: Text(l10n.t('lostReport.useCurrentLocation')),
                       style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
                       ),
                     ),
                     ElevatedButton.icon(
@@ -975,7 +1008,8 @@ class _ReportLostPageState extends State<ReportLostPage> {
                       icon: const Icon(Icons.map, size: 20),
                       label: Text(l10n.t('lostReport.pickOnMap')),
                       style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
                       ),
                     ),
                     OutlinedButton.icon(
@@ -983,7 +1017,8 @@ class _ReportLostPageState extends State<ReportLostPage> {
                       icon: const Icon(Icons.open_in_new, size: 20),
                       label: Text(l10n.t('lostReport.searchInMaps')),
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
                       ),
                     ),
                   ],
@@ -1019,4 +1054,3 @@ class _ReportLostPageState extends State<ReportLostPage> {
     );
   }
 }
-

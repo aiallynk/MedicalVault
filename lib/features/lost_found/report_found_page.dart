@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -151,8 +151,9 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    final normalized = message.replaceFirst('Exception: ', '').trim();
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(normalized.isEmpty ? message : normalized)));
   }
 
   Future<void> _submit() async {
@@ -212,7 +213,8 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
   }
 
   String _formatLocation(Position? position) {
-    if (position == null) return context.l10n.t('reportFound.locationNotCaptured');
+    if (position == null)
+      return context.l10n.t('reportFound.locationNotCaptured');
     return "${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}";
   }
 
@@ -338,8 +340,7 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          _photoName ??
-                              l10n.t('reportFound.photoUploadedName'),
+                          _photoName ?? l10n.t('reportFound.photoUploadedName'),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -380,7 +381,8 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(l10n.t('reportFound.foundTime')),
-                  subtitle: Text(formatDateTimeForContext(context, _foundTime, pattern: 'MMM d, yyyy - h:mm a')),
+                  subtitle: Text(formatDateTimeForContext(context, _foundTime,
+                      pattern: 'MMM d, yyyy - h:mm a')),
                   trailing: TextButton(
                     onPressed: _pickDateTime,
                     child: Text(l10n.t('reportFound.edit')),
@@ -427,4 +429,3 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
     );
   }
 }
-

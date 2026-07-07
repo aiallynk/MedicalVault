@@ -27,7 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoggingIn = false;
   bool _animateIn = false;
 
-  static const String baseUrl = ApiService.baseUrl;
+  static final String baseUrl = ApiService.baseUrl;
 
   @override
   void initState() {

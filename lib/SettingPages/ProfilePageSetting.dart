@@ -463,57 +463,65 @@ class _ProfileNameState extends State<ProfileName> {
                     ),
                   ),
                 ),
-                // Sections with modern design
-                _sectionTitle(l10n.t('profile.personalInfo')),
-                _infoRow(Icons.phone, l10n.t('profile.mobile'),
-                    user['mobile'] ?? '', 'mobile'),
-                _infoRow(Icons.security, l10n.t('profile.aadhaar'),
-                    user['aadhaar'] ?? '', 'aadhaar'),
-                _infoRow(
-                    Icons.calendar_today,
-                    l10n.t('profile.dob'),
-                    user['dateOfBirth']?.toString().split("T")[0] ?? '',
-                    'dateOfBirth'),
-                _sectionTitle(l10n.t('profile.healthInfo')),
-                _infoRow(Icons.person, l10n.t('profile.gender'),
-                    user['gender'] ?? '', 'gender'),
-                _infoRow(Icons.water_drop, l10n.t('profile.bloodType'),
-                    user['bloodType'] ?? '', 'bloodType'),
-                _infoRow(Icons.healing, l10n.t('profile.allergies'),
-                    (user['allergies'] ?? '').toString(), 'allergies'),
-                _infoRow(Icons.height, l10n.t('profile.height'),
-                    user['height'] ?? '', 'height'),
-                _infoRow(Icons.monitor_weight, l10n.t('profile.weight'),
-                    user['weight'] ?? '', 'weight'),
-                _infoRow(
-                    Icons.calendar_month,
-                    l10n.t('profile.lastVisit'),
-                    user['lastVisit']?.toString().split("T")[0] ?? '',
-                    'lastVisit'),
-                _infoRow(
-                    Icons.event,
-                    l10n.t('profile.nextAppointment'),
-                    user['nextAppointment']?.toString().split("T")[0] ?? '',
-                    'nextAppointment'),
-                _sectionTitle(l10n.t('profile.emergencyContact')),
-                _infoRow(
-                    Icons.person,
-                    l10n.t('profile.emergencyName'),
-                    user['emergencyContact']?['name'] ?? '',
-                    'emergencyContact.name'),
-                _infoRow(
-                    Icons.people,
-                    l10n.t('profile.emergencyRelationship'),
-                    user['emergencyContact']?['relationship'] ?? '',
-                    'emergencyContact.relationship'),
-                _infoRow(
-                    Icons.phone,
-                    l10n.t('profile.emergencyPhone'),
-                    user['emergencyContact']?['phone'] ??
-                        user['emergencyContact']?['mobile'] ??
-                        user['emergencyContact']?['number'] ??
-                        '',
-                    'emergencyContact.phone'),
+                _profileSectionCard(
+                  title: l10n.t('profile.personalInfo'),
+                  icon: Icons.badge_outlined,
+                  children: [
+                    _fieldTile(Icons.phone, l10n.t('profile.mobile'),
+                        user['mobile'], 'mobile'),
+                    _fieldTile(
+                        Icons.calendar_today,
+                        l10n.t('profile.dob'),
+                        user['dateOfBirth']?.toString().split("T")[0],
+                        'dateOfBirth'),
+                    _fieldTile(Icons.person, l10n.t('profile.gender'),
+                        user['gender'], 'gender'),
+                    _fieldTile(Icons.water_drop, l10n.t('profile.bloodType'),
+                        user['bloodType'], 'bloodType'),
+                  ],
+                ),
+                _profileSectionCard(
+                  title: l10n.t('profile.healthInfo'),
+                  icon: Icons.medical_services_outlined,
+                  children: [
+                    _fieldTile(Icons.healing, l10n.t('profile.allergies'),
+                        user['allergies'], 'allergies'),
+                    _fieldTile(Icons.height, l10n.t('profile.height'),
+                        user['height'], 'height'),
+                    _fieldTile(Icons.monitor_weight, l10n.t('profile.weight'),
+                        user['weight'], 'weight'),
+                    _fieldTile(
+                        Icons.calendar_month,
+                        l10n.t('profile.lastVisit'),
+                        user['lastVisit']?.toString().split("T")[0],
+                        'lastVisit'),
+                    _fieldTile(
+                        Icons.event,
+                        l10n.t('profile.nextAppointment'),
+                        user['nextAppointment']?.toString().split("T")[0],
+                        'nextAppointment'),
+                  ],
+                ),
+                _emergencyContactCard(),
+                _profileSectionCard(
+                  title: l10n.auto('Account'),
+                  icon: Icons.lock_outline,
+                  children: [
+                    _fieldTile(Icons.email_outlined,
+                        l10n.t('profile.field.email'), user['email'], 'email',
+                        editable: false),
+                    _fieldTile(Icons.security, l10n.t('profile.aadhaar'),
+                        user['aadhaar'], 'aadhaar'),
+                    _fieldTile(
+                        Icons.verified_user_outlined,
+                        l10n.auto('Email verification'),
+                        user['emailVerified'] == true
+                            ? l10n.auto('Verified')
+                            : l10n.auto('Not verified'),
+                        'emailVerified',
+                        editable: false),
+                  ],
+                ),
                 _sectionTitle(l10n.t('profile.medicalHistory')),
                 _listSection(
                   user['medicalHistory'] ?? [],
@@ -627,6 +635,176 @@ class _ProfileNameState extends State<ProfileName> {
               .textTheme
               .titleMedium
               ?.copyWith(fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _profileSectionCard({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    final theme = Theme.of(context);
+    return Card(
+      color: theme.cardColor,
+      elevation: 0,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: theme.dividerColor.withOpacity(0.5)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(9),
+                  decoration: BoxDecoration(
+                    color: theme.primaryColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: theme.primaryColor, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fieldTile(
+    IconData icon,
+    String label,
+    dynamic value,
+    String fieldKey, {
+    bool editable = true,
+  }) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final sanitizedValue = _sanitizeSensitiveValue(value);
+    final displayValue = sanitizedValue.isNotEmpty
+        ? sanitizedValue
+        : l10n.t('common.notAvailable');
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(icon, size: 20, color: theme.colorScheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.hintColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  displayValue,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (editable)
+            IconButton(
+              icon: Icon(Icons.edit_outlined,
+                  size: 20, color: theme.colorScheme.primary),
+              onPressed: () => _quickEditField(fieldKey, label, sanitizedValue),
+              tooltip: l10n.t('profile.quickEdit'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emergencyContactCard() {
+    final l10n = context.l10n;
+    final emergencyRaw = user['emergencyContact'];
+    final emergency = emergencyRaw is Map
+        ? emergencyRaw.map((k, v) => MapEntry(k.toString(), v))
+        : <String, dynamic>{};
+    final name = _sanitizeSensitiveValue(emergency['name']);
+    final relationship = _sanitizeSensitiveValue(emergency['relationship']);
+    final phone = _firstNonEmptyValue([
+      emergency['phone'],
+      emergency['mobile'],
+      emergency['number'],
+    ]).toString();
+    final alternatePhone = _firstNonEmptyValue([
+      emergency['alternatePhone'],
+      emergency['alternateMobile'],
+    ]).toString();
+    final hasContact = [name, relationship, phone, alternatePhone]
+        .any((value) => value.trim().isNotEmpty);
+
+    return _profileSectionCard(
+      title: l10n.t('profile.emergencyContact'),
+      icon: Icons.emergency_outlined,
+      children: hasContact
+          ? [
+              _fieldTile(Icons.person_outline, l10n.t('profile.emergencyName'),
+                  name, 'emergencyContact.name'),
+              _fieldTile(
+                  Icons.people_outline,
+                  l10n.t('profile.emergencyRelationship'),
+                  relationship,
+                  'emergencyContact.relationship'),
+              _fieldTile(Icons.phone_outlined, l10n.t('profile.emergencyPhone'),
+                  phone, 'emergencyContact.phone'),
+              if (alternatePhone.trim().isNotEmpty)
+                _fieldTile(
+                    Icons.phone_callback_outlined,
+                    l10n.auto('Alternate phone'),
+                    alternatePhone,
+                    'emergencyContact.alternatePhone',
+                    editable: false),
+            ]
+          : [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  l10n.auto('No emergency contact added'),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).hintColor,
+                      ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: () => _quickEditField(
+                    'emergencyContact.name',
+                    l10n.t('profile.emergencyName'),
+                    '',
+                  ),
+                  icon: const Icon(Icons.add),
+                  label: Text(l10n.auto('Add emergency contact')),
+                ),
+              ),
+            ],
     );
   }
 

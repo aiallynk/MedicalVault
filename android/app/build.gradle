@@ -12,7 +12,15 @@ def keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
 }
-def mapsApiKey = System.getenv("MAPS_API_KEY") ?: ""
+
+// Load the Flutter project's .env (KEY=VALUE) file so MAPS_API_KEY can be
+// configured in one place instead of requiring a shell environment variable.
+def dotenvFile = rootProject.file("../.env")
+def dotenv = new Properties()
+if (dotenvFile.exists()) {
+    dotenvFile.withInputStream { dotenv.load(it) }
+}
+def mapsApiKey = System.getenv("MAPS_API_KEY") ?: dotenv.getProperty("MAPS_API_KEY", "")
 
 android {
     namespace = "com.example.hello"

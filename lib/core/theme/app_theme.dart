@@ -334,7 +334,7 @@ class AppThemes {
           systemNavigationBarDividerColor: Colors.transparent,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         elevation: 0,
         color: colors.surface,
         shadowColor: Colors.black.withValues(alpha: isDark ? 0.25 : 0.08),
@@ -442,7 +442,7 @@ class AppThemes {
         backgroundColor: colors.surface,
         indicatorColor: colors.primary.withValues(alpha: 0.16),
       ),
-      dialogTheme: DialogTheme(
+      dialogTheme: DialogThemeData(
         backgroundColor: colors.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.large),

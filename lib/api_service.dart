@@ -10,6 +10,7 @@ import 'package:http_parser/http_parser.dart';
 import 'Document_model.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hello/helpers/google_auth_helper.dart';
 import 'package:hello/services/offline/offline_storage_service.dart';
 import 'package:hello/services/secure_token_storage.dart';
@@ -20,6 +21,10 @@ class DocumentUploadResult {
   final String message;
   final String? code;
   final int? statusCode;
+  final String verificationStatus;
+  final String verificationReason;
+  final String verificationMode;
+  final int? processingTimeMs;
 
   const DocumentUploadResult({
     required this.success,
@@ -27,6 +32,10 @@ class DocumentUploadResult {
     this.message = '',
     this.code,
     this.statusCode,
+    this.verificationStatus = '',
+    this.verificationReason = '',
+    this.verificationMode = '',
+    this.processingTimeMs,
   });
 }
 
@@ -40,16 +49,22 @@ class ApiService {
 
   static const String _defaultApiBaseUrl =
       "https://backend-medicalvault.onrender.com/api";
-  static const String baseUrl =
-      String.fromEnvironment("API_BASE_URL", defaultValue: _defaultApiBaseUrl);
-  static const String authUrl = "$baseUrl/auth";
-  static const String filesUrl = "$baseUrl/files";
-  static const String qrUrl = "$baseUrl/qr";
-  static const String aiUrl = "$baseUrl/ai";
-  static const String sosUrl = "$baseUrl/sos";
-  static const String lostFoundUrl = "$baseUrl/lost-found";
-  static const String patientAppointmentsUrl = "$baseUrl/patient/appointments";
-  static const String publicUrl = "$baseUrl/public";
+
+  // Base URL is read from the .env file (API_BASE_URL) at runtime, falling
+  // back to --dart-define and finally to the hardcoded default above.
+  static String get baseUrl => dotenv.env['API_BASE_URL']?.trim().isNotEmpty ==
+          true
+      ? dotenv.env['API_BASE_URL']!.trim()
+      : const String.fromEnvironment("API_BASE_URL",
+          defaultValue: _defaultApiBaseUrl);
+  static String get authUrl => "$baseUrl/auth";
+  static String get filesUrl => "$baseUrl/files";
+  static String get qrUrl => "$baseUrl/qr";
+  static String get aiUrl => "$baseUrl/ai";
+  static String get sosUrl => "$baseUrl/sos";
+  static String get lostFoundUrl => "$baseUrl/lost-found";
+  static String get patientAppointmentsUrl => "$baseUrl/patient/appointments";
+  static String get publicUrl => "$baseUrl/public";
 
   static String get _apiOrigin {
     var parsed = Uri.tryParse(baseUrl) ?? Uri.parse(_defaultApiBaseUrl);
@@ -1672,6 +1687,12 @@ class ApiService {
           document: Document.fromApi(json['document']),
           message: _extractApiMessage(json, fallback: 'Upload complete'),
           statusCode: response.statusCode,
+          verificationStatus: (json['verificationStatus'] ?? '').toString(),
+          verificationReason: (json['verificationReason'] ?? '').toString(),
+          verificationMode: (json['verificationMode'] ?? '').toString(),
+          processingTimeMs: json['processingTimeMs'] is num
+              ? (json['processingTimeMs'] as num).round()
+              : int.tryParse((json['processingTimeMs'] ?? '').toString()),
         );
       } else {
         _debugLog("Upload failed: ${response.data}");
@@ -1681,6 +1702,12 @@ class ApiService {
           message: _extractApiMessage(payload, fallback: 'Upload failed'),
           code: payload['code']?.toString(),
           statusCode: response.statusCode,
+          verificationStatus: (payload['verificationStatus'] ?? '').toString(),
+          verificationReason: (payload['verificationReason'] ?? '').toString(),
+          verificationMode: (payload['verificationMode'] ?? '').toString(),
+          processingTimeMs: payload['processingTimeMs'] is num
+              ? (payload['processingTimeMs'] as num).round()
+              : int.tryParse((payload['processingTimeMs'] ?? '').toString()),
         );
       }
     } on DioException catch (e) {
@@ -1695,6 +1722,12 @@ class ApiService {
         message: message,
         code: payload['code']?.toString(),
         statusCode: e.response?.statusCode,
+        verificationStatus: (payload['verificationStatus'] ?? '').toString(),
+        verificationReason: (payload['verificationReason'] ?? '').toString(),
+        verificationMode: (payload['verificationMode'] ?? '').toString(),
+        processingTimeMs: payload['processingTimeMs'] is num
+            ? (payload['processingTimeMs'] as num).round()
+            : int.tryParse((payload['processingTimeMs'] ?? '').toString()),
       );
     } catch (e) {
       _debugLog("Upload error: $e");
@@ -1836,6 +1869,9 @@ class ApiService {
   static Future<String?> uploadLostFoundPhoto(File file) async {
     try {
       final token = await _getToken();
+      if (token == null || token.trim().isEmpty) {
+        throw Exception('Please log in again before uploading a photo.');
+      }
       final dio = Dio();
       final filename = file.path.split("/").last;
       final mimeType = _detectMimeType(filename.toLowerCase());
@@ -1852,7 +1888,7 @@ class ApiService {
         data: formData,
         options: Options(
           headers: {
-            if (token != null) HttpHeaders.authorizationHeader: "Bearer $token",
+            HttpHeaders.authorizationHeader: "Bearer $token",
             "Content-Type": "multipart/form-data",
           },
         ),
@@ -1862,10 +1898,20 @@ class ApiService {
         return response.data?["data"]?["photoUrl"]?.toString();
       }
 
-      return null;
+      final payload = _responseDataAsMap(response.data);
+      throw Exception(
+          _extractApiMessage(payload, fallback: 'Photo upload failed'));
+    } on DioException catch (e) {
+      final payload = _responseDataAsMap(e.response?.data);
+      throw Exception(
+        _extractApiMessage(
+          payload,
+          fallback: e.message ?? 'Photo upload failed',
+        ),
+      );
     } catch (e) {
-      print("uploadLostFoundPhoto error: $e");
-      return null;
+      _debugLog("uploadLostFoundPhoto error: $e");
+      rethrow;
     }
   }
 
@@ -1891,7 +1937,12 @@ class ApiService {
       body: jsonEncode(_sanitizeBody(body)),
     );
 
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final decoded = _decodeJsonMap(res.body);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception(_extractApiMessage(decoded,
+          fallback: 'Failed to create lost person report'));
+    }
+    return decoded;
   }
 
   static Future<Map<String, dynamic>> createFoundPersonReport(
@@ -1906,7 +1957,12 @@ class ApiService {
       body: jsonEncode(_sanitizeBody(body)),
     );
 
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final decoded = _decodeJsonMap(res.body);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception(_extractApiMessage(decoded,
+          fallback: 'Failed to create found person report'));
+    }
+    return decoded;
   }
 
   static Future<List<dynamic>> fetchMyLostReports() async {
@@ -1917,10 +1973,107 @@ class ApiService {
     );
 
     if (res.statusCode == 200) {
-      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      final decoded = _decodeJsonMap(res.body);
       return decoded["data"]?["reports"] as List<dynamic>? ?? [];
     }
-    return [];
+    final decoded = _decodeJsonMap(res.body);
+    throw Exception(_extractApiMessage(decoded,
+        fallback: 'Failed to fetch lost person reports'));
+  }
+
+  /// Search open lost-person reports (privacy-safe). Backend returns only
+  /// non-sensitive fields; contact is masked unless the report allows it.
+  static Future<List<dynamic>> searchLostPersons({
+    String? query,
+    int? age,
+    String? gender,
+    String? location,
+    double? lat,
+    double? lng,
+    double? radiusKm,
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final headers = await _authHeaders();
+    final params = <String, String>{};
+    if (query != null && query.trim().isNotEmpty) params['q'] = query.trim();
+    if (age != null) params['age'] = age.toString();
+    if (gender != null && gender.trim().isNotEmpty) params['gender'] = gender.trim();
+    if (location != null && location.trim().isNotEmpty) {
+      params['location'] = location.trim();
+    }
+    if (lat != null) params['lat'] = lat.toString();
+    if (lng != null) params['lng'] = lng.toString();
+    if (radiusKm != null) params['radiusKm'] = radiusKm.toString();
+    if (dateFrom != null && dateFrom.isNotEmpty) params['dateFrom'] = dateFrom;
+    if (dateTo != null && dateTo.isNotEmpty) params['dateTo'] = dateTo;
+
+    final uri =
+        Uri.parse("$lostFoundUrl/search").replace(queryParameters: params);
+    final res = await http.get(uri, headers: headers);
+
+    if (res.statusCode == 200) {
+      final decoded = _decodeJsonMap(res.body);
+      return decoded["data"]?["results"] as List<dynamic>? ?? [];
+    }
+    final decoded = _decodeJsonMap(res.body);
+    throw Exception(_extractApiMessage(decoded,
+        fallback: 'Failed to search lost persons'));
+  }
+
+  /// Fetch a single lost-person report's privacy-safe detail by id.
+  static Future<Map<String, dynamic>> getLostPersonDetail(String id) async {
+    final headers = await _authHeaders();
+    final res = await http.get(
+      Uri.parse("$lostFoundUrl/lost/$id"),
+      headers: headers,
+    );
+
+    final decoded = _decodeJsonMap(res.body);
+    if (res.statusCode == 200) {
+      final report = decoded["data"]?["report"];
+      if (report is Map) {
+        return report.map((k, v) => MapEntry(k.toString(), v));
+      }
+      return <String, dynamic>{};
+    }
+    throw Exception(_extractApiMessage(decoded,
+        fallback: 'Failed to load lost person details'));
+  }
+
+  /// Update the authenticated user's opt-in last known location. Used to power
+  /// nearby lost-person alerts. Never called in a battery-draining loop.
+  static Future<bool> updateUserLocation({
+    double? lat,
+    double? lng,
+    String? address,
+    bool? locationSharingEnabled,
+    bool? lostPersonAlertsOptOut,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final body = <String, dynamic>{};
+      if (lat != null) body['lat'] = lat;
+      if (lng != null) body['lng'] = lng;
+      if (address != null) body['address'] = address;
+      if (locationSharingEnabled != null) {
+        body['locationSharingEnabled'] = locationSharingEnabled;
+      }
+      if (lostPersonAlertsOptOut != null) {
+        body['lostPersonAlertsOptOut'] = lostPersonAlertsOptOut;
+      }
+      if (body.isEmpty) return false;
+
+      final res = await http.put(
+        Uri.parse("$baseUrl/users/location"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode(body),
+      );
+      return res.statusCode == 200;
+    } catch (e) {
+      _debugLog("updateUserLocation error: $e");
+      return false;
+    }
   }
 
   // ---------------- FETCH FILES ----------------

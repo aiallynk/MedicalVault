@@ -8,7 +8,7 @@ import 'package:hello/services/secure_token_storage.dart';
 import 'global_notification_handler.dart';
 
 class FCMService {
-  static const String baseUrl = ApiService.baseUrl;
+  static final String baseUrl = ApiService.baseUrl;
 
   // Singleton pattern
   static final FCMService _instance = FCMService._internal();

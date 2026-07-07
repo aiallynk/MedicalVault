@@ -5,6 +5,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -38,6 +39,11 @@ final AppRouteObserver appRouteObserver = AppRouteObserver();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (error) {
+    debugPrint('No .env file found, falling back to built-in defaults: $error');
+  }
   tzdata.initializeTimeZones();
 
   StatusBarHelper.configureSystemUiMode();
