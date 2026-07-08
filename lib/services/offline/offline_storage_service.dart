@@ -134,7 +134,14 @@ class OfflineStorageService {
               ? _sanitizeText(emergencyContact['name'])
               : 'Emergency Contact',
           'phone': phone,
-          'relationship': _sanitizeText(emergencyContact['relationship']),
+          'relationship': _sanitizeText(
+            emergencyContact['relationship'] ?? emergencyContact['relation'],
+          ),
+          'relation': _sanitizeText(
+            emergencyContact['relation'] ?? emergencyContact['relationship'],
+          ),
+          'priority': 0,
+          'active': emergencyContact['active'] == false ? false : true,
         });
       }
     }
@@ -146,23 +153,37 @@ class OfflineStorageService {
         final phone = _sanitizePhone(
             entry['phone'] ?? entry['mobile'] ?? entry['number']);
         if (phone.isEmpty) continue;
+        final rawPriority = int.tryParse(
+              (entry['priority'] ?? entry['order'] ?? '').toString(),
+            ) ??
+            output.length;
         output.add({
           'name': _sanitizeText(entry['name']).isNotEmpty
               ? _sanitizeText(entry['name'])
               : 'Emergency Contact',
           'phone': phone,
-          'relationship': _sanitizeText(entry['relationship']),
+          'relationship':
+              _sanitizeText(entry['relationship'] ?? entry['relation']),
+          'relation': _sanitizeText(entry['relation'] ?? entry['relationship']),
+          'priority': rawPriority,
+          'active': entry['active'] == false ? false : true,
         });
       }
     }
 
     final seen = <String>{};
-    return output.where((contact) {
+    final deduped = output.where((contact) {
       final phone = (contact['phone'] ?? '').toString();
       if (phone.isEmpty || seen.contains(phone)) return false;
       seen.add(phone);
       return true;
     }).toList(growable: false);
+    deduped.sort((a, b) {
+      final left = int.tryParse((a['priority'] ?? 999).toString()) ?? 999;
+      final right = int.tryParse((b['priority'] ?? 999).toString()) ?? 999;
+      return left.compareTo(right);
+    });
+    return deduped;
   }
 
   Future<void> cacheEmergencyContacts(
@@ -304,6 +325,37 @@ class OfflineStorageService {
     });
 
     // Keep only recent events to avoid uncontrolled growth.
+    final trimmed = existing.length > 100
+        ? existing.sublist(existing.length - 100)
+        : existing;
+    await _box!.put(_localSosEventsKey, trimmed);
+  }
+
+  Future<void> upsertLocalSosEvent(Map<String, dynamic> event) async {
+    await _ensureReady();
+    final eventId = (event['eventId'] ?? '').toString().trim();
+    if (eventId.isEmpty) {
+      await appendLocalSosEvent(event);
+      return;
+    }
+
+    final existing = _asMapList(_box!.get(_localSosEventsKey));
+    final nextEvent = {
+      ...Map<String, dynamic>.from(event),
+      'loggedAt': DateTime.now().toIso8601String(),
+    };
+    final index = existing.indexWhere(
+      (entry) => (entry['eventId'] ?? '').toString() == eventId,
+    );
+    if (index >= 0) {
+      existing[index] = {
+        ...existing[index],
+        ...nextEvent,
+      };
+    } else {
+      existing.add(nextEvent);
+    }
+
     final trimmed = existing.length > 100
         ? existing.sublist(existing.length - 100)
         : existing;

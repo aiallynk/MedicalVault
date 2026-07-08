@@ -362,27 +362,27 @@ class _SplashScreenState extends State<SplashScreen>
     AppUpdateInfo info, {
     required ValueChanged<String> onStatus,
   }) async {
-    for (var attempt = 0; attempt < 72; attempt++) {
-      if (!mounted || _isDisposed) return false;
-      try {
-        final installedVersion = await _appUpdateService.getInstalledVersion();
-        if (AppUpdateService.compareVersions(
-              installedVersion,
-              info.latestVersion,
-            ) >=
-            0) {
-          return true;
-        }
-      } catch (_) {
-        // Keep waiting; PackageInfo can be briefly unavailable during install.
-      }
+    if (!mounted || _isDisposed) return false;
+    onStatus(
+      'Installing version ${info.latestVersion}. Complete the Android installer prompt to continue.',
+    );
+    await _waitForResumeOrDelay(const Duration(seconds: 90));
 
-      onStatus(
-        'Waiting for Android to finish installing version ${info.latestVersion}. Complete the installer prompt to continue.',
-      );
-      await _waitForResumeOrDelay(const Duration(seconds: 5));
+    if (!mounted || _isDisposed) return false;
+    try {
+      final installedVersion = await _appUpdateService.getInstalledVersion();
+      final installed = AppUpdateService.compareVersions(
+            installedVersion,
+            info.latestVersion,
+          ) >=
+          0;
+      if (installed) {
+        await _appUpdateService.clearPendingInstall();
+      }
+      return installed;
+    } catch (_) {
+      return false;
     }
-    return false;
   }
 
   Future<bool> _showUpdateDialog({
@@ -392,9 +392,32 @@ class _SplashScreenState extends State<SplashScreen>
     final l10n = context.l10n;
     final bool forceUpdate = checkResult.forceUpdate;
     bool downloading = false;
+    bool installing = false;
     double progress = 0;
     bool checksumVerified = false;
+    bool readyToInstall = false;
+    String? downloadedApkPath;
     String? statusText;
+
+    final pendingInstall = await _appUpdateService.getPendingInstall();
+    if (pendingInstall != null &&
+        pendingInstall.targetVersion == info.latestVersion) {
+      final alreadyInstalled =
+          await _appUpdateService.isPendingInstallSatisfied(pendingInstall);
+      if (alreadyInstalled) {
+        return true;
+      }
+      final reusable = await _appUpdateService.isPendingApkReusable(
+        pendingInstall,
+      );
+      if (reusable) {
+        downloadedApkPath = pendingInstall.apkPath;
+        checksumVerified = true;
+        readyToInstall = true;
+        statusText =
+            'Installation not completed. Tap Install again to continue.';
+      }
+    }
 
     final proceed = await showDialog<bool>(
       context: context,
@@ -459,6 +482,15 @@ class _SplashScreenState extends State<SplashScreen>
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ],
+                        if (installing) ...[
+                          const SizedBox(height: 14),
+                          const LinearProgressIndicator(),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Opening Android installer...',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
                         if (checksumVerified) ...[
                           const SizedBox(height: 6),
                           Text(
@@ -483,14 +515,14 @@ class _SplashScreenState extends State<SplashScreen>
                 actions: [
                   if (!forceUpdate)
                     TextButton(
-                      onPressed: downloading
+                      onPressed: downloading || installing
                           ? null
                           : () => Navigator.of(dialogContext).pop(true),
                       child: Text(l10n.auto('Later')),
                     ),
                   if (!forceUpdate)
                     TextButton(
-                      onPressed: downloading
+                      onPressed: downloading || installing
                           ? null
                           : () async {
                               await _appUpdateService.skipVersionFor24Hours(
@@ -502,32 +534,68 @@ class _SplashScreenState extends State<SplashScreen>
                       child: Text(l10n.t('update.action.skip')),
                     ),
                   ElevatedButton(
-                    onPressed: downloading
+                    onPressed: downloading || installing
                         ? null
                         : () async {
+                            if (!readyToInstall || downloadedApkPath == null) {
+                              setDialogState(() {
+                                downloading = true;
+                                progress = 0;
+                                checksumVerified = false;
+                                statusText = 'Downloading update...';
+                              });
+
+                              final downloadResult = await _appUpdateService
+                                  .downloadAndVerifyUpdate(
+                                info: info,
+                                onProgress: (value) {
+                                  if (!mounted) return;
+                                  setDialogState(() {
+                                    progress = _clampUnit(value);
+                                  });
+                                },
+                              );
+
+                              if (!mounted) return;
+
+                              setDialogState(() {
+                                downloading = false;
+                                checksumVerified =
+                                    downloadResult.checksumVerified;
+                                statusText = downloadResult.message;
+                              });
+
+                              if (!downloadResult.isReady) {
+                                return;
+                              }
+
+                              setDialogState(() {
+                                progress = 1;
+                                readyToInstall = true;
+                                downloadedApkPath = downloadResult.apkPath;
+                                statusText =
+                                    'Update verified. Tap Install to continue.';
+                              });
+                              return;
+                            }
+
                             setDialogState(() {
-                              downloading = true;
-                              progress = 0;
-                              checksumVerified = false;
-                              statusText = null;
+                              installing = true;
+                              progress = 1;
+                              statusText = 'Opening Android installer...';
                             });
 
-                            final installResult = await _appUpdateService
-                                .downloadAndInstallUpdate(
+                            final installResult =
+                                await _appUpdateService.launchInstallUpdate(
                               info: info,
-                              onProgress: (value) {
-                                if (!mounted) return;
-                                setDialogState(() {
-                                  progress = _clampUnit(value);
-                                });
-                              },
+                              apkPath: downloadedApkPath!,
                             );
 
                             if (!mounted) return;
 
                             if (!installResult.isSuccess) {
                               setDialogState(() {
-                                downloading = false;
+                                installing = false;
                                 checksumVerified =
                                     installResult.checksumVerified;
                                 statusText = installResult.message;
@@ -535,22 +603,13 @@ class _SplashScreenState extends State<SplashScreen>
                               return;
                             }
 
-                            setDialogState(() {
-                              downloading = true;
-                              progress = 1;
-                              checksumVerified = installResult.checksumVerified;
-                              statusText = installResult.installCompleted
-                                  ? 'Verifying installed update...'
-                                  : installResult.message;
-                            });
-
                             final installed =
                                 await _waitUntilUpdatedVersionInstalled(
                               info,
                               onStatus: (message) {
                                 if (!mounted || !dialogContext.mounted) return;
                                 setDialogState(() {
-                                  downloading = true;
+                                  installing = true;
                                   progress = 1;
                                   statusText = message;
                                 });
@@ -559,21 +618,28 @@ class _SplashScreenState extends State<SplashScreen>
 
                             if (!mounted || !dialogContext.mounted) return;
                             if (installed) {
+                              setDialogState(() {
+                                installing = false;
+                                statusText =
+                                    'Update installed successfully. Reopening the app may be required.';
+                              });
                               Navigator.of(dialogContext).pop(true);
                               return;
                             }
 
                             setDialogState(() {
-                              downloading = false;
+                              installing = false;
                               statusText = forceUpdate
                                   ? 'Update was not completed. Install version ${info.latestVersion} to continue.'
                                   : 'Install was not completed. You can tap Later or Skip Version to continue without updating.';
                             });
                           },
                     child: Text(
-                      downloading
+                      downloading || installing
                           ? '${l10n.t('update.action.updateNow')}...'
-                          : l10n.t('update.action.updateNow'),
+                          : readyToInstall
+                              ? 'Install'
+                              : l10n.t('update.action.updateNow'),
                     ),
                   ),
                 ],

@@ -31,11 +31,10 @@ import 'package:hello/screens/nearby_services_page.dart';
 import 'package:hello/Notifications/global_notification_handler.dart';
 import 'package:hello/SettingPages/ProfilePageSetting.dart';
 import 'package:hello/localization/app_localizations.dart';
-import '../features/lost_found/report_lost_page.dart';
-import '../features/lost_found/report_found_page.dart';
 import '../features/lost_found/my_lost_reports_page.dart';
 import '../features/lost_found/lost_found_report_page.dart';
 import '../features/lost_found/search_lost_persons_page.dart';
+import '../features/khoj/khoj_ai_page.dart';
 import '../providers/dashboard_prefetch_provider.dart';
 import '../providers/timezone_provider.dart';
 import '../utils/timezone_utils.dart';
@@ -1870,9 +1869,116 @@ class _Dashboard1State extends State<Dashboard1>
   }
 
   Future<void> _openAiAssistantFromFab() async {
-    await Navigator.push(
-      context,
-      _buildFadeSlideRoute(const ChatScreen()),
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        final scheme = theme.colorScheme;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                sheetContext.l10n.auto('AI Assistant'),
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _buildAssistantChoiceTile(
+                sheetContext,
+                icon: Icons.health_and_safety_rounded,
+                title: sheetContext.l10n.auto('Medical AI Assistant'),
+                subtitle: sheetContext.l10n.auto('Medical vault documents'),
+                accentColor: scheme.primary,
+                onTap: () => Navigator.pop(sheetContext, 'medical'),
+              ),
+              const SizedBox(height: 10),
+              _buildAssistantChoiceTile(
+                sheetContext,
+                icon: Icons.person_search_rounded,
+                title: sheetContext.l10n.auto('KHOJ AI'),
+                subtitle: sheetContext.l10n.auto('Lost and found reports'),
+                accentColor: scheme.tertiary,
+                onTap: () => Navigator.pop(sheetContext, 'khoj'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || selected == null) return;
+    final page = selected == 'khoj' ? const KhojAiPage() : const ChatScreen();
+    await Navigator.push(context, _buildFadeSlideRoute(page));
+  }
+
+  Widget _buildAssistantChoiceTile(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color accentColor,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    return Material(
+      color: accentColor.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.14),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: accentColor, size: 23),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.textTheme.bodySmall?.color
+                            ?.withValues(alpha: 0.72),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: theme.textTheme.bodyMedium?.color,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -2012,7 +2118,7 @@ class _Dashboard1State extends State<Dashboard1>
                                   child: Icon(
                                     _fabMenuOpen
                                         ? Icons.close_rounded
-                                        : Icons.medical_services_rounded,
+                                        : Icons.support_agent_rounded,
                                     key: ValueKey<bool>(_fabMenuOpen),
                                     color: Colors.white,
                                     size: 30,
@@ -2208,27 +2314,6 @@ class _Dashboard1State extends State<Dashboard1>
       // Refresh profiles when modal is closed
       _loadLinkedProfiles();
     });
-  }
-
-  Future<void> _openReportLost(BuildContext context) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ReportLostPage(
-          currentUser: Map<String, dynamic>.from(_userData),
-          linkedProfiles: _linkedProfiles,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openReportFound(BuildContext context) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ReportFoundPage(),
-      ),
-    );
   }
 
   Future<void> _openLostFound(BuildContext context) async {

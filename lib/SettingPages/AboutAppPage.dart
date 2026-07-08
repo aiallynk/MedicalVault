@@ -1,7 +1,7 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../localization/app_localizations.dart';
@@ -16,19 +16,43 @@ class AboutAppPage extends StatefulWidget {
   State<AboutAppPage> createState() => _AboutAppPageState();
 }
 
-class _AboutAppPageState extends State<AboutAppPage> {
+class _AboutAppPageState extends State<AboutAppPage>
+    with WidgetsBindingObserver {
   final AppUpdateService _updateService = AppUpdateService();
   PackageInfo? _packageInfo;
   AppUpdateCheckResult? _checkResult;
   bool _checking = false;
   bool _updating = false;
+  bool _installing = false;
+  bool _readyToInstall = false;
   double _downloadProgress = 0;
   String? _statusMessage;
+  String? _downloadedApkPath;
+  Completer<void>? _resumeSignal;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadPackageInfo();
+    _restorePendingInstall();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _resumeSignal?.complete();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final signal = _resumeSignal;
+    if (signal != null && !signal.isCompleted) {
+      signal.complete();
+    }
+    _checkPendingInstallAfterResume();
   }
 
   Future<void> _loadPackageInfo() async {
@@ -53,19 +77,25 @@ class _AboutAppPageState extends State<AboutAppPage> {
       _checking = false;
       _statusMessage = result.error;
     });
+    await _restorePendingInstall();
   }
 
   Future<void> _triggerUpdate() async {
     final info = _checkResult?.info;
-    if (info == null || _updating) return;
+    if (info == null || _updating || _installing) return;
+
+    if (_readyToInstall && _downloadedApkPath != null) {
+      await _installDownloadedUpdate(info);
+      return;
+    }
 
     setState(() {
       _updating = true;
       _downloadProgress = 0;
-      _statusMessage = null;
+      _statusMessage = 'Downloading update...';
     });
 
-    final installResult = await _updateService.downloadAndInstallUpdate(
+    final downloadResult = await _updateService.downloadAndVerifyUpdate(
       info: info,
       onProgress: (progress) {
         if (!mounted) return;
@@ -78,13 +108,102 @@ class _AboutAppPageState extends State<AboutAppPage> {
     if (!mounted) return;
     setState(() {
       _updating = false;
-      _statusMessage = installResult.message;
+      _statusMessage = downloadResult.message;
+      _readyToInstall = downloadResult.isReady;
+      _downloadedApkPath = downloadResult.apkPath;
+    });
+  }
+
+  Future<void> _installDownloadedUpdate(AppUpdateInfo info) async {
+    final apkPath = _downloadedApkPath;
+    if (apkPath == null || apkPath.trim().isEmpty) return;
+
+    setState(() {
+      _installing = true;
+      _statusMessage = 'Opening Android installer...';
     });
 
-    if (installResult.installCompleted) {
-      await Future.delayed(const Duration(milliseconds: 250));
+    final installResult = await _updateService.launchInstallUpdate(
+      info: info,
+      apkPath: apkPath,
+    );
+    if (!mounted) return;
+
+    if (!installResult.isSuccess) {
+      setState(() {
+        _installing = false;
+        _statusMessage = installResult.message;
+      });
+      return;
+    }
+
+    await _waitForResumeOrDelay(const Duration(seconds: 90));
+    if (!mounted) return;
+
+    final installed = await _updateService.isPendingInstallSatisfied();
+    if (!mounted) return;
+    setState(() {
+      _installing = false;
+      _statusMessage = installed
+          ? 'Update installed successfully. Please reopen the app if Android has not already restarted it.'
+          : 'Installation not completed. Tap Install again.';
+      if (installed) {
+        _readyToInstall = false;
+        _downloadedApkPath = null;
+      }
+    });
+  }
+
+  Future<void> _restorePendingInstall() async {
+    final info = _checkResult?.info;
+    final pending = await _updateService.getPendingInstall();
+    if (!mounted || pending == null || info == null) return;
+    if (pending.targetVersion != info.latestVersion) return;
+    if (await _updateService.isPendingInstallSatisfied(pending)) {
       if (!mounted) return;
-      SystemNavigator.pop();
+      setState(() {
+        _readyToInstall = false;
+        _downloadedApkPath = null;
+        _statusMessage = 'Update installed successfully.';
+      });
+      return;
+    }
+    final reusable = await _updateService.isPendingApkReusable(pending);
+    if (!mounted || !reusable) return;
+    setState(() {
+      _readyToInstall = true;
+      _downloadedApkPath = pending.apkPath;
+      _statusMessage = 'Installation not completed. Tap Install again.';
+    });
+  }
+
+  Future<void> _checkPendingInstallAfterResume() async {
+    final pending = await _updateService.getPendingInstall();
+    if (!mounted || pending == null) return;
+    final installed = await _updateService.isPendingInstallSatisfied(pending);
+    if (!mounted) return;
+    if (installed) {
+      setState(() {
+        _installing = false;
+        _readyToInstall = false;
+        _downloadedApkPath = null;
+        _statusMessage =
+            'Update installed successfully. Please reopen the app if needed.';
+      });
+    }
+  }
+
+  Future<void> _waitForResumeOrDelay(Duration timeout) async {
+    final signal = Completer<void>();
+    _resumeSignal = signal;
+    try {
+      await signal.future.timeout(timeout);
+    } on TimeoutException {
+      // Check installed version even if Android did not deliver a resume event.
+    } finally {
+      if (identical(_resumeSignal, signal)) {
+        _resumeSignal = null;
+      }
     }
   }
 
@@ -232,32 +351,40 @@ class _AboutAppPageState extends State<AboutAppPage> {
             if (hasUpdate && info != null) ...[
               const SizedBox(height: 12),
               FilledButton.icon(
-                onPressed: _updating ? null : _triggerUpdate,
-                icon: _updating
+                onPressed: (_updating || _installing) ? null : _triggerUpdate,
+                icon: _updating || _installing
                     ? const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.download_rounded),
+                    : Icon(_readyToInstall
+                        ? Icons.install_mobile_rounded
+                        : Icons.download_rounded),
                 label: Text(
-                  _updating
+                  _updating || _installing
                       ? '${l10n.t('update.action.updateNow')}...'
-                      : l10n.t('update.action.updateNow'),
+                      : _readyToInstall
+                          ? 'Install'
+                          : l10n.t('update.action.updateNow'),
                 ),
               ),
             ],
-            if (_updating) ...[
+            if (_updating || _installing) ...[
               const SizedBox(height: 12),
               SettingsGroupCard(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    LinearProgressIndicator(value: _downloadProgress),
+                    LinearProgressIndicator(
+                      value: _installing ? null : _downloadProgress,
+                    ),
                     const SizedBox(height: 8),
                     AppText(
-                      '${(_downloadProgress * 100).toStringAsFixed(0)}%',
+                      _installing
+                          ? 'Waiting for installer...'
+                          : '${(_downloadProgress * 100).toStringAsFixed(0)}%',
                       variant: AppTextVariant.caption,
                       color: theme.textTheme.bodyMedium?.color,
                     ),

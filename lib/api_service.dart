@@ -63,6 +63,7 @@ class ApiService {
   static String get aiUrl => "$baseUrl/ai";
   static String get sosUrl => "$baseUrl/sos";
   static String get lostFoundUrl => "$baseUrl/lost-found";
+  static String get khojUrl => "$baseUrl/khoj";
   static String get patientAppointmentsUrl => "$baseUrl/patient/appointments";
   static String get publicUrl => "$baseUrl/public";
 
@@ -2755,6 +2756,28 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>?> createSosEvent(
+    Map<String, dynamic> event,
+  ) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("$sosUrl/events"),
+        headers: {...headers, 'Content-Type': 'application/json'},
+        body: jsonEncode(event),
+      );
+      final decoded = _decodeJsonMap(res.body);
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        return decoded;
+      }
+      print('createSosEvent failed: ${res.statusCode} ${res.body}');
+      return null;
+    } catch (e) {
+      print('createSosEvent error: $e');
+      return null;
+    }
+  }
+
   // ---------------- GOOGLE PROFILE MANAGEMENT ----------------
 
   /// Link an existing Google account to current user's profile
@@ -3957,6 +3980,46 @@ class ApiService {
         "message": "Network error",
         "reply":
             "I'm having trouble connecting to the AI service. Please check your internet connection and try again."
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>?> askKhojAI({
+    required String message,
+    String? reportId,
+    String? reportType,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.post(
+        Uri.parse("$khojUrl/assistant/chat"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({
+          "message": message,
+          if (reportId != null && reportId.trim().isNotEmpty)
+            "reportId": reportId.trim(),
+          if (reportType != null && reportType.trim().isNotEmpty)
+            "reportType": reportType.trim(),
+        }),
+      );
+
+      final data = _decodeJsonMap(res.body);
+      if (res.statusCode == 200) {
+        return data;
+      }
+      return {
+        "success": false,
+        "message": data['message'] ?? 'KHOJ AI request failed',
+        "reply":
+            "KHOJ AI can only analyze lost/found person reports you are authorized to access."
+      };
+    } catch (e) {
+      print("KHOJ AI error: $e");
+      return {
+        "success": false,
+        "message": "Network error",
+        "reply":
+            "KHOJ AI is unavailable right now. Please check your connection and try again."
       };
     }
   }

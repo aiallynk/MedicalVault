@@ -7,6 +7,7 @@ import 'package:hello/models/user_profile.dart';
 import 'package:hello/localization/app_localizations.dart';
 import 'package:hello/services/offline/offline_storage_service.dart';
 import 'package:hello/services/offline/sos_offline_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class SosPage extends StatefulWidget {
   final Map<String, dynamic> userData;
@@ -33,6 +34,7 @@ class _SosPageState extends State<SosPage> {
   double? _currentLongitude;
   double? _currentAccuracyMeters;
   bool _isSending = false;
+  String? _sosStatusMessage;
   UserProfile? _currentUser;
   String? _allergies;
 
@@ -451,101 +453,62 @@ class _SosPageState extends State<SosPage> {
     );
   }
 
-  Future<void> _showOfflineFallbackActions(SosDispatchResult result) async {
-    if (!mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        final hasRecipients = result.recipients.isNotEmpty;
-        final primary = result.primaryRecipient ?? '';
+  Future<bool> _confirmSosCountdown() async {
+    if (!mounted) return false;
+    final remaining = ValueNotifier<int>(3);
+    Timer? countdownTimer;
+    var closed = false;
 
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Offline SOS Actions',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  hasRecipients
-                      ? 'Choose how you want to notify emergency contacts now.'
-                      : 'No recipients available for SMS/Call.',
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: hasRecipients
-                            ? () async {
-                                final opened = await SosOfflineService.instance
-                                    .openSmsFallback(
-                                  recipients: result.recipients,
-                                  message: result.smsMessage,
-                                );
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      opened
-                                          ? 'SMS app opened.'
-                                          : 'Could not open SMS app.',
-                                    ),
-                                  ),
-                                );
-                              }
-                            : null,
-                        icon: const Icon(Icons.sms_outlined),
-                        label: const Text('SMS'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: (hasRecipients && primary.trim().isNotEmpty)
-                            ? () async {
-                                final opened = await SosOfflineService.instance
-                                    .openCallFallback(
-                                  phone: primary,
-                                );
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      opened
-                                          ? 'Call dialer opened.'
-                                          : 'Could not open call dialer.',
-                                    ),
-                                  ),
-                                );
-                              }
-                            : null,
-                        icon: const Icon(Icons.call_outlined),
-                        label: const Text('Call'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () => Navigator.of(sheetContext).pop(),
-                    child: const Text('Done'),
-                  ),
-                ),
-              ],
-            ),
+    void closeWith(bool value, BuildContext dialogContext) {
+      if (closed) return;
+      closed = true;
+      countdownTimer?.cancel();
+      remaining.dispose();
+      Navigator.of(dialogContext).pop(value);
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        countdownTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+          final next = remaining.value - 1;
+          if (next <= 0) {
+            closeWith(true, dialogContext);
+          } else {
+            remaining.value = next;
+          }
+        });
+
+        return AlertDialog(
+          title: const Text('Send emergency SOS?'),
+          content: ValueListenableBuilder<int>(
+            valueListenable: remaining,
+            builder: (context, seconds, _) {
+              return Text(
+                'SOS will be sent automatically in $seconds seconds.',
+              );
+            },
           ),
+          actions: [
+            TextButton(
+              onPressed: () => closeWith(false, dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => closeWith(true, dialogContext),
+              child: const Text('Send now'),
+            ),
+          ],
         );
       },
     );
+
+    countdownTimer?.cancel();
+    if (!closed) {
+      remaining.dispose();
+    }
+    return confirmed == true;
   }
 
   @override
@@ -692,12 +655,15 @@ class _SosPageState extends State<SosPage> {
                   onPressed: _isSending
                       ? null
                       : () async {
-                          final lat = _currentLatitude;
-                          final lon = _currentLongitude;
+                          final confirmed = await _confirmSosCountdown();
+                          if (!confirmed || !context.mounted) return;
 
-                          if (lat == null || lon == null) {
-                            await _tryUpdateLocation();
-                          }
+                          setState(() {
+                            _isSending = true;
+                            _sosStatusMessage = 'Sending SOS...';
+                          });
+
+                          await _tryUpdateLocation();
 
                           final cachedLocation = await OfflineStorageService
                               .instance
@@ -721,18 +687,7 @@ class _SosPageState extends State<SosPage> {
                                   .trim();
 
                           if (!context.mounted) return;
-                          if (effectiveLat == null || effectiveLon == null) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  l10n.t('sos.locationMissing'),
-                                ),
-                              ),
-                            );
-                            return;
-                          }
 
-                          setState(() => _isSending = true);
                           final notes = _notesController.text.trim();
                           final result =
                               await SosOfflineService.instance.sendSos(
@@ -764,16 +719,18 @@ class _SosPageState extends State<SosPage> {
 
                           if (!context.mounted) return;
 
-                          setState(() => _isSending = false);
+                          setState(() {
+                            _isSending = false;
+                            _sosStatusMessage = result.message;
+                          });
 
                           if (result.success) {
                             String message;
                             final backend = result.backendResponse;
                             final bool massTriggered =
                                 backend?['massIncidentTriggered'] == true;
-                            if (result.usedOfflineFallback) {
-                              await _showOfflineFallbackActions(result);
-                              if (!context.mounted) return;
+                            if (result.openedSmsComposer ||
+                                result.usedOfflineFallback) {
                               message = result.message;
                             } else {
                               message = massTriggered
@@ -783,13 +740,21 @@ class _SosPageState extends State<SosPage> {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text(message)),
                             );
-                            Navigator.of(context).pop();
                           } else {
                             final error = result.message.isNotEmpty
                                 ? result.message
                                 : l10n.t('sos.sendFailed');
+                            final snackBar = SnackBar(
+                              content: Text(error),
+                              action: result.smsPermissionPermanentlyDenied
+                                  ? SnackBarAction(
+                                      label: 'Settings',
+                                      onPressed: openAppSettings,
+                                    )
+                                  : null,
+                            );
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(error)),
+                              snackBar,
                             );
                           }
                         },
@@ -810,6 +775,15 @@ class _SosPageState extends State<SosPage> {
                         ),
                 ),
               ),
+              if (_sosStatusMessage != null &&
+                  _sosStatusMessage!.trim().isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _sosStatusMessage!,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
               const SizedBox(height: 8),
             ],
           ),

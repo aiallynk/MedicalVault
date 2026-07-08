@@ -87,6 +87,53 @@ enum AppUpdateInstallState {
   installFailed,
 }
 
+enum AppUpdateDownloadState {
+  downloaded,
+  notSupported,
+  metadataInvalid,
+  apkMissing,
+  downloadFailed,
+  checksumMismatch,
+}
+
+@immutable
+class AppUpdateDownloadResult {
+  final AppUpdateDownloadState state;
+  final String message;
+  final String? apkPath;
+  final bool checksumVerified;
+  final bool reusedCachedApk;
+
+  const AppUpdateDownloadResult({
+    required this.state,
+    required this.message,
+    this.apkPath,
+    this.checksumVerified = false,
+    this.reusedCachedApk = false,
+  });
+
+  bool get isReady =>
+      state == AppUpdateDownloadState.downloaded &&
+      checksumVerified &&
+      apkPath != null &&
+      apkPath!.trim().isNotEmpty;
+}
+
+@immutable
+class AppUpdatePendingInstall {
+  final String targetVersion;
+  final String apkPath;
+  final String sha256;
+  final int startedAtMs;
+
+  const AppUpdatePendingInstall({
+    required this.targetVersion,
+    required this.apkPath,
+    required this.sha256,
+    required this.startedAtMs,
+  });
+}
+
 @immutable
 class AppUpdateInstallResult {
   final AppUpdateInstallState state;
@@ -111,6 +158,10 @@ class AppUpdateInstallResult {
 class AppUpdateService {
   static const String skipVersionKey = 'update_skip_version';
   static const String skipUntilMsKey = 'update_skip_until_ms';
+  static const String pendingInstallVersionKey = 'update_pending_version';
+  static const String pendingInstallApkPathKey = 'update_pending_apk_path';
+  static const String pendingInstallSha256Key = 'update_pending_sha256';
+  static const String pendingInstallStartedMsKey = 'update_pending_started_ms';
   static const Duration skipWindow = Duration(hours: 24);
 
   final Dio _dio;
@@ -316,27 +367,47 @@ class AppUpdateService {
     }).toList();
   }
 
-  Future<AppUpdateInstallResult> downloadAndInstallUpdate({
+  Future<AppUpdateDownloadResult> downloadAndVerifyUpdate({
     required AppUpdateInfo info,
     ValueChanged<double>? onProgress,
   }) async {
     if (!Platform.isAndroid) {
-      return const AppUpdateInstallResult(
-        state: AppUpdateInstallState.notSupported,
+      return const AppUpdateDownloadResult(
+        state: AppUpdateDownloadState.notSupported,
         message: 'APK updates are only supported on Android devices.',
       );
     }
 
     final apkTargetPath = await _buildApkTargetPath(info.latestVersion);
-    await _clearCachedApkArtifacts(keepTargetPath: apkTargetPath);
     bool checksumVerified = false;
     final expectedChecksum = info.sha256.trim().toLowerCase();
     if (expectedChecksum.isEmpty || !_isValidSha256Hex(expectedChecksum)) {
-      return const AppUpdateInstallResult(
-        state: AppUpdateInstallState.metadataInvalid,
+      return const AppUpdateDownloadResult(
+        state: AppUpdateDownloadState.metadataInvalid,
         message: 'Update metadata invalid.',
       );
     }
+
+    final cachedFile = File(apkTargetPath);
+    if (await cachedFile.exists()) {
+      final cachedChecksum = await _computeChecksum(apkTargetPath);
+      if (cachedChecksum == expectedChecksum) {
+        onProgress?.call(1);
+        await _clearCachedApkArtifacts(keepTargetPath: apkTargetPath);
+        return AppUpdateDownloadResult(
+          state: AppUpdateDownloadState.downloaded,
+          message: 'Update downloaded and verified. Ready to install.',
+          apkPath: apkTargetPath,
+          checksumVerified: true,
+          reusedCachedApk: true,
+        );
+      }
+      try {
+        await cachedFile.delete();
+      } catch (_) {}
+    }
+
+    await _clearCachedApkArtifacts(keepTargetPath: apkTargetPath);
 
     for (int attempt = 0; attempt < 2; attempt++) {
       final shouldAddNonce = attempt > 0;
@@ -367,21 +438,21 @@ class AppUpdateService {
         debugPrint('Update download failed: ${error.type}');
         final status = error.response?.statusCode;
         if (status == 404) {
-          return const AppUpdateInstallResult(
-            state: AppUpdateInstallState.apkMissing,
+          return const AppUpdateDownloadResult(
+            state: AppUpdateDownloadState.apkMissing,
             message: 'APK file missing on server.',
           );
         }
         final serverMessage = _extractResponseMessage(error.response?.data);
-        return AppUpdateInstallResult(
-          state: AppUpdateInstallState.downloadFailed,
+        return AppUpdateDownloadResult(
+          state: AppUpdateDownloadState.downloadFailed,
           message: serverMessage.trim().isNotEmpty
               ? serverMessage
               : 'Failed to download update. Please check your connection.',
         );
       } catch (_) {
-        return const AppUpdateInstallResult(
-          state: AppUpdateInstallState.downloadFailed,
+        return const AppUpdateDownloadResult(
+          state: AppUpdateDownloadState.downloadFailed,
           message: 'Failed to download update. Please check your connection.',
         );
       }
@@ -407,9 +478,55 @@ class AppUpdateService {
         continue;
       }
 
+      return const AppUpdateDownloadResult(
+        state: AppUpdateDownloadState.checksumMismatch,
+        message: 'Downloaded APK checksum mismatch.',
+      );
+    }
+
+    return AppUpdateDownloadResult(
+      state: AppUpdateDownloadState.downloaded,
+      message: 'Update downloaded and verified. Ready to install.',
+      apkPath: apkTargetPath,
+      checksumVerified: checksumVerified,
+    );
+  }
+
+  Future<AppUpdateInstallResult> launchInstallUpdate({
+    required AppUpdateInfo info,
+    required String apkPath,
+  }) async {
+    if (!Platform.isAndroid) {
+      return const AppUpdateInstallResult(
+        state: AppUpdateInstallState.notSupported,
+        message: 'APK updates are only supported on Android devices.',
+      );
+    }
+
+    final expectedChecksum = info.sha256.trim().toLowerCase();
+    if (expectedChecksum.isEmpty || !_isValidSha256Hex(expectedChecksum)) {
+      return const AppUpdateInstallResult(
+        state: AppUpdateInstallState.metadataInvalid,
+        message: 'Update metadata invalid.',
+      );
+    }
+
+    final file = File(apkPath);
+    if (!await file.exists()) {
+      return const AppUpdateInstallResult(
+        state: AppUpdateInstallState.apkMissing,
+        message: 'Downloaded APK is missing. Please download again.',
+      );
+    }
+
+    final actualChecksum = await _computeChecksum(apkPath);
+    if (actualChecksum != expectedChecksum) {
+      try {
+        await file.delete();
+      } catch (_) {}
       return const AppUpdateInstallResult(
         state: AppUpdateInstallState.checksumMismatch,
-        message: 'Downloaded APK checksum mismatch.',
+        message: 'Downloaded APK checksum mismatch. Please download again.',
       );
     }
 
@@ -425,10 +542,15 @@ class AppUpdateService {
       }
     }
 
+    await persistPendingInstall(
+      targetVersion: info.latestVersion,
+      apkPath: apkPath,
+      sha256: expectedChecksum,
+    );
+
     final int? code;
     try {
-      code =
-          await AndroidPackageInstaller.installApk(apkFilePath: apkTargetPath);
+      code = await AndroidPackageInstaller.installApk(apkFilePath: apkPath);
     } catch (error) {
       debugPrint('Unable to launch installer: $error');
       return const AppUpdateInstallResult(
@@ -451,7 +573,7 @@ class AppUpdateService {
         state: AppUpdateInstallState.launchedInstaller,
         message: _statusMessage(installerStatus),
         installerStatus: installerStatus,
-        checksumVerified: checksumVerified,
+        checksumVerified: true,
       );
     }
 
@@ -459,8 +581,107 @@ class AppUpdateService {
       state: AppUpdateInstallState.installFailed,
       message: _statusMessage(installerStatus),
       installerStatus: installerStatus,
-      checksumVerified: checksumVerified,
+      checksumVerified: true,
     );
+  }
+
+  Future<AppUpdateInstallResult> downloadAndInstallUpdate({
+    required AppUpdateInfo info,
+    ValueChanged<double>? onProgress,
+  }) async {
+    final downloadResult = await downloadAndVerifyUpdate(
+      info: info,
+      onProgress: onProgress,
+    );
+    if (!downloadResult.isReady) {
+      final state = switch (downloadResult.state) {
+        AppUpdateDownloadState.notSupported =>
+          AppUpdateInstallState.notSupported,
+        AppUpdateDownloadState.metadataInvalid =>
+          AppUpdateInstallState.metadataInvalid,
+        AppUpdateDownloadState.apkMissing => AppUpdateInstallState.apkMissing,
+        AppUpdateDownloadState.downloadFailed =>
+          AppUpdateInstallState.downloadFailed,
+        AppUpdateDownloadState.checksumMismatch =>
+          AppUpdateInstallState.checksumMismatch,
+        AppUpdateDownloadState.downloaded =>
+          AppUpdateInstallState.downloadFailed,
+      };
+      return AppUpdateInstallResult(
+        state: state,
+        message: downloadResult.message,
+        checksumVerified: downloadResult.checksumVerified,
+      );
+    }
+    return launchInstallUpdate(info: info, apkPath: downloadResult.apkPath!);
+  }
+
+  Future<void> persistPendingInstall({
+    required String targetVersion,
+    required String apkPath,
+    required String sha256,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(pendingInstallVersionKey, targetVersion);
+    await prefs.setString(pendingInstallApkPathKey, apkPath);
+    await prefs.setString(pendingInstallSha256Key, sha256);
+    await prefs.setInt(
+      pendingInstallStartedMsKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  Future<AppUpdatePendingInstall?> getPendingInstall() async {
+    final prefs = await SharedPreferences.getInstance();
+    final targetVersion = prefs.getString(pendingInstallVersionKey)?.trim();
+    final apkPath = prefs.getString(pendingInstallApkPathKey)?.trim();
+    final sha256 = prefs.getString(pendingInstallSha256Key)?.trim();
+    final startedAtMs = prefs.getInt(pendingInstallStartedMsKey);
+    if (targetVersion == null ||
+        targetVersion.isEmpty ||
+        apkPath == null ||
+        apkPath.isEmpty ||
+        sha256 == null ||
+        sha256.isEmpty ||
+        startedAtMs == null) {
+      return null;
+    }
+    return AppUpdatePendingInstall(
+      targetVersion: targetVersion,
+      apkPath: apkPath,
+      sha256: sha256,
+      startedAtMs: startedAtMs,
+    );
+  }
+
+  Future<void> clearPendingInstall() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(pendingInstallVersionKey);
+    await prefs.remove(pendingInstallApkPathKey);
+    await prefs.remove(pendingInstallSha256Key);
+    await prefs.remove(pendingInstallStartedMsKey);
+  }
+
+  Future<bool> isPendingInstallSatisfied([
+    AppUpdatePendingInstall? pending,
+  ]) async {
+    final candidate = pending ?? await getPendingInstall();
+    if (candidate == null) return false;
+    final installedVersion = await getInstalledVersion();
+    final satisfied =
+        compareVersions(installedVersion, candidate.targetVersion) >= 0;
+    if (satisfied) {
+      await clearPendingInstall();
+      await clearSkipWindow();
+    }
+    return satisfied;
+  }
+
+  Future<bool> isPendingApkReusable(AppUpdatePendingInstall pending) async {
+    final file = File(pending.apkPath);
+    if (!await file.exists()) return false;
+    final checksum = await _computeChecksum(pending.apkPath);
+    return checksum == pending.sha256.toLowerCase();
   }
 
   Future<String> _buildApkTargetPath(String version) async {
@@ -483,11 +704,6 @@ class AppUpdateService {
       }
       final normalized = path.normalize(entity.path);
       if (normalized == keep) {
-        try {
-          if (await entity.exists()) {
-            await entity.delete();
-          }
-        } catch (_) {}
         continue;
       }
       try {

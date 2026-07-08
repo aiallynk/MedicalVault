@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+
+import 'google_sign_in_config.dart';
 
 /// Helper class for Google Sign-In operations
 /// Always shows account picker to ensure users can choose the correct account
@@ -14,13 +15,14 @@ class GoogleAuthHelper {
   /// - picture: User's profile picture URL
   static Future<Map<String, dynamic>?> signInWithGoogle() async {
     try {
-      final googleSignIn = GoogleSignIn(
-        scopes: [
+      final config = await GoogleSignInConfig.load();
+      config.logForSignIn();
+      final googleSignIn = config.createGoogleSignIn(
+        scopes: const [
           'email',
           'profile',
           'https://www.googleapis.com/auth/user.birthday.read',
         ],
-        // Uses Firebase-managed clientId from google-services.json (Android)
       );
 
       // Sign out first to ensure account picker shows every time
@@ -53,7 +55,8 @@ class GoogleAuthHelper {
         'picture': account.photoUrl,
       };
     } catch (e) {
-      debugPrint('❌ GoogleAuthHelper: Error during sign-in: $e');
+      final failure = GoogleSignInFailure.fromError(e);
+      debugPrint('❌ GoogleAuthHelper: ${failure.logMessage}');
       return null;
     }
   }

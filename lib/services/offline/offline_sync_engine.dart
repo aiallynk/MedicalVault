@@ -122,7 +122,10 @@ class OfflineSyncEngine {
         );
 
         bool success = false;
-        if (type == 'sos') {
+        if (type == 'sos_event') {
+          final response = await ApiService.createSosEvent(normalizedPayload);
+          success = response != null && response['success'] == true;
+        } else if (type == 'sos') {
           final response = await ApiService.createSos(
             latitude: double.tryParse(
                     (normalizedPayload['latitude'] ?? '').toString()) ??
@@ -145,12 +148,21 @@ class OfflineSyncEngine {
 
         if (success) {
           await OfflineStorageService.instance.removePendingAction(id);
-          await OfflineStorageService.instance.appendLocalSosEvent({
-            'status': 'synced',
-            'syncTrigger': trigger,
-            'actionId': id,
-            'payload': normalizedPayload,
-          });
+          if (type == 'sos_event') {
+            await OfflineStorageService.instance.upsertLocalSosEvent({
+              ...normalizedPayload,
+              'syncStatus': 'synced',
+              'syncTrigger': trigger,
+              'actionId': id,
+            });
+          } else {
+            await OfflineStorageService.instance.appendLocalSosEvent({
+              'status': 'synced',
+              'syncTrigger': trigger,
+              'actionId': id,
+              'payload': normalizedPayload,
+            });
+          }
         } else {
           await OfflineStorageService.instance.markPendingActionAttempted(id);
         }

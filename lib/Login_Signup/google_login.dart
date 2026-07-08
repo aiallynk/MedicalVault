@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hello/api_service.dart';
+import 'package:hello/helpers/google_sign_in_config.dart';
 import 'package:hello/Login_Signup/login_success_screen.dart';
 import 'package:hello/services/session_conflict_service.dart';
 
@@ -15,15 +15,11 @@ class GoogleLoginScreen extends StatefulWidget {
 }
 
 class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
-  // For Android: clientId is null, it reads from google-services.json
-  // For iOS: You need to set the iOS client ID from Firebase Console
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: <String>[
-      'email',
-      'profile',
-      'https://www.googleapis.com/auth/user.birthday.read',
-    ],
-  );
+  static const List<String> _googleScopes = <String>[
+    'email',
+    'profile',
+    'https://www.googleapis.com/auth/user.birthday.read',
+  ];
 
   bool _isLoading = false;
   String? _statusMessage;
@@ -72,10 +68,16 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
     });
 
     try {
-      // Sign out first to force account picker to show every time
-      await _googleSignIn.signOut();
+      final googleConfig = await GoogleSignInConfig.load();
+      googleConfig.logForSignIn();
+      final googleSignIn = googleConfig.createGoogleSignIn(
+        scopes: _googleScopes,
+      );
 
-      final GoogleSignInAccount? account = await _googleSignIn.signIn();
+      // Sign out first to force account picker to show every time
+      await googleSignIn.signOut();
+
+      final account = await googleSignIn.signIn();
 
       if (account == null) {
         setState(() {
@@ -84,7 +86,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         return;
       }
 
-      final GoogleSignInAuthentication auth = await account.authentication;
+      final auth = await account.authentication;
       final String? idToken = auth.idToken;
       final String? accessToken = auth.accessToken;
 
@@ -133,9 +135,8 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       if (data['success'] == true) {
         final prefs = await SharedPreferences.getInstance();
         final storedUserRaw = prefs.getString('userData');
-        final storedUser = storedUserRaw == null
-            ? null
-            : jsonDecode(storedUserRaw);
+        final storedUser =
+            storedUserRaw == null ? null : jsonDecode(storedUserRaw);
         final Map<String, dynamic> mergedUser = storedUser is Map
             ? Map<String, dynamic>.from(storedUser)
             : (data['user'] is Map
@@ -159,8 +160,10 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         });
       }
     } catch (e) {
+      final failure = GoogleSignInFailure.fromError(e);
+      debugPrint(failure.logMessage);
       setState(() {
-        _statusMessage = 'Network or sign-in error: $e';
+        _statusMessage = failure.userMessage;
         _backendResponse = null;
       });
     } finally {
