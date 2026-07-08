@@ -3,6 +3,7 @@ import 'dart:async';
 import '../services/ai_service.dart';
 import '../widgets/ai_structured_widgets.dart';
 import 'package:hello/localization/app_localizations.dart';
+import '../features/lost_found/lost_person_detail_page.dart';
 
 class ChatScreen extends StatefulWidget {
   final String? initialDocumentId;
@@ -212,6 +213,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     Map<String, dynamic>? context,
     Map<String, dynamic>? documentMetadata,
     List<DocumentInfo>? documents,
+    List<Map<String, dynamic>>? lostPersonResults,
   }) {
     setState(() {
       _messages.add(ChatMessage(
@@ -225,6 +227,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         context: context,
         documentMetadata: documentMetadata,
         documents: documents,
+        lostPersonResults: lostPersonResults,
       ));
     });
     _scrollToBottom();
@@ -281,9 +284,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       if (response.success) {
         _conversationId =
             response.context?['conversationId']?.toString() ?? _conversationId;
-        // Convert document data to DocumentInfo objects if present
+        final lostPersonResults = response.responseType == 'lost_person_results'
+            ? (response.items ?? response.data)
+            : null;
+        // Convert document data to DocumentInfo objects if present.
         List<DocumentInfo>? documentInfos;
-        if (response.data != null) {
+        if (response.data != null && lostPersonResults == null) {
           documentInfos =
               response.data!.map((doc) => DocumentInfo.fromJson(doc)).toList();
         }
@@ -298,6 +304,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           context: response.context,
           documentMetadata: response.documentMetadata,
           documents: documentInfos,
+          lostPersonResults: lostPersonResults,
         );
       } else {
         // Handle authentication error specifically
@@ -374,6 +381,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           safety: response.safety,
           context: response.context,
           documentMetadata: response.documentMetadata,
+          lostPersonResults: response.responseType == 'lost_person_results'
+              ? (response.items ?? response.data)
+              : null,
         );
       } else {
         _addMessage(
@@ -567,7 +577,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       responseType: message.responseType,
                       safety: message.safety,
                     ),
-                  // Add document list if present
+                  // Add document list if present.
                   if (!message.isUser &&
                       message.documents != null &&
                       message.documents!.isNotEmpty)
@@ -583,14 +593,40 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        ...message.documents!.map((doc) => DocumentPreviewCard(
-                              id: doc.id,
-                              name: doc.name,
-                              type: doc.type,
-                              date: doc.date,
-                              previewUrl: doc.previewUrl,
-                              onTap: () => _analyzeDocument(doc.id, doc.name),
-                            )),
+                        ...message.documents!.map(
+                          (doc) => DocumentPreviewCard(
+                            id: doc.id,
+                            name: doc.name,
+                            type: doc.type,
+                            date: doc.date,
+                            previewUrl: doc.previewUrl,
+                            onTap: () => _analyzeDocument(doc.id, doc.name),
+                          ),
+                        ),
+                      ],
+                    ),
+                  if (!message.isUser &&
+                      message.lostPersonResults != null &&
+                      message.lostPersonResults!.isNotEmpty)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 8),
+                        ...message.lostPersonResults!.map(
+                          (report) => _LostPersonChatCard(
+                            report: report,
+                            onTap: () {
+                              final id = report['id']?.toString() ?? '';
+                              if (id.isEmpty) return;
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      LostPersonDetailPage(reportId: id),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
                       ],
                     ),
                 ],
@@ -736,6 +772,7 @@ class ChatMessage {
   final Map<String, dynamic>? context;
   final Map<String, dynamic>? documentMetadata;
   final List<DocumentInfo>? documents;
+  final List<Map<String, dynamic>>? lostPersonResults;
 
   ChatMessage({
     required this.text,
@@ -748,5 +785,51 @@ class ChatMessage {
     this.context,
     this.documentMetadata,
     this.documents,
+    this.lostPersonResults,
   });
+}
+
+class _LostPersonChatCard extends StatelessWidget {
+  const _LostPersonChatCard({
+    required this.report,
+    required this.onTap,
+  });
+
+  final Map<String, dynamic> report;
+  final VoidCallback onTap;
+
+  String _value(String key, [String fallback = '']) {
+    final value = report[key]?.toString().trim() ?? '';
+    return value.isEmpty ? fallback : value;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      elevation: 0,
+      child: ListTile(
+        leading: const Icon(Icons.person_search_rounded),
+        title: Text(
+          _value('personName', 'Unnamed person'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          [
+            _value('lastSeenLocation', 'Location unavailable'),
+            _value('status', 'open'),
+          ].join(' • '),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: Icon(
+          Icons.chevron_right_rounded,
+          color: theme.colorScheme.primary,
+        ),
+        onTap: onTap,
+      ),
+    );
+  }
 }

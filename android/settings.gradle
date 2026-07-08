@@ -22,7 +22,8 @@ plugins {
     // START: FlutterFire Configuration
     id "com.google.gms.google-services" version "4.4.3" apply false
     // END: FlutterFire Configuration
-    id "org.jetbrains.kotlin.android" version "2.1.20" apply false
+    // Kotlin 2.3.x is required by the resolved Android dependencies.
+    id "org.jetbrains.kotlin.android" version "2.3.10" apply false
 }
 
 include ":app"

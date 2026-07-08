@@ -97,13 +97,13 @@ class SessionConflictService {
 
   void _startSessionHealthPolling() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       unawaited(_runHeartbeat());
     });
     unawaited(_runHeartbeat());
 
     _sessionHealthTimer?.cancel();
-    _sessionHealthTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+    _sessionHealthTimer = Timer.periodic(const Duration(minutes: 2), (_) {
       unawaited(_runSessionHealthCheck());
     });
     unawaited(_runSessionHealthCheck());

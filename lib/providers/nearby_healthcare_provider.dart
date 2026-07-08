@@ -20,7 +20,7 @@ class NearbyHealthcareProvider extends ChangeNotifier {
   final Map<String, NearbyPlace> _favoritePlacesById = {};
   final Set<String> _inFlightLoads = {};
 
-  NearbyPlaceCategory _selectedCategory = NearbyPlaceCategory.hospitals;
+  NearbyPlaceCategory _selectedCategory = NearbyPlaceCategory.all;
   Position? _position;
   bool _loading = false;
   bool _usingCache = false;
@@ -132,6 +132,11 @@ class NearbyHealthcareProvider extends ChangeNotifier {
     try {
       final radiusMeters = _radiusKm * 1000;
       final places = switch (_selectedCategory) {
+        NearbyPlaceCategory.all => await _placesService.getNearbyAll(
+            origin: origin,
+            radiusMeters: radiusMeters,
+            forceRefresh: forceRefresh,
+          ),
         NearbyPlaceCategory.hospitals =>
           await _placesService.getNearbyHospitals(
             origin: origin,
@@ -143,8 +148,19 @@ class NearbyHealthcareProvider extends ChangeNotifier {
             radiusMeters: radiusMeters,
             forceRefresh: forceRefresh,
           ),
+        NearbyPlaceCategory.doctors => await _placesService.getNearbyDoctors(
+            origin: origin,
+            radiusMeters: radiusMeters,
+            forceRefresh: forceRefresh,
+          ),
         NearbyPlaceCategory.medicalStores =>
           await _placesService.getNearbyMedicalStores(
+            origin: origin,
+            radiusMeters: radiusMeters,
+            forceRefresh: forceRefresh,
+          ),
+        NearbyPlaceCategory.diagnosticLabs =>
+          await _placesService.getNearbyDiagnosticLabs(
             origin: origin,
             radiusMeters: radiusMeters,
             forceRefresh: forceRefresh,

@@ -8,6 +8,10 @@ class AppEnvironment {
     'GOOGLE_MAPS_API_KEY',
     defaultValue: '',
   );
+  static const String _legacyMapsKeyFromDefine = String.fromEnvironment(
+    'MAPS_API_KEY',
+    defaultValue: '',
+  );
 
   static bool _dotenvLoaded = false;
 
@@ -25,9 +29,23 @@ class AppEnvironment {
   }
 
   static String get googleMapsApiKey {
-    final fromDefine = _mapsKeyFromDefine.trim();
-    if (fromDefine.isNotEmpty) return fromDefine;
-    return (dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '').trim();
+    final defineCandidates = <String>[
+      _mapsKeyFromDefine.trim(),
+      _legacyMapsKeyFromDefine.trim(),
+    ];
+    for (final candidate in defineCandidates) {
+      if (candidate.isNotEmpty) return candidate;
+    }
+
+    final envCandidates = <String>[
+      (dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '').trim(),
+      (dotenv.env['MAPS_API_KEY'] ?? '').trim(),
+    ];
+    for (final candidate in envCandidates) {
+      if (candidate.isNotEmpty) return candidate;
+    }
+
+    return '';
   }
 
   static bool get hasGoogleMapsApiKey => googleMapsApiKey.isNotEmpty;

@@ -22,6 +22,7 @@ class UploadDocument extends StatefulWidget {
 }
 
 class _UploadDocumentState extends State<UploadDocument> {
+  static const int _maxUploadBytes = 50 * 1024 * 1024;
   File? _selectedFile;
   String? _selectedCategory;
   DateTime? _selectedDate;
@@ -79,8 +80,16 @@ class _UploadDocumentState extends State<UploadDocument> {
         );
         return;
       }
+      final file = File(selectedPath);
+      if (await file.length() > _maxUploadBytes) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File too large')),
+        );
+        return;
+      }
       setState(() {
-        _selectedFile = File(selectedPath);
+        _selectedFile = file;
       });
     }
   }
@@ -103,8 +112,16 @@ class _UploadDocumentState extends State<UploadDocument> {
         );
         return;
       }
+      final file = File(photo.path);
+      if (await file.length() > _maxUploadBytes) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File too large')),
+        );
+        return;
+      }
       setState(() {
-        _selectedFile = File(photo.path);
+        _selectedFile = file;
       });
     }
   }
@@ -177,6 +194,7 @@ class _UploadDocumentState extends State<UploadDocument> {
   }
 
   Future<void> _uploadDocument() async {
+    if (_isUploading) return;
     final l10n = context.l10n;
     if (_selectedFile == null ||
         _titleController.text.isEmpty ||
@@ -186,6 +204,15 @@ class _UploadDocumentState extends State<UploadDocument> {
       );
       return;
     }
+
+    if (await _selectedFile!.length() > _maxUploadBytes) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File too large')),
+      );
+      return;
+    }
+    if (!mounted) return;
 
     // Initialize progress to 0
     setState(() {
@@ -200,7 +227,7 @@ class _UploadDocumentState extends State<UploadDocument> {
     // Small delay to ensure UI updates
     await Future.delayed(const Duration(milliseconds: 50));
 
-    DocumentUploadResult? result;
+    late final DocumentUploadResult result;
     try {
       result = await ApiService.uploadDocumentDetailed(
         file: _selectedFile!,
@@ -227,6 +254,12 @@ class _UploadDocumentState extends State<UploadDocument> {
       );
     } catch (e) {
       debugPrint("Upload error: $e");
+      result = DocumentUploadResult(
+        success: false,
+        message: e.toString().contains('SocketException')
+            ? 'Network error'
+            : 'Upload failed, please try again',
+      );
     }
 
     _closeVerificationDialog();
@@ -239,8 +272,8 @@ class _UploadDocumentState extends State<UploadDocument> {
       });
     }
 
-    final doc = result?.document;
-    if (result?.success == true && doc != null) {
+    final doc = result.document;
+    if (result.success && doc != null) {
       if (mounted) {
         final message = doc.isMedicalVerified
             ? l10n.t('uploadDocument.success.verified')
@@ -254,8 +287,8 @@ class _UploadDocumentState extends State<UploadDocument> {
       }
     } else {
       if (mounted) {
-        final message = result?.message.trim().isNotEmpty == true
-            ? result!.message
+        final message = result.message.trim().isNotEmpty
+            ? result.message
             : l10n.t('uploadDocument.error.uploadFailed');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message), backgroundColor: Colors.red),

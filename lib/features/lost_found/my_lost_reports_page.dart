@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../api_service.dart';
 import '../../localization/app_localizations.dart';
 import '../../utils/timezone_utils.dart';
+import 'lost_person_photo.dart';
 
 class MyLostReportsPage extends StatefulWidget {
   const MyLostReportsPage({super.key});
@@ -114,70 +115,12 @@ class _MyLostReportsPageState extends State<MyLostReportsPage> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (photoUrl != null && photoUrl.isNotEmpty)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(
-                      photoUrl,
-                      width: 72,
-                      height: 72,
-                      fit: BoxFit.cover,
-                      headers: const {
-                        'Cache-Control': 'max-age=3600',
-                      },
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.surfaceVariant,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Center(
-                            child: CircularProgressIndicator(
-                              value: loadingProgress.expectedTotalBytes != null
-                                  ? loadingProgress.cumulativeBytesLoaded /
-                                      loadingProgress.expectedTotalBytes!
-                                  : null,
-                              strokeWidth: 2,
-                            ),
-                          ),
-                        );
-                      },
-                      errorBuilder: (context, error, stackTrace) {
-                        // Log error for debugging but show fallback UI
-                        debugPrint(
-                            'Image load error: $error for URL: $photoUrl');
-                        return Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.surfaceVariant,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.person_search,
-                            color: theme.colorScheme.onSurfaceVariant,
-                            size: 36,
-                          ),
-                        );
-                      },
-                    ),
-                  )
-                else
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surfaceVariant,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      Icons.person_search,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
+                LostPersonPhoto(
+                  photoUrl: photoUrl,
+                  width: 72,
+                  height: 72,
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(

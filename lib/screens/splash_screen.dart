@@ -30,12 +30,13 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   static const Duration _minSplashDuration = Duration(milliseconds: 3000);
 
   final AppUpdateService _appUpdateService = AppUpdateService();
 
   AnimationController? _timelineController;
+  Completer<void>? _resumeSignal;
   bool _useStaticFallback = false;
   bool _didHapticPulse = false;
 
@@ -46,6 +47,7 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(SessionConflictService.instance.initialize());
     _initializeTimelineAnimation();
     _startSplashFlow();
@@ -80,9 +82,21 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   void dispose() {
     _isDisposed = true;
+    WidgetsBinding.instance.removeObserver(this);
+    _resumeSignal?.complete();
+    _resumeSignal = null;
     _timelineController?.removeListener(_handleTimelineTick);
     _timelineController?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final signal = _resumeSignal;
+    if (signal != null && !signal.isCompleted) {
+      signal.complete();
+    }
   }
 
   Future<void> _startSplashFlow() async {
@@ -329,6 +343,48 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
+  Future<void> _waitForResumeOrDelay(Duration timeout) async {
+    if (!mounted || _isDisposed) return;
+    final signal = Completer<void>();
+    _resumeSignal = signal;
+    try {
+      await signal.future.timeout(timeout);
+    } on TimeoutException {
+      // Poll again even if Android did not send a lifecycle resume event.
+    } finally {
+      if (identical(_resumeSignal, signal)) {
+        _resumeSignal = null;
+      }
+    }
+  }
+
+  Future<bool> _waitUntilUpdatedVersionInstalled(
+    AppUpdateInfo info, {
+    required ValueChanged<String> onStatus,
+  }) async {
+    for (var attempt = 0; attempt < 72; attempt++) {
+      if (!mounted || _isDisposed) return false;
+      try {
+        final installedVersion = await _appUpdateService.getInstalledVersion();
+        if (AppUpdateService.compareVersions(
+              installedVersion,
+              info.latestVersion,
+            ) >=
+            0) {
+          return true;
+        }
+      } catch (_) {
+        // Keep waiting; PackageInfo can be briefly unavailable during install.
+      }
+
+      onStatus(
+        'Waiting for Android to finish installing version ${info.latestVersion}. Complete the installer prompt to continue.',
+      );
+      await _waitForResumeOrDelay(const Duration(seconds: 5));
+    }
+    return false;
+  }
+
   Future<bool> _showUpdateDialog({
     required AppUpdateCheckResult checkResult,
     required AppUpdateInfo info,
@@ -429,6 +485,13 @@ class _SplashScreenState extends State<SplashScreen>
                     TextButton(
                       onPressed: downloading
                           ? null
+                          : () => Navigator.of(dialogContext).pop(true),
+                      child: Text(l10n.auto('Later')),
+                    ),
+                  if (!forceUpdate)
+                    TextButton(
+                      onPressed: downloading
+                          ? null
                           : () async {
                               await _appUpdateService.skipVersionFor24Hours(
                                 info.latestVersion,
@@ -462,39 +525,50 @@ class _SplashScreenState extends State<SplashScreen>
 
                             if (!mounted) return;
 
+                            if (!installResult.isSuccess) {
+                              setDialogState(() {
+                                downloading = false;
+                                checksumVerified =
+                                    installResult.checksumVerified;
+                                statusText = installResult.message;
+                              });
+                              return;
+                            }
+
                             setDialogState(() {
-                              downloading = false;
+                              downloading = true;
+                              progress = 1;
                               checksumVerified = installResult.checksumVerified;
-                              statusText = installResult.message;
+                              statusText = installResult.installCompleted
+                                  ? 'Verifying installed update...'
+                                  : installResult.message;
                             });
 
-                            if (installResult.isSuccess) {
-                              if (installResult.installCompleted) {
-                                if (!dialogContext.mounted) return;
-                                Navigator.of(dialogContext).pop(true);
-                                await Future.delayed(
-                                  const Duration(milliseconds: 250),
-                                );
-                                if (!_isDisposed) {
-                                  SystemNavigator.pop();
-                                }
-                                return;
-                              }
+                            final installed =
+                                await _waitUntilUpdatedVersionInstalled(
+                              info,
+                              onStatus: (message) {
+                                if (!mounted || !dialogContext.mounted) return;
+                                setDialogState(() {
+                                  downloading = true;
+                                  progress = 1;
+                                  statusText = message;
+                                });
+                              },
+                            );
 
-                              if (forceUpdate) {
-                                if (!dialogContext.mounted) return;
-                                Navigator.of(dialogContext).pop(false);
-                                await Future.delayed(
-                                  const Duration(milliseconds: 250),
-                                );
-                                if (!_isDisposed) {
-                                  SystemNavigator.pop();
-                                }
-                                return;
-                              }
-                              if (!dialogContext.mounted) return;
+                            if (!mounted || !dialogContext.mounted) return;
+                            if (installed) {
                               Navigator.of(dialogContext).pop(true);
+                              return;
                             }
+
+                            setDialogState(() {
+                              downloading = false;
+                              statusText = forceUpdate
+                                  ? 'Update was not completed. Install version ${info.latestVersion} to continue.'
+                                  : 'Install was not completed. You can tap Later or Skip Version to continue without updating.';
+                            });
                           },
                     child: Text(
                       downloading

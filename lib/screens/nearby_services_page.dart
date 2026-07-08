@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/theme/theme.dart';
+import '../config/app_environment.dart';
 import '../models/nearby_place.dart';
 import '../providers/nearby_healthcare_provider.dart';
 import '../services/location_permission_service.dart';
@@ -46,6 +47,7 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(_onSearchInputChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bootstrapLocation();
     });
@@ -54,8 +56,14 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _searchController.removeListener(_onSearchInputChanged);
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchInputChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _bootstrapLocation() async {
@@ -169,6 +177,52 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
     }
   }
 
+  Future<void> _openDirections(NearbyPlace place) async {
+    final uri = Uri.https('www.google.com', '/maps/dir/', {
+      'api': '1',
+      'destination':
+          '${place.latitude.toStringAsFixed(6)},${place.longitude.toStringAsFixed(6)}',
+    });
+
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      _showSnack('Unable to open directions.');
+    }
+  }
+
+  Future<void> _openMapsSearch(NearbyPlaceCategory category) async {
+    final position = context.read<NearbyHealthcareProvider>().position;
+    final query = _mapsSearchQuery(category);
+    final Uri uri;
+    if (position == null) {
+      uri = Uri.https('www.google.com', '/maps/search/', {
+        'api': '1',
+        'query': '$query near me',
+      });
+    } else {
+      uri = Uri.parse(
+        'https://www.google.com/maps/search/${Uri.encodeComponent(query)}/@'
+        '${position.latitude.toStringAsFixed(6)},'
+        '${position.longitude.toStringAsFixed(6)},15z',
+      );
+    }
+
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      _showSnack('Unable to open Google Maps.');
+    }
+  }
+
+  String _mapsSearchQuery(NearbyPlaceCategory category) {
+    return switch (category) {
+      NearbyPlaceCategory.all => 'healthcare',
+      NearbyPlaceCategory.hospitals => 'hospitals',
+      NearbyPlaceCategory.clinics => 'clinics',
+      NearbyPlaceCategory.doctors => 'doctors',
+      NearbyPlaceCategory.medicalStores => 'pharmacies',
+      NearbyPlaceCategory.diagnosticLabs => 'diagnostic labs',
+      NearbyPlaceCategory.ambulances => 'emergency hospitals',
+    };
+  }
+
   void _showSnack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -194,38 +248,179 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
         ],
       ),
       body: SafeArea(
-        child: Consumer<NearbyHealthcareProvider>(
-          builder: (context, provider, _) {
-            return Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-                  child: Column(
-                    children: [
-                      _buildEmergencySection(provider),
-                      const SizedBox(height: 12),
-                      _buildSearchAndFilters(provider),
-                      _buildRecentSearches(provider),
-                      const SizedBox(height: 10),
-                      _buildCategoryCards(provider),
-                      const SizedBox(height: 10),
-                      _buildViewToggle(),
-                      _buildStatus(provider),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: _viewMode == _NearbyViewMode.list
-                      ? _buildResultsList(provider)
-                      : _NearbyMapView(
-                          places: provider.filteredPlaces,
-                          userPosition: provider.position,
-                          category: provider.selectedCategory,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isCompactHeight = constraints.maxHeight < 720;
+            final headerMaxHeight =
+                isCompactHeight ? constraints.maxHeight * 0.46 : 420.0;
+
+            return Consumer<NearbyHealthcareProvider>(
+              builder: (context, provider, _) {
+                return Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: headerMaxHeight),
+                        child: SingleChildScrollView(
+                          physics: const ClampingScrollPhysics(),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildHeroSection(provider),
+                              const SizedBox(height: 12),
+                              _buildEmergencySection(provider),
+                              const SizedBox(height: 12),
+                              _buildRadiusSelector(provider),
+                              const SizedBox(height: 10),
+                              _buildSearchAndFilters(provider),
+                              _buildRecentSearches(provider),
+                              const SizedBox(height: 10),
+                              _buildCategoryCards(provider),
+                              const SizedBox(height: 10),
+                              _buildViewToggle(),
+                              _buildStatus(provider),
+                            ],
+                          ),
                         ),
-                ),
-              ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _viewMode == _NearbyViewMode.list
+                          ? _buildResultsList(provider)
+                          : _NearbyMapView(
+                              places: provider.filteredPlaces,
+                              userPosition: provider.position,
+                              category: provider.selectedCategory,
+                            ),
+                    ),
+                  ],
+                );
+              },
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeroSection(NearbyHealthcareProvider provider) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final hasLocation = provider.position != null;
+    final placeCount = provider.filteredPlaces.length;
+    final apiKeyReady = AppEnvironment.hasGoogleMapsApiKey;
+    final statusText = provider.usingCache
+        ? (provider.usingStaleCache ? 'Cached fallback' : 'Cached results')
+        : 'Live results';
+
+    return CustomCard(
+      radius: AppRadii.large,
+      softShadow: true,
+      padding: const EdgeInsets.all(16),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppRadii.large),
+          gradient: LinearGradient(
+            colors: [
+              colorScheme.primaryContainer.withValues(alpha: 0.95),
+              colorScheme.tertiaryContainer.withValues(alpha: 0.90),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 22,
+                    backgroundColor:
+                        colorScheme.onPrimaryContainer.withValues(alpha: 0.14),
+                    foregroundColor: colorScheme.onPrimaryContainer,
+                    child: const Icon(Icons.local_hospital_rounded),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AppText(
+                          'Nearby care around you',
+                          variant: AppTextVariant.subtitle,
+                          fontWeight: FontWeight.w900,
+                          color: colorScheme.onPrimaryContainer,
+                        ),
+                        const SizedBox(height: 4),
+                        AppText(
+                          'Hospitals, clinics, pharmacies, diagnostic labs, and emergency care on the map and list.',
+                          variant: AppTextVariant.caption,
+                          color: colorScheme.onPrimaryContainer.withValues(
+                            alpha: 0.86,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _HeaderChip(
+                    icon: hasLocation
+                        ? Icons.my_location_rounded
+                        : Icons.location_searching_rounded,
+                    label: hasLocation ? 'Location ready' : 'Finding location',
+                  ),
+                  _HeaderChip(
+                    icon: Icons.radar_rounded,
+                    label: '${provider.radiusKm.toStringAsFixed(0)} km radius',
+                  ),
+                  _HeaderChip(
+                    icon: Icons.place_rounded,
+                    label: placeCount > 0
+                        ? '$placeCount places shown'
+                        : 'No places yet',
+                  ),
+                  _HeaderChip(
+                    icon: provider.usingCache
+                        ? Icons.cloud_off_rounded
+                        : Icons.wifi_tethering_rounded,
+                    label: statusText,
+                  ),
+                ],
+              ),
+              if (!apiKeyReady) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      size: 18,
+                      color: colorScheme.onPrimaryContainer,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: AppText(
+                        'Google Maps API key is not configured. Add `GOOGLE_MAPS_API_KEY` or `MAPS_API_KEY` in `.env`.',
+                        variant: AppTextVariant.caption,
+                        color: colorScheme.onPrimaryContainer.withValues(
+                          alpha: 0.88,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -250,7 +445,9 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
               final compact = constraints.maxWidth < 430;
               final itemWidth = compact
                   ? constraints.maxWidth
-                  : (constraints.maxWidth - 16) / 3;
+                  : ((constraints.maxWidth - 16) / 3)
+                      .clamp(112, 180)
+                      .toDouble();
               return Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -291,37 +488,113 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
   }
 
   Widget _buildSearchAndFilters(NearbyHealthcareProvider provider) {
-    return Row(
-      children: [
-        Expanded(
-          child: TextField(
-            controller: _searchController,
-            onChanged: _onSearchChanged,
-            onSubmitted: provider.saveRecentSearch,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: 'Search name, area, address',
-              prefixIcon: const Icon(Icons.search_rounded),
-              suffixIcon: _searchController.text.trim().isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Clear',
-                      icon: const Icon(Icons.close_rounded),
-                      onPressed: () {
-                        _searchController.clear();
-                        provider.setSearchQuery('');
-                      },
-                    ),
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 420;
+        final searchField = TextField(
+          controller: _searchController,
+          onChanged: _onSearchChanged,
+          onSubmitted: provider.saveRecentSearch,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            hintText: 'Search name, area, address',
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: _searchController.text.trim().isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Clear',
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () {
+                      _searchController.clear();
+                      provider.setSearchQuery('');
+                    },
+                  ),
           ),
-        ),
-        const SizedBox(width: 10),
-        IconButton.filledTonal(
-          tooltip: 'Filters',
-          onPressed: () => _showFilterSheet(provider),
-          icon: const Icon(Icons.tune_rounded),
-        ),
-      ],
+        );
+
+        if (isCompact) {
+          return Column(
+            children: [
+              searchField,
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => _showFilterSheet(provider),
+                  icon: const Icon(Icons.tune_rounded),
+                  label: const Text('Filters'),
+                ),
+              ),
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: searchField),
+            const SizedBox(width: 10),
+            IconButton.filledTonal(
+              tooltip: 'Filters',
+              onPressed: () => _showFilterSheet(provider),
+              icon: const Icon(Icons.tune_rounded),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildRadiusSelector(NearbyHealthcareProvider provider) {
+    const radiusOptions = [1.0, 3.0, 5.0, 10.0, 25.0];
+    final selectedRadius = provider.radiusKm;
+
+    Future<void> applyRadius(double radiusKm) {
+      return provider.updateFilters(
+        radiusKm: radiusKm,
+        minimumRating: provider.minimumRating,
+        openNowOnly: provider.openNowOnly,
+      );
+    }
+
+    return CustomCard(
+      padding: const EdgeInsets.all(12),
+      radius: AppRadii.small,
+      softShadow: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const AppText(
+            'Search Radius',
+            variant: AppTextVariant.caption,
+            fontWeight: FontWeight.w900,
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final option in radiusOptions)
+                ChoiceChip(
+                  label: Text('${option.toStringAsFixed(0)} km'),
+                  selected: (selectedRadius - option).abs() < 0.1,
+                  onSelected:
+                      provider.loading ? null : (_) => applyRadius(option),
+                ),
+              ActionChip(
+                avatar: const Icon(Icons.tune_rounded, size: 16),
+                label: Text(
+                  radiusOptions.any(
+                          (option) => (selectedRadius - option).abs() < 0.1)
+                      ? 'Custom'
+                      : '${selectedRadius.toStringAsFixed(0)} km custom',
+                ),
+                onPressed:
+                    provider.loading ? null : () => _showFilterSheet(provider),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -367,7 +640,13 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
           final category = categories[index];
           final selected = category == provider.selectedCategory;
           return SizedBox(
-            width: category == NearbyPlaceCategory.medicalStores ? 154 : 126,
+            width: switch (category) {
+              NearbyPlaceCategory.all => 110,
+              NearbyPlaceCategory.medicalStores => 136,
+              NearbyPlaceCategory.diagnosticLabs => 154,
+              NearbyPlaceCategory.ambulances => 178,
+              _ => 126,
+            },
             child: CustomCard(
               onTap: () => provider.selectCategory(category),
               padding: const EdgeInsets.all(12),
@@ -434,6 +713,14 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
 
   Widget _buildStatus(NearbyHealthcareProvider provider) {
     final chips = <Widget>[];
+    if (!provider.usingCache && provider.filteredPlaces.isNotEmpty) {
+      chips.add(
+        const Chip(
+          avatar: Icon(Icons.wifi_tethering_rounded, size: 16),
+          label: Text('Live'),
+        ),
+      );
+    }
     if (provider.usingCache) {
       chips.add(
         Chip(
@@ -455,6 +742,22 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
         const Chip(
           avatar: Icon(Icons.schedule_rounded, size: 16),
           label: Text('Open now'),
+        ),
+      );
+    }
+    if (!AppEnvironment.hasGoogleMapsApiKey) {
+      chips.add(
+        Chip(
+          avatar: Icon(
+            Icons.warning_amber_rounded,
+            size: 16,
+            color: Theme.of(context).colorScheme.error,
+          ),
+          label: Text(
+            'Map key missing',
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+          side: BorderSide(color: Theme.of(context).colorScheme.error),
         ),
       );
     }
@@ -498,21 +801,9 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
         onRefresh: provider.refresh,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(20, 40, 20, 40),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           children: [
-            Icon(
-              Icons.travel_explore_rounded,
-              size: 46,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(height: 12),
-            const Center(
-              child: AppText(
-                'No services found for these filters.',
-                variant: AppTextVariant.body,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+            _buildEmptyState(provider),
           ],
         ),
       );
@@ -570,6 +861,7 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: CustomCard(
+        onTap: () => _showPlaceDetails(provider, place),
         radius: AppRadii.small,
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -673,6 +965,222 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
     );
   }
 
+  Widget _buildEmptyState(NearbyHealthcareProvider provider) {
+    final message = provider.message.trim();
+    final hasErrorMessage = message.isNotEmpty;
+    final title = hasErrorMessage
+        ? 'Live nearby lookup needs attention'
+        : 'No services found with these filters';
+    final description = hasErrorMessage
+        ? message
+        : 'Structured provider data is unavailable for these filters. You can continue in Google Maps.';
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return CustomCard(
+      radius: AppRadii.large,
+      softShadow: false,
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 24,
+            backgroundColor: colorScheme.primary.withValues(alpha: 0.12),
+            foregroundColor: colorScheme.primary,
+            child: Icon(
+              hasErrorMessage
+                  ? Icons.error_outline_rounded
+                  : Icons.travel_explore_rounded,
+            ),
+          ),
+          const SizedBox(height: 14),
+          AppText(
+            title,
+            variant: AppTextVariant.subtitle,
+            fontWeight: FontWeight.w900,
+          ),
+          const SizedBox(height: 8),
+          AppText(
+            description,
+            variant: AppTextVariant.body,
+            color: colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(height: 16),
+          _buildMapsFallbackCards(),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: provider.loading ? null : provider.refresh,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _callNumber('108'),
+                icon: const Icon(Icons.local_phone_rounded),
+                label: const Text('108 Ambulance'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _callNumber('112'),
+                icon: const Icon(Icons.emergency_rounded),
+                label: const Text('112 Emergency'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMapsFallbackCards() {
+    const categories = [
+      NearbyPlaceCategory.hospitals,
+      NearbyPlaceCategory.clinics,
+      NearbyPlaceCategory.medicalStores,
+      NearbyPlaceCategory.diagnosticLabs,
+      NearbyPlaceCategory.ambulances,
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 440;
+        final cardWidth = compact
+            ? constraints.maxWidth
+            : ((constraints.maxWidth - 10) / 2).clamp(150.0, 260.0);
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final category in categories)
+              SizedBox(
+                width: cardWidth,
+                child: OutlinedButton.icon(
+                  onPressed: () => _openMapsSearch(category),
+                  icon: Icon(_categoryIcon(category), size: 18),
+                  label: Text(
+                    'Search ${category.label.toLowerCase()}',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showPlaceDetails(
+    NearbyHealthcareProvider provider,
+    NearbyPlace place,
+  ) async {
+    final phone = place.phoneNumber?.trim() ?? '';
+    final status = _openStatusLabel(place);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return FractionallySizedBox(
+          heightFactor: 0.78,
+          child: SafeArea(
+            child: SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                4,
+                20,
+                20 + MediaQuery.of(sheetContext).padding.bottom,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AppText(
+                    place.name,
+                    variant: AppTextVariant.subtitle,
+                    fontWeight: FontWeight.w900,
+                  ),
+                  const SizedBox(height: 8),
+                  AppText(
+                    place.address.isEmpty
+                        ? 'Address unavailable'
+                        : place.address,
+                    variant: AppTextVariant.body,
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _InfoPill(
+                        icon: Icons.near_me_rounded,
+                        label: '${place.distanceKm.toStringAsFixed(2)} km',
+                      ),
+                      _InfoPill(
+                        icon: Icons.star_rounded,
+                        label: place.rating > 0
+                            ? place.rating.toStringAsFixed(1)
+                            : 'Not rated',
+                      ),
+                      _InfoPill(
+                        icon: Icons.schedule_rounded,
+                        label: status,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      FilledButton.icon(
+                        onPressed:
+                            phone.isEmpty ? null : () => _callNumber(phone),
+                        icon: const Icon(Icons.call_rounded),
+                        label: const Text('Call'),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: () => _openDirections(place),
+                        icon: const Icon(Icons.map_rounded),
+                        label: const Text('Directions'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await provider.toggleFavorite(place);
+                          if (sheetContext.mounted) {
+                            Navigator.of(sheetContext).pop();
+                          }
+                        },
+                        icon: Icon(
+                          provider.isFavorite(place)
+                              ? Icons.bookmark_rounded
+                              : Icons.bookmark_border_rounded,
+                        ),
+                        label: Text(
+                          provider.isFavorite(place) ? 'Saved' : 'Save place',
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _showFilterSheet(NearbyHealthcareProvider provider) async {
     var radiusKm = provider.radiusKm;
     var minimumRating = provider.minimumRating;
@@ -681,97 +1189,104 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                20,
-                4,
-                20,
-                20 + MediaQuery.of(context).padding.bottom,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const AppText(
-                    'Filters',
-                    variant: AppTextVariant.subtitle,
-                    fontWeight: FontWeight.w800,
+            return FractionallySizedBox(
+              heightFactor: 0.72,
+              child: SafeArea(
+                child: SingleChildScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    4,
+                    20,
+                    20 + MediaQuery.of(context).padding.bottom,
                   ),
-                  const SizedBox(height: 16),
-                  AppText(
-                    'Distance: ${radiusKm.toStringAsFixed(0)} km',
-                    variant: AppTextVariant.body,
-                    fontWeight: FontWeight.w700,
-                  ),
-                  Slider(
-                    min: 1,
-                    max: 30,
-                    divisions: 29,
-                    value: radiusKm,
-                    label: '${radiusKm.toStringAsFixed(0)} km',
-                    onChanged: (value) {
-                      setSheetState(() => radiusKm = value);
-                    },
-                  ),
-                  AppText(
-                    minimumRating <= 0
-                        ? 'Rating: Any'
-                        : 'Rating: ${minimumRating.toStringAsFixed(1)}+',
-                    variant: AppTextVariant.body,
-                    fontWeight: FontWeight.w700,
-                  ),
-                  Slider(
-                    min: 0,
-                    max: 5,
-                    divisions: 10,
-                    value: minimumRating,
-                    label: minimumRating <= 0
-                        ? 'Any'
-                        : '${minimumRating.toStringAsFixed(1)}+',
-                    onChanged: (value) {
-                      setSheetState(() => minimumRating = value);
-                    },
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Open Now'),
-                    value: openNowOnly,
-                    onChanged: (value) {
-                      setSheetState(() => openNowOnly = value);
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      TextButton(
-                        onPressed: () {
-                          setSheetState(() {
-                            radiusKm = 10;
-                            minimumRating = 0;
-                            openNowOnly = false;
-                          });
-                        },
-                        child: const Text('Reset'),
+                      const AppText(
+                        'Filters',
+                        variant: AppTextVariant.subtitle,
+                        fontWeight: FontWeight.w800,
                       ),
-                      const Spacer(),
-                      FilledButton.icon(
-                        onPressed: () async {
-                          Navigator.of(sheetContext).pop();
-                          await provider.updateFilters(
-                            radiusKm: radiusKm,
-                            minimumRating: minimumRating,
-                            openNowOnly: openNowOnly,
-                          );
+                      const SizedBox(height: 16),
+                      AppText(
+                        'Distance: ${radiusKm.toStringAsFixed(0)} km',
+                        variant: AppTextVariant.body,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      Slider(
+                        min: 1,
+                        max: 30,
+                        divisions: 29,
+                        value: radiusKm,
+                        label: '${radiusKm.toStringAsFixed(0)} km',
+                        onChanged: (value) {
+                          setSheetState(() => radiusKm = value);
                         },
-                        icon: const Icon(Icons.check_rounded),
-                        label: const Text('Apply'),
+                      ),
+                      AppText(
+                        minimumRating <= 0
+                            ? 'Rating: Any'
+                            : 'Rating: ${minimumRating.toStringAsFixed(1)}+',
+                        variant: AppTextVariant.body,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      Slider(
+                        min: 0,
+                        max: 5,
+                        divisions: 10,
+                        value: minimumRating,
+                        label: minimumRating <= 0
+                            ? 'Any'
+                            : '${minimumRating.toStringAsFixed(1)}+',
+                        onChanged: (value) {
+                          setSheetState(() => minimumRating = value);
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Open Now'),
+                        value: openNowOnly,
+                        onChanged: (value) {
+                          setSheetState(() => openNowOnly = value);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              setSheetState(() {
+                                radiusKm = 10;
+                                minimumRating = 0;
+                                openNowOnly = false;
+                              });
+                            },
+                            child: const Text('Reset'),
+                          ),
+                          const Spacer(),
+                          FilledButton.icon(
+                            onPressed: () async {
+                              Navigator.of(sheetContext).pop();
+                              await provider.updateFilters(
+                                radiusKm: radiusKm,
+                                minimumRating: minimumRating,
+                                openNowOnly: openNowOnly,
+                              );
+                            },
+                            icon: const Icon(Icons.check_rounded),
+                            label: const Text('Apply'),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
             );
           },
@@ -782,9 +1297,12 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
 
   IconData _categoryIcon(NearbyPlaceCategory category) {
     return switch (category) {
+      NearbyPlaceCategory.all => Icons.travel_explore_rounded,
       NearbyPlaceCategory.hospitals => Icons.local_hospital_rounded,
       NearbyPlaceCategory.clinics => Icons.medical_services_rounded,
+      NearbyPlaceCategory.doctors => Icons.medical_information_rounded,
       NearbyPlaceCategory.medicalStores => Icons.local_pharmacy_rounded,
+      NearbyPlaceCategory.diagnosticLabs => Icons.biotech_rounded,
       NearbyPlaceCategory.ambulances => Icons.emergency_rounded,
     };
   }
@@ -792,6 +1310,35 @@ class _NearbyServicesViewState extends State<_NearbyServicesView> {
   String _openStatusLabel(NearbyPlace place) {
     if (!place.openStatusKnown) return 'Hours unavailable';
     return place.openNow ? 'Open now' : 'Closed';
+  }
+}
+
+class _HeaderChip extends StatelessWidget {
+  const _HeaderChip({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Chip(
+      avatar: Icon(
+        icon,
+        size: 16,
+        color: colorScheme.onPrimaryContainer,
+      ),
+      label: Text(
+        label,
+        style: TextStyle(color: colorScheme.onPrimaryContainer),
+      ),
+      backgroundColor: colorScheme.onPrimaryContainer.withValues(alpha: 0.08),
+      side: BorderSide(
+          color: colorScheme.onPrimaryContainer.withValues(alpha: 0.12)),
+    );
   }
 }
 
@@ -1014,9 +1561,12 @@ class _NearbyMapViewState extends State<_NearbyMapView> {
 
   double _markerHue(NearbyPlaceCategory category) {
     return switch (category) {
+      NearbyPlaceCategory.all => BitmapDescriptor.hueAzure,
       NearbyPlaceCategory.hospitals => BitmapDescriptor.hueRed,
       NearbyPlaceCategory.clinics => BitmapDescriptor.hueGreen,
+      NearbyPlaceCategory.doctors => BitmapDescriptor.hueCyan,
       NearbyPlaceCategory.medicalStores => BitmapDescriptor.hueOrange,
+      NearbyPlaceCategory.diagnosticLabs => BitmapDescriptor.hueMagenta,
       NearbyPlaceCategory.ambulances => BitmapDescriptor.hueRose,
     };
   }

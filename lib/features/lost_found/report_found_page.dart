@@ -1,12 +1,15 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../api_service.dart';
 import '../../localization/app_localizations.dart';
 import '../../utils/timezone_utils.dart';
+import 'location_picker_page.dart';
 
 class ReportFoundPage extends StatefulWidget {
   const ReportFoundPage({super.key});
@@ -18,16 +21,23 @@ class ReportFoundPage extends StatefulWidget {
 class _ReportFoundPageState extends State<ReportFoundPage> {
   final _formKey = GlobalKey<FormState>();
 
+  final _nameController = TextEditingController();
+  final _nameFocusNode = FocusNode();
   final _ageController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _conditionController = TextEditingController();
   final _hospitalController = TextEditingController();
+
+  Timer? _nameDebounce;
+  List<String> _nameSuggestions = const <String>[];
+  bool _loadingNameSuggestions = false;
 
   final ImagePicker _picker = ImagePicker();
 
   String _selectedGender = "Unknown";
   DateTime _foundTime = DateTime.now();
   Position? _currentLocation;
+  String? _currentLocationAddress;
 
   bool _isSubmitting = false;
   bool _isUploadingPhoto = false;
@@ -43,11 +53,56 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
 
   @override
   void dispose() {
+    _nameDebounce?.cancel();
+    _nameController.dispose();
+    _nameFocusNode.dispose();
     _ageController.dispose();
     _descriptionController.dispose();
     _conditionController.dispose();
     _hospitalController.dispose();
     super.dispose();
+  }
+
+  void _onNameChanged(String value) {
+    _nameDebounce?.cancel();
+    final query = value.trim();
+    if (query.length < 2) {
+      if (_nameSuggestions.isNotEmpty || _loadingNameSuggestions) {
+        setState(() {
+          _nameSuggestions = const <String>[];
+          _loadingNameSuggestions = false;
+        });
+      }
+      return;
+    }
+    setState(() => _loadingNameSuggestions = true);
+    // Debounce so we only query once typing settles.
+    _nameDebounce = Timer(const Duration(milliseconds: 300), () async {
+      final results =
+          await ApiService.searchLostPersonNameSuggestions(query);
+      if (!mounted) return;
+      // Hide the list if the field already exactly matches a suggestion.
+      final current = _nameController.text.trim().toLowerCase();
+      final filtered = results
+          .where((name) => name.toLowerCase() != current)
+          .toList(growable: false);
+      setState(() {
+        _nameSuggestions = filtered;
+        _loadingNameSuggestions = false;
+      });
+    });
+  }
+
+  void _selectNameSuggestion(String name) {
+    _nameDebounce?.cancel();
+    _nameController
+      ..text = name
+      ..selection = TextSelection.collapsed(offset: name.length);
+    setState(() {
+      _nameSuggestions = const <String>[];
+      _loadingNameSuggestions = false;
+    });
+    _nameFocusNode.unfocus();
   }
 
   Future<void> _pickDateTime() async {
@@ -106,9 +161,71 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
 
       final position = await Geolocator.getCurrentPosition();
       setState(() => _currentLocation = position);
+      await _updateLocationAddress(position.latitude, position.longitude);
     } catch (error) {
       _showMessage(
           l10n.format('reportFound.locationError', {'error': '$error'}));
+    }
+  }
+
+  Future<void> _showMapPicker() async {
+    final picked = await Navigator.of(context).push<LostFoundPickedLocation>(
+      MaterialPageRoute(
+        builder: (_) => LostFoundLocationPickerPage(
+          title: context.l10n.t('reportFound.currentLocation'),
+          initialLatitude: _currentLocation?.latitude,
+          initialLongitude: _currentLocation?.longitude,
+          initialAddress: _currentLocationAddress,
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+    setState(() {
+      _currentLocation = _positionFromCoordinates(
+        picked.latitude,
+        picked.longitude,
+      );
+      _currentLocationAddress = picked.address?.trim().isNotEmpty == true
+          ? picked.address!.trim()
+          : null;
+    });
+    if (_currentLocationAddress == null) {
+      await _updateLocationAddress(picked.latitude, picked.longitude);
+    }
+  }
+
+  Position _positionFromCoordinates(double lat, double lng) {
+    return Position(
+      latitude: lat,
+      longitude: lng,
+      timestamp: DateTime.now(),
+      accuracy: 0,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    );
+  }
+
+  Future<void> _updateLocationAddress(double lat, double lng) async {
+    try {
+      final placemarks = await placemarkFromCoordinates(lat, lng);
+      if (!mounted || placemarks.isEmpty) return;
+      final place = placemarks.first;
+      final address = [
+        place.street,
+        place.locality,
+        place.administrativeArea,
+        place.country,
+      ].where((entry) => entry != null && entry.trim().isNotEmpty).join(', ');
+      setState(() {
+        _currentLocationAddress =
+            address.trim().isEmpty ? null : address.trim();
+      });
+    } catch (_) {
+      // Address is helpful but not required for matching or dispatch.
     }
   }
 
@@ -172,6 +289,9 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
     setState(() => _isSubmitting = true);
 
     final payload = {
+      "personName": _nameController.text.trim().isEmpty
+          ? null
+          : _nameController.text.trim(),
       "approxAge": _ageController.text.trim().isEmpty
           ? null
           : int.tryParse(_ageController.text.trim()),
@@ -213,9 +333,15 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
   }
 
   String _formatLocation(Position? position) {
-    if (position == null)
+    if (position == null) {
       return context.l10n.t('reportFound.locationNotCaptured');
-    return "${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}";
+    }
+    final coords =
+        "${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}";
+    if (_currentLocationAddress?.trim().isNotEmpty == true) {
+      return "$coords\n${_currentLocationAddress!.trim()}";
+    }
+    return coords;
   }
 
   @override
@@ -239,6 +365,94 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
                   l10n.t('reportFound.help'),
                   style: theme.textTheme.bodyMedium,
                 ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _nameController,
+                  focusNode: _nameFocusNode,
+                  textCapitalization: TextCapitalization.words,
+                  onChanged: _onNameChanged,
+                  decoration: InputDecoration(
+                    labelText: l10n.t('reportFound.nameLabel'),
+                    hintText: l10n.t('reportFound.nameHint'),
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.badge_outlined),
+                    suffixIcon: _loadingNameSuggestions
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : (_nameController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                tooltip: l10n.t('common.cancel'),
+                                onPressed: () {
+                                  _nameController.clear();
+                                  _onNameChanged('');
+                                },
+                              )
+                            : null),
+                  ),
+                ),
+                if (_nameSuggestions.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Material(
+                      elevation: 1,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: theme.dividerColor),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                              child: Text(
+                                l10n.t('reportFound.nameSuggestionsTitle'),
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                            ..._nameSuggestions.take(6).map(
+                                  (name) => InkWell(
+                                    onTap: () => _selectNameSuggestion(name),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 10,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          const Icon(Icons.north_west,
+                                              size: 16),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Text(
+                                              name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _ageController,
@@ -388,14 +602,38 @@ class _ReportFoundPageState extends State<ReportFoundPage> {
                     child: Text(l10n.t('reportFound.edit')),
                   ),
                 ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(l10n.t('reportFound.currentLocation')),
-                  subtitle: Text(_formatLocation(_currentLocation)),
-                  trailing: ElevatedButton.icon(
-                    onPressed: _useCurrentLocation,
-                    icon: const Icon(Icons.my_location),
-                    label: Text(l10n.t('reportFound.useCurrent')),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l10n.t('reportFound.currentLocation'),
+                          style: theme.textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(_formatLocation(_currentLocation)),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: _useCurrentLocation,
+                              icon: const Icon(Icons.my_location),
+                              label: Text(l10n.t('reportFound.useCurrent')),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: _showMapPicker,
+                              icon: const Icon(Icons.map_rounded),
+                              label: Text(l10n.t('lostReport.pickOnMap')),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 24),

@@ -1,16 +1,14 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 
 buildscript {
-    // Must be >= 2.0.0 (Flutter's minimum) and match the KGP version declared
-    // in settings.gradle (org.jetbrains.kotlin.android 2.1.20).
-    ext.kotlin_version = '2.1.20'
+    // Keep this aligned with the KGP version declared in settings.gradle.
+    ext.kotlin_version = '2.3.10'
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        // Update this line to the latest version of the Android Gradle Plugin (AGP).
-        // AGP 8.3.2 is compatible with Gradle 8.5, which supports Java 21.
+        // AGP 8.3.2 is compatible with Gradle 8.14.x and Java 21.
         classpath 'com.android.tools.build:gradle:8.3.2'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }

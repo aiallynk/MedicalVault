@@ -106,6 +106,11 @@ class ApiService {
   static const Duration _publicGeoCacheTtl = Duration(minutes: 20);
   static const Duration _nearbyFreshnessTtl = Duration(hours: 24);
   static const Duration _documentsRequestTimeout = Duration(seconds: 12);
+  static const int _lostPhotoSearchMaxBytes = 4 * 1024 * 1024;
+  static const Set<String> _lostFoundPhotoMimeTypes = {
+    'image/jpeg',
+    'image/png',
+  };
   static const String _docsCachePrefix = "docs_cache_v1_";
   static const String _groupedDocsCachePrefix = "grouped_docs_cache_v1_";
   static const String _publicGeoCountryKey = "public_geo_country";
@@ -1055,9 +1060,6 @@ class ApiService {
       final headers = await _authHeaders();
       final endpoints = <Uri>[
         Uri.parse("$authUrl/session/policy"),
-        Uri.parse("$authUrl/session/settings"),
-        Uri.parse("$baseUrl/sessions/policy"),
-        Uri.parse("$baseUrl/session/policy"),
       ];
 
       for (final uri in endpoints) {
@@ -1116,21 +1118,6 @@ class ApiService {
             ),
         () => http.patch(
               Uri.parse("$authUrl/session/policy"),
-              headers: {...headers, "Content-Type": "application/json"},
-              body: payload,
-            ),
-        () => http.put(
-              Uri.parse("$authUrl/session/settings"),
-              headers: {...headers, "Content-Type": "application/json"},
-              body: payload,
-            ),
-        () => http.patch(
-              Uri.parse("$authUrl/session/settings"),
-              headers: {...headers, "Content-Type": "application/json"},
-              body: payload,
-            ),
-        () => http.put(
-              Uri.parse("$baseUrl/sessions/policy"),
               headers: {...headers, "Content-Type": "application/json"},
               body: payload,
             ),
@@ -1588,18 +1575,22 @@ class ApiService {
 
       // Get authentication token
       final token = await _getToken();
+      if (token == null || token.trim().isEmpty) {
+        return const DocumentUploadResult(
+          success: false,
+          message: 'Login expired. Please sign in again.',
+          code: 'LOGIN_EXPIRED',
+          statusCode: 401,
+        );
+      }
 
       // Create Dio instance
       final dio = Dio();
 
       // Set up headers
       final headers = <String, dynamic>{
-        'Content-Type': 'multipart/form-data',
+        HttpHeaders.authorizationHeader: 'Bearer $token',
       };
-
-      if (token != null) {
-        headers['Authorization'] = 'Bearer $token';
-      }
 
       // ✅ Detect MIME type by file extension
       String filename = file.path.replaceAll('\\', '/').split('/').last;
@@ -1620,6 +1611,15 @@ class ApiService {
 
       // Get file size for progress tracking
       final fileSize = await file.length();
+      const maxUploadBytes = 50 * 1024 * 1024;
+      if (fileSize > maxUploadBytes) {
+        return const DocumentUploadResult(
+          success: false,
+          message: 'File too large',
+          code: 'FILE_TOO_LARGE',
+          statusCode: 400,
+        );
+      }
 
       // Notify initial progress (0%)
       if (onProgress != null) {
@@ -1699,8 +1699,11 @@ class ApiService {
         final payload = _responseDataAsMap(response.data);
         return DocumentUploadResult(
           success: false,
-          message: _extractApiMessage(payload, fallback: 'Upload failed'),
-          code: payload['code']?.toString(),
+          message: _friendlyUploadMessage(
+            payload,
+            statusCode: response.statusCode,
+          ),
+          code: (payload['errorCode'] ?? payload['code'])?.toString(),
           statusCode: response.statusCode,
           verificationStatus: (payload['verificationStatus'] ?? '').toString(),
           verificationReason: (payload['verificationReason'] ?? '').toString(),
@@ -1712,15 +1715,16 @@ class ApiService {
       }
     } on DioException catch (e) {
       final payload = _responseDataAsMap(e.response?.data);
-      final message = _extractApiMessage(
+      final message = _friendlyUploadMessage(
         payload,
-        fallback: e.message ?? 'Upload failed',
+        statusCode: e.response?.statusCode,
+        fallback: e.message ?? 'Upload failed, please try again',
       );
       _debugLog("Upload error: $message");
       return DocumentUploadResult(
         success: false,
         message: message,
-        code: payload['code']?.toString(),
+        code: (payload['errorCode'] ?? payload['code'])?.toString(),
         statusCode: e.response?.statusCode,
         verificationStatus: (payload['verificationStatus'] ?? '').toString(),
         verificationReason: (payload['verificationReason'] ?? '').toString(),
@@ -1766,6 +1770,48 @@ class ApiService {
       }
     }
     return fallback;
+  }
+
+  static String _friendlyUploadMessage(
+    dynamic raw, {
+    int? statusCode,
+    String fallback = 'Upload failed, please try again',
+  }) {
+    final payload = _responseDataAsMap(raw);
+    final code = (payload['errorCode'] ?? payload['code'] ?? payload['error'])
+        ?.toString()
+        .trim()
+        .toUpperCase();
+
+    switch (code) {
+      case 'FILE_TOO_LARGE':
+        return 'File too large';
+      case 'UNSUPPORTED_FILE_TYPE':
+        return 'Unsupported file type';
+      case 'LOGIN_EXPIRED':
+      case 'AUTH_REQUIRED':
+      case 'INVALID_TOKEN':
+      case 'TOKEN_EXPIRED':
+        return 'Login expired. Please sign in again.';
+      case 'STORAGE_NOT_CONFIGURED':
+        return 'Storage not configured';
+      case 'NO_FILE_UPLOADED':
+        return 'No file uploaded';
+      case 'MISSING_PATIENT_ID':
+        return 'Patient information is missing';
+      case 'DOCUMENT_NOT_MEDICAL':
+        return _extractApiMessage(
+          payload,
+          fallback:
+              'Only medical-related documents are allowed. Please upload valid reports, prescriptions, or health records.',
+        );
+    }
+
+    if (statusCode == 401) return 'Login expired. Please sign in again.';
+    if (statusCode == 413) return 'File too large';
+    if (statusCode == 503) return 'Storage not configured';
+
+    return _extractApiMessage(payload, fallback: fallback);
   }
 
   // ---------------- MIME TYPE HELPERS ----------------
@@ -1875,6 +1921,13 @@ class ApiService {
       final dio = Dio();
       final filename = file.path.split("/").last;
       final mimeType = _detectMimeType(filename.toLowerCase());
+      if (!_lostFoundPhotoMimeTypes.contains(mimeType)) {
+        throw Exception('Only JPG and PNG photos are allowed.');
+      }
+      final fileSize = await file.length();
+      if (fileSize <= 0) {
+        throw Exception('Please choose a valid photo.');
+      }
       final formData = FormData.fromMap({
         "photo": await MultipartFile.fromFile(
           file.path,
@@ -1889,8 +1942,9 @@ class ApiService {
         options: Options(
           headers: {
             HttpHeaders.authorizationHeader: "Bearer $token",
-            "Content-Type": "multipart/form-data",
           },
+          sendTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 30),
         ),
       );
 
@@ -1965,6 +2019,32 @@ class ApiService {
     return decoded;
   }
 
+  /// Lightweight name typeahead for the "report found person" form.
+  /// Returns up to 8 matching names from open missing-person reports.
+  static Future<List<String>> searchLostPersonNameSuggestions(
+    String query,
+  ) async {
+    final q = query.trim();
+    if (q.length < 2) return const <String>[];
+    try {
+      final headers = await _authHeaders();
+      final uri = Uri.parse("$lostFoundUrl/name-suggestions")
+          .replace(queryParameters: {"q": q});
+      final res = await http.get(uri, headers: headers);
+      if (res.statusCode != 200) return const <String>[];
+      final decoded = _decodeJsonMap(res.body);
+      final raw = decoded["data"]?["suggestions"];
+      if (raw is! List) return const <String>[];
+      return raw
+          .map((entry) => entry.toString().trim())
+          .where((entry) => entry.isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      // Suggestions are a convenience — never block typing on failure.
+      return const <String>[];
+    }
+  }
+
   static Future<List<dynamic>> fetchMyLostReports() async {
     final headers = await _authHeaders();
     final res = await http.get(
@@ -1998,7 +2078,8 @@ class ApiService {
     final params = <String, String>{};
     if (query != null && query.trim().isNotEmpty) params['q'] = query.trim();
     if (age != null) params['age'] = age.toString();
-    if (gender != null && gender.trim().isNotEmpty) params['gender'] = gender.trim();
+    if (gender != null && gender.trim().isNotEmpty)
+      params['gender'] = gender.trim();
     if (location != null && location.trim().isNotEmpty) {
       params['location'] = location.trim();
     }
@@ -2017,8 +2098,95 @@ class ApiService {
       return decoded["data"]?["results"] as List<dynamic>? ?? [];
     }
     final decoded = _decodeJsonMap(res.body);
-    throw Exception(_extractApiMessage(decoded,
-        fallback: 'Failed to search lost persons'));
+    throw Exception(
+        _extractApiMessage(decoded, fallback: 'Failed to search lost persons'));
+  }
+
+  static Future<Map<String, dynamic>> searchLostPersonsWithPhoto({
+    required File photo,
+    String? query,
+    int? age,
+    String? gender,
+    String? location,
+    double? lat,
+    double? lng,
+    double? radiusKm,
+  }) async {
+    final token = await _getToken();
+    if (token == null || token.trim().isEmpty) {
+      throw Exception('Please log in again before searching with a photo.');
+    }
+
+    final dio = Dio();
+    final filename = photo.path.split("/").last;
+    final mimeType = _detectMimeType(filename.toLowerCase());
+    if (!_lostFoundPhotoMimeTypes.contains(mimeType)) {
+      throw Exception('Only JPG and PNG photos are allowed for photo search.');
+    }
+    final fileSize = await photo.length();
+    if (fileSize <= 0) {
+      throw Exception('Please choose a valid photo for search.');
+    }
+    if (fileSize > _lostPhotoSearchMaxBytes) {
+      throw Exception(
+          'Photo is too large. Please choose a JPG or PNG under 4 MB.');
+    }
+
+    final formData = FormData.fromMap({
+      "photo": await MultipartFile.fromFile(
+        photo.path,
+        filename: filename,
+        contentType: MediaType.parse(mimeType),
+      ),
+      if (query != null && query.trim().isNotEmpty) "q": query.trim(),
+      if (age != null) "age": age.toString(),
+      if (gender != null && gender.trim().isNotEmpty) "gender": gender.trim(),
+      if (location != null && location.trim().isNotEmpty)
+        "location": location.trim(),
+      if (lat != null) "lat": lat.toString(),
+      if (lng != null) "lng": lng.toString(),
+      if (radiusKm != null) "radiusKm": radiusKm.toString(),
+    });
+
+    try {
+      final response = await dio.post(
+        "$lostFoundUrl/search-photo",
+        data: formData,
+        options: Options(
+          headers: {
+            HttpHeaders.authorizationHeader: "Bearer $token",
+          },
+          sendTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 30),
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+      final payload = _responseDataAsMap(response.data);
+      if ((response.statusCode ?? 0) >= 200 &&
+          (response.statusCode ?? 0) < 300 &&
+          payload['success'] == true) {
+        return payload;
+      }
+      if (response.statusCode == 429) {
+        throw Exception(
+          _extractApiMessage(
+            payload,
+            fallback: 'Photo search is rate limited. Please try again later.',
+          ),
+        );
+      }
+      throw Exception(
+        _extractApiMessage(payload, fallback: 'Failed to search by photo'),
+      );
+    } on DioException catch (e) {
+      final payload = _responseDataAsMap(e.response?.data);
+      throw Exception(
+        _extractApiMessage(
+          payload,
+          fallback: e.message ?? 'Failed to search by photo',
+        ),
+      );
+    }
   }
 
   /// Fetch a single lost-person report's privacy-safe detail by id.
@@ -3645,11 +3813,21 @@ class ApiService {
     required double latitude,
     required double longitude,
     int radius = 5000,
-    List<String> types = const ["HOSPITAL", "CLINIC", "AMBULANCE", "DOCTOR"],
+    double? radiusKm,
+    List<String> types = const [
+      "hospital",
+      "clinic",
+      "ambulance",
+      "doctor",
+      "pharmacy",
+      "diagnostic_lab",
+    ],
   }) async {
-    final normalizedRadius = radius.clamp(1000, 30000);
+    final normalizedRadius = radius.clamp(500, 50000);
+    final normalizedRadiusKm =
+        (radiusKm ?? (normalizedRadius / 1000)).clamp(0.5, 50).toDouble();
     final normalizedTypes = types
-        .map((entry) => entry.trim().toUpperCase())
+        .map((entry) => entry.trim().toLowerCase())
         .where((entry) => entry.isNotEmpty)
         .toSet()
         .toList(growable: false);
@@ -3659,8 +3837,8 @@ class ApiService {
         queryParameters: {
           "lat": latitude.toStringAsFixed(6),
           "lng": longitude.toStringAsFixed(6),
-          "radius": normalizedRadius.toString(),
-          "types": normalizedTypes.join(","),
+          "radiusKm": normalizedRadiusKm.toStringAsFixed(2),
+          "type": normalizedTypes.join(","),
         },
       );
 
@@ -3676,7 +3854,7 @@ class ApiService {
                   DateTime.now().toUtc().toIso8601String())
               .toString(),
           "cachedAt": DateTime.now().toUtc().toIso8601String(),
-          "radius": normalizedRadius,
+          "radiusKm": normalizedRadiusKm,
           "types": normalizedTypes,
         };
         await OfflineStorageService.instance.cacheNearbyServices(payload);
@@ -3686,6 +3864,10 @@ class ApiService {
           "services": data['services'] ?? const <Map<String, dynamic>>[],
           "criticalServices":
               data['criticalServices'] ?? const <Map<String, dynamic>>[],
+          "fallback": data['fallback'] ?? const <Map<String, dynamic>>[],
+          "actionCards": data['actionCards'] ?? const <Map<String, dynamic>>[],
+          "source": (data['source'] ?? '').toString(),
+          "message": (data['message'] ?? '').toString(),
           "lastUpdatedAt": payload["lastUpdatedAt"],
           "isCached": false,
           "isStale": false,
@@ -3709,10 +3891,14 @@ class ApiService {
 
       return {
         "success": false,
+        "code": (data['code'] ?? '').toString(),
         "message":
             (data['message'] ?? "Failed to fetch nearby services").toString(),
         "services": const <Map<String, dynamic>>[],
-        "criticalServices": const <Map<String, dynamic>>[],
+        "criticalServices":
+            data['criticalServices'] ?? const <Map<String, dynamic>>[],
+        "fallback": data['fallback'] ?? const <Map<String, dynamic>>[],
+        "actionCards": data['actionCards'] ?? const <Map<String, dynamic>>[],
         "isCached": false,
         "isStale": true,
       };

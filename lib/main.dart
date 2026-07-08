@@ -180,6 +180,7 @@ class MyApp extends StatelessWidget {
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: systemUiStyle,
               child: DraggableAIAssistantOverlay(
+                enabled: false,
                 routeNameListenable: appRouteObserver.currentRouteName,
                 visibleRouteNames: const {'/dashboard'},
                 child: child ?? const SizedBox.shrink(),

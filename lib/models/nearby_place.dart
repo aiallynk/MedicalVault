@@ -107,45 +107,60 @@ class NearbyPlace {
 }
 
 enum NearbyPlaceCategory {
+  all,
   hospitals,
   clinics,
+  doctors,
   medicalStores,
+  diagnosticLabs,
   ambulances,
 }
 
 extension NearbyPlaceCategoryDetails on NearbyPlaceCategory {
   String get cacheKey {
     return switch (this) {
+      NearbyPlaceCategory.all => 'all',
       NearbyPlaceCategory.hospitals => 'hospitals',
       NearbyPlaceCategory.clinics => 'clinics',
+      NearbyPlaceCategory.doctors => 'doctors',
       NearbyPlaceCategory.medicalStores => 'medical_stores',
+      NearbyPlaceCategory.diagnosticLabs => 'diagnostic_labs',
       NearbyPlaceCategory.ambulances => 'ambulances',
     };
   }
 
   String get label {
     return switch (this) {
+      NearbyPlaceCategory.all => 'All',
       NearbyPlaceCategory.hospitals => 'Hospitals',
       NearbyPlaceCategory.clinics => 'Clinics',
-      NearbyPlaceCategory.medicalStores => 'Medical Stores',
-      NearbyPlaceCategory.ambulances => 'Ambulances',
+      NearbyPlaceCategory.doctors => 'Doctors',
+      NearbyPlaceCategory.medicalStores => 'Pharmacies',
+      NearbyPlaceCategory.diagnosticLabs => 'Diagnostic labs',
+      NearbyPlaceCategory.ambulances => 'Ambulance / Emergency',
     };
   }
 
   String get singularLabel {
     return switch (this) {
+      NearbyPlaceCategory.all => 'Service',
       NearbyPlaceCategory.hospitals => 'Hospital',
       NearbyPlaceCategory.clinics => 'Clinic',
-      NearbyPlaceCategory.medicalStores => 'Medical Store',
+      NearbyPlaceCategory.doctors => 'Doctor',
+      NearbyPlaceCategory.medicalStores => 'Pharmacy',
+      NearbyPlaceCategory.diagnosticLabs => 'Diagnostic lab',
       NearbyPlaceCategory.ambulances => 'Ambulance',
     };
   }
 
   String get serviceCategory {
     return switch (this) {
+      NearbyPlaceCategory.all => 'healthcare',
       NearbyPlaceCategory.hospitals => 'hospital',
       NearbyPlaceCategory.clinics => 'clinic',
+      NearbyPlaceCategory.doctors => 'doctor',
       NearbyPlaceCategory.medicalStores => 'pharmacy',
+      NearbyPlaceCategory.diagnosticLabs => 'diagnostic_lab',
       NearbyPlaceCategory.ambulances => 'ambulance',
     };
   }

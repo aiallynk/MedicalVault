@@ -15,6 +15,7 @@ import 'Document_model.dart';
 import 'api_service.dart';
 import 'localization/app_localizations.dart';
 import 'UploadDocument.dart';
+import 'services/document_external_open_service.dart';
 import 'utils/timezone_utils.dart';
 
 class CategoryVaultPage extends StatefulWidget {
@@ -422,7 +423,6 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
 
     final fileType = (document.fileType ?? "").toLowerCase();
     final fileName = document.fileName ?? "";
-    debugPrint("ðŸ” Opening file: $fileName ($fileType)");
 
     try {
       final lowerFileName = fileName.toLowerCase();
@@ -433,21 +433,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
           lowerFileName.endsWith(".png");
 
       if (isPdf) {
-        final previewUrl = await _getPreviewUrl(document.id!);
-        if (!mounted) return;
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PdfPreviewPage(
-              url: previewUrl,
-              title: document.title ??
-                  document.fileName ??
-                  l10n.t('documentDetail.pdfPreviewTitle'),
-              fileName: document.fileName,
-              cacheKey: document.id,
-            ),
-          ),
-        );
+        await DocumentExternalOpenService.openDocument(document);
       } else if (isImage) {
         // âœ… Use backend preview endpoint for images
         final previewUrl = await _getPreviewUrl(document.id!);
@@ -462,8 +448,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
           ),
         );
       } else {
-        // âœ… Fallback: download & open locally
-        await _downloadAndOpenFile(document);
+        await DocumentExternalOpenService.openDocument(document);
       }
     } catch (e) {
       debugPrint("âŒ Preview error: $e");
@@ -510,54 +495,6 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
             .format('documentDetail.previewUrlFailed', {'message': '$e'}),
       );
     }
-  }
-
-  // ---------------- DOWNLOAD & OPEN LOCALLY ----------------
-  Future<void> _downloadAndOpenFile(Document document) async {
-    final l10n = context.l10n;
-    if (document.id == null) return;
-    try {
-      final dir = await getTemporaryDirectory();
-      final filePath = '${dir.path}/${_safeDocumentFileName(document)}';
-      final cachedFile = File(filePath);
-      if (await cachedFile.exists() && await cachedFile.length() > 0) {
-        await OpenFile.open(filePath);
-        return;
-      }
-      final url = '${ApiService.baseUrl}/files/${document.id}/download';
-
-      // âœ… Add authentication headers for this specific request
-      final token = await ApiService.getToken();
-      final options = Options(
-        headers: token != null ? {'Authorization': 'Bearer $token'} : {},
-        receiveTimeout: const Duration(seconds: 30),
-        sendTimeout: const Duration(seconds: 30),
-        validateStatus: (status) => status != null && status < 400,
-      );
-
-      final response = await dio.download(url, filePath, options: options);
-      if ((response.statusCode ?? 500) >= 400) {
-        throw Exception('Server returned ${response.statusCode}');
-      }
-      await OpenFile.open(filePath);
-    } catch (e) {
-      debugPrint("âŒ Download and open error: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.format('common.downloadFailed', {'error': e.toString()}),
-          ),
-        ),
-      );
-    }
-  }
-
-  String _safeDocumentFileName(Document document) {
-    final rawName = (document.fileName?.trim().isNotEmpty == true
-            ? document.fileName
-            : null) ??
-        '${document.id ?? DateTime.now().millisecondsSinceEpoch}.file';
-    return rawName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
   }
 
   Widget _buildMedicalVerificationChip(Document document) {

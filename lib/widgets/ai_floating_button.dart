@@ -66,6 +66,7 @@ class DraggableAIAssistantOverlay extends StatefulWidget {
   final ValueListenable<String?>? routeNameListenable;
   final Set<String> hiddenRouteNames;
   final Set<String> visibleRouteNames;
+  final bool enabled;
 
   const DraggableAIAssistantOverlay({
     super.key,
@@ -73,6 +74,7 @@ class DraggableAIAssistantOverlay extends StatefulWidget {
     this.routeNameListenable,
     this.hiddenRouteNames = const <String>{},
     this.visibleRouteNames = const <String>{},
+    this.enabled = true,
   });
 
   @override
@@ -247,6 +249,10 @@ class _DraggableAIAssistantOverlayState
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.enabled) {
+      return widget.child;
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final media = MediaQuery.of(context);

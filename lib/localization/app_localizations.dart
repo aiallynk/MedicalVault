@@ -1250,6 +1250,24 @@ class AppLocalizations {
       'mr': 'कुटुंबांना आपल्या प्रिय व्यक्तीची ओळख पटण्यासाठी तपशील द्या.',
       'gu': 'પરિવારોને તેમના પ્રિયજનો ઓળખવામાં મદદ કરવા વિગતો આપો.',
     },
+    'reportFound.nameLabel': {
+      'en': "Person's name (optional)",
+      'hi': 'व्यक्ति का नाम (वैकल्पिक)',
+      'mr': 'व्यक्तीचे नाव (पर्यायी)',
+      'gu': 'વ્યક્તિનું નામ (વૈકલ્પિક)',
+    },
+    'reportFound.nameHint': {
+      'en': 'Start typing to match a missing report',
+      'hi': 'लापता रिपोर्ट से मिलान के लिए टाइप करें',
+      'mr': 'हरवलेल्या नोंदीशी जुळण्यासाठी टाइप करा',
+      'gu': 'ગુમ થયેલ રિપોર્ટ સાથે મેળ કરવા લખવાનું શરૂ કરો',
+    },
+    'reportFound.nameSuggestionsTitle': {
+      'en': 'Matches from missing reports',
+      'hi': 'लापता रिपोर्ट से मिलान',
+      'mr': 'हरवलेल्या नोंदींमधील जुळणी',
+      'gu': 'ગુમ રિપોર્ટમાંથી મેળ',
+    },
     'reportFound.ageLabel': {
       'en': 'Approximate Age',
       'hi': 'लगभग आयु',

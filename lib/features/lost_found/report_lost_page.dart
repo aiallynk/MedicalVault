@@ -3,12 +3,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:geocoding/geocoding.dart';
 
 import '../../api_service.dart';
 import '../../localization/app_localizations.dart';
 import '../../utils/timezone_utils.dart';
+import 'location_picker_page.dart';
 
 enum _LostReportTarget { profile, other }
 
@@ -191,26 +191,6 @@ class _ReportLostPageState extends State<ReportLostPage> {
     }
   }
 
-  Future<void> _openGoogleMapsForSelection() async {
-    final l10n = context.l10n;
-    try {
-      // Open Google Maps with a search interface
-      final url = Uri.parse('https://www.google.com/maps/search/?api=1');
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
-        // Show dialog to enter coordinates manually after a delay
-        await Future.delayed(const Duration(seconds: 1));
-        if (mounted) {
-          _showLocationInputDialog();
-        }
-      } else {
-        _showMessage(l10n.t('lostReport.mapsNotAvailable'));
-      }
-    } catch (error) {
-      _showMessage(l10n.format('sos.locationError', {'error': '$error'}));
-    }
-  }
-
   Future<void> _showLocationInputDialog() async {
     final l10n = context.l10n;
     final latController = TextEditingController();
@@ -319,31 +299,44 @@ class _ReportLostPageState extends State<ReportLostPage> {
   }
 
   Future<void> _showMapPicker() async {
-    try {
-      // Open Google Maps app for location selection
-      final currentLat = _lastSeenPosition?.latitude ?? 28.6139;
-      final currentLng = _lastSeenPosition?.longitude ?? 77.2090;
-
-      // Open Google Maps with current location
-      final url = Uri.parse(
-          'https://www.google.com/maps/search/?api=1&query=$currentLat,$currentLng');
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
-        // After opening maps, show dialog to enter coordinates
-        await Future.delayed(const Duration(seconds: 1));
-        if (mounted) {
-          _showLocationInputDialog();
-        }
-      } else {
-        // If Google Maps app not available, directly show coordinate input
-        _showLocationInputDialog();
-      }
-    } catch (e) {
-      if (mounted) {
-        // Fallback to coordinate input dialog
-        _showLocationInputDialog();
-      }
+    final picked = await Navigator.of(context).push<LostFoundPickedLocation>(
+      MaterialPageRoute(
+        builder: (_) => LostFoundLocationPickerPage(
+          title: context.l10n.t('lostReport.lastSeenLocation'),
+          initialLatitude: _lastSeenPosition?.latitude,
+          initialLongitude: _lastSeenPosition?.longitude,
+          initialAddress: _selectedLocationAddress,
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+    setState(() {
+      _lastSeenPosition = _positionFromCoordinates(
+        picked.latitude,
+        picked.longitude,
+      );
+      _selectedLocationAddress = picked.address?.trim().isNotEmpty == true
+          ? picked.address!.trim()
+          : null;
+    });
+    if (_selectedLocationAddress == null) {
+      await _updateLocationAddress(picked.latitude, picked.longitude);
     }
+  }
+
+  Position _positionFromCoordinates(double lat, double lng) {
+    return Position(
+      latitude: lat,
+      longitude: lng,
+      timestamp: DateTime.now(),
+      accuracy: 0,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    );
   }
 
   Future<void> _pickPhoto(ImageSource source) async {
@@ -745,19 +738,12 @@ class _ReportLostPageState extends State<ReportLostPage> {
                 ),
               ),
             ),
-            // Tap to open in maps
+            // Tap to adjust the selected location inside this app.
             Positioned.fill(
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () async {
-                    final url = Uri.parse(
-                        'https://www.google.com/maps/search/?api=1&query=$lat,$lng');
-                    if (await canLaunchUrl(url)) {
-                      await launchUrl(url,
-                          mode: LaunchMode.externalApplication);
-                    }
-                  },
+                  onTap: _showMapPicker,
                   child: Container(
                     alignment: Alignment.bottomRight,
                     padding: const EdgeInsets.all(8),
@@ -772,13 +758,13 @@ class _ReportLostPageState extends State<ReportLostPage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
-                            Icons.open_in_new,
+                            Icons.edit_location_alt_rounded,
                             size: 16,
                             color: Theme.of(context).colorScheme.onPrimary,
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            context.l10n.t('lostReport.openInMaps'),
+                            context.l10n.t('lostReport.pickOnMap'),
                             style: TextStyle(
                               color: Theme.of(context).colorScheme.onPrimary,
                               fontSize: 12,
@@ -1013,9 +999,10 @@ class _ReportLostPageState extends State<ReportLostPage> {
                       ),
                     ),
                     OutlinedButton.icon(
-                      onPressed: _openGoogleMapsForSelection,
-                      icon: const Icon(Icons.open_in_new, size: 20),
-                      label: Text(l10n.t('lostReport.searchInMaps')),
+                      onPressed: _showLocationInputDialog,
+                      icon:
+                          const Icon(Icons.edit_location_alt_rounded, size: 20),
+                      label: Text(l10n.t('lostReport.enterCoordinates')),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 12),

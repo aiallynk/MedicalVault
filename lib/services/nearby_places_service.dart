@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 
-import '../config/app_environment.dart';
+import '../api_service.dart';
 import '../models/nearby_place.dart';
 import 'offline/offline_storage_service.dart';
 
@@ -19,35 +17,38 @@ class NearbyPlacesException implements Exception {
   String toString() => message;
 }
 
+/// Nearby healthcare lookup.
+///
+/// All results come from our backend (`GET /api/nearby/services`), which talks
+/// to Google Places using the single backend key. The app never calls Google
+/// Places directly.
 class NearbyPlacesService {
   NearbyPlacesService({
-    http.Client? client,
     OfflineStorageService? storage,
-    String? apiKey,
-  })  : _client = client ?? http.Client(),
-        _storage = storage ?? OfflineStorageService.instance,
-        _apiKey = (apiKey ?? AppEnvironment.googleMapsApiKey).trim();
+  }) : _storage = storage ?? OfflineStorageService.instance;
 
   static const Duration cacheDuration = Duration(minutes: 15);
-  static const Duration _requestTimeout = Duration(seconds: 12);
   static const double _cacheLocationToleranceMeters = 750;
-  static const String _nearbyEndpoint =
-      'https://places.googleapis.com/v1/places:searchNearby';
-  static const String _textEndpoint =
-      'https://places.googleapis.com/v1/places:searchText';
-  static const String _placesFieldMask =
-      'places.id,places.displayName,places.formattedAddress,'
-      'places.location,places.rating,places.currentOpeningHours,'
-      'places.internationalPhoneNumber,places.nationalPhoneNumber,'
-      'places.googleMapsUri,places.types';
 
-  final http.Client _client;
   final OfflineStorageService _storage;
-  final String _apiKey;
 
   bool lastResultFromCache = false;
+  bool lastResultFromBackend = false;
   bool lastResultWasStale = false;
   String lastStatusMessage = '';
+
+  Future<List<NearbyPlace>> getNearbyAll({
+    Position? origin,
+    double radiusMeters = 10000,
+    bool forceRefresh = false,
+  }) {
+    return _getWithCache(
+      category: NearbyPlaceCategory.all,
+      origin: origin,
+      radiusMeters: radiusMeters,
+      forceRefresh: forceRefresh,
+    );
+  }
 
   Future<List<NearbyPlace>> getNearbyHospitals({
     Position? origin,
@@ -59,12 +60,6 @@ class NearbyPlacesService {
       origin: origin,
       radiusMeters: radiusMeters,
       forceRefresh: forceRefresh,
-      request: (resolvedOrigin, resolvedRadius) => _searchNearbyByTypes(
-        category: NearbyPlaceCategory.hospitals,
-        origin: resolvedOrigin,
-        radiusMeters: resolvedRadius,
-        includedTypes: const ['hospital'],
-      ),
     );
   }
 
@@ -78,12 +73,19 @@ class NearbyPlacesService {
       origin: origin,
       radiusMeters: radiusMeters,
       forceRefresh: forceRefresh,
-      request: (resolvedOrigin, resolvedRadius) => _searchTextPlaces(
-        category: NearbyPlaceCategory.clinics,
-        origin: resolvedOrigin,
-        radiusMeters: resolvedRadius,
-        textQuery: 'clinic',
-      ),
+    );
+  }
+
+  Future<List<NearbyPlace>> getNearbyDoctors({
+    Position? origin,
+    double radiusMeters = 10000,
+    bool forceRefresh = false,
+  }) {
+    return _getWithCache(
+      category: NearbyPlaceCategory.doctors,
+      origin: origin,
+      radiusMeters: radiusMeters,
+      forceRefresh: forceRefresh,
     );
   }
 
@@ -97,12 +99,19 @@ class NearbyPlacesService {
       origin: origin,
       radiusMeters: radiusMeters,
       forceRefresh: forceRefresh,
-      request: (resolvedOrigin, resolvedRadius) => _searchNearbyByTypes(
-        category: NearbyPlaceCategory.medicalStores,
-        origin: resolvedOrigin,
-        radiusMeters: resolvedRadius,
-        includedTypes: const ['pharmacy'],
-      ),
+    );
+  }
+
+  Future<List<NearbyPlace>> getNearbyDiagnosticLabs({
+    Position? origin,
+    double radiusMeters = 10000,
+    bool forceRefresh = false,
+  }) {
+    return _getWithCache(
+      category: NearbyPlaceCategory.diagnosticLabs,
+      origin: origin,
+      radiusMeters: radiusMeters,
+      forceRefresh: forceRefresh,
     );
   }
 
@@ -116,34 +125,6 @@ class NearbyPlacesService {
       origin: origin,
       radiusMeters: radiusMeters,
       forceRefresh: forceRefresh,
-      request: (resolvedOrigin, resolvedRadius) async {
-        final results = <NearbyPlace>[];
-        for (final query in const [
-          'ambulance',
-          'emergency service',
-          'ambulance provider',
-        ]) {
-          results.addAll(
-            await _searchTextPlaces(
-              category: NearbyPlaceCategory.ambulances,
-              origin: resolvedOrigin,
-              radiusMeters: resolvedRadius,
-              textQuery: query,
-            ),
-          );
-        }
-
-        final dedupedAmbulances = _dedupeAndSort(results);
-        if (dedupedAmbulances.isNotEmpty) return dedupedAmbulances;
-
-        return _searchTextPlaces(
-          category: NearbyPlaceCategory.ambulances,
-          origin: resolvedOrigin,
-          radiusMeters: resolvedRadius,
-          textQuery: 'emergency hospital',
-          includedType: 'hospital',
-        );
-      },
     );
   }
 
@@ -152,10 +133,9 @@ class NearbyPlacesService {
     required Position? origin,
     required double radiusMeters,
     required bool forceRefresh,
-    required Future<List<NearbyPlace>> Function(Position origin, double radius)
-        request,
   }) async {
     lastResultFromCache = false;
+    lastResultFromBackend = false;
     lastResultWasStale = false;
     lastStatusMessage = '';
 
@@ -182,20 +162,6 @@ class NearbyPlacesService {
       allowStale: true,
     );
 
-    if (_apiKey.isEmpty) {
-      if (staleCache != null) {
-        lastResultFromCache = true;
-        lastResultWasStale = true;
-        lastStatusMessage =
-            'Showing cached results. Google Maps API key is not configured.';
-        return staleCache;
-      }
-      throw const NearbyPlacesException(
-        'Google Maps API key is not configured.',
-        code: 'missing_api_key',
-      );
-    }
-
     if (!await _hasNetworkConnection()) {
       if (staleCache != null) {
         lastResultFromCache = true;
@@ -209,29 +175,65 @@ class NearbyPlacesService {
       );
     }
 
+    Map<String, dynamic> backend;
     try {
-      final places =
-          _dedupeAndSort(await request(resolvedOrigin, resolvedRadius));
-      await _cachePlaces(
-        category: category,
-        origin: resolvedOrigin,
-        radiusMeters: resolvedRadius,
-        places: places,
+      backend = await ApiService.fetchNearbyServices(
+        latitude: resolvedOrigin.latitude,
+        longitude: resolvedOrigin.longitude,
+        radiusKm: resolvedRadius / 1000,
+        types: _backendTypesForCategory(category),
       );
-      return places;
-    } catch (error) {
+    } catch (_) {
       if (staleCache != null) {
         lastResultFromCache = true;
         lastResultWasStale = true;
-        lastStatusMessage = 'Showing cached results. Live discovery failed.';
+        lastStatusMessage = 'Showing cached results. Live lookup failed.';
         return staleCache;
       }
-      if (error is NearbyPlacesException) rethrow;
       throw NearbyPlacesException(
         'Unable to load nearby ${category.label.toLowerCase()}.',
-        code: 'places_request_failed',
+        code: 'backend_unreachable',
       );
     }
+
+    if (backend['success'] == true) {
+      final places = _mapBackendPlaces(
+        backend['services'],
+        category,
+        resolvedOrigin,
+      );
+      lastResultFromBackend = true;
+      lastResultFromCache = backend['isCached'] == true;
+      lastResultWasStale = backend['isStale'] == true;
+      lastStatusMessage = (backend['message'] ?? '').toString().trim();
+
+      if (!lastResultFromCache) {
+        await _cachePlaces(
+          category: category,
+          origin: resolvedOrigin,
+          radiusMeters: resolvedRadius,
+          places: places,
+        );
+      }
+      return places;
+    }
+
+    // Backend returned a degraded response (e.g. REQUEST_DENIED, missing key).
+    final message = (backend['message'] ?? '').toString().trim();
+    final code = (backend['code'] ?? '').toString().trim();
+
+    if (staleCache != null) {
+      lastResultFromCache = true;
+      lastResultWasStale = true;
+      lastStatusMessage =
+          message.isNotEmpty ? message : 'Showing cached results.';
+      return staleCache;
+    }
+
+    throw NearbyPlacesException(
+      message.isNotEmpty ? message : 'Nearby lookup is currently unavailable.',
+      code: code.isNotEmpty ? code : 'backend_error',
+    );
   }
 
   Future<Position> _resolveOrigin(Position? origin) async {
@@ -242,171 +244,6 @@ class NearbyPlacesService {
       desiredAccuracy: LocationAccuracy.medium,
       timeLimit: const Duration(seconds: 8),
     );
-  }
-
-  Future<List<NearbyPlace>> _searchNearbyByTypes({
-    required NearbyPlaceCategory category,
-    required Position origin,
-    required double radiusMeters,
-    required List<String> includedTypes,
-  }) async {
-    final body = {
-      'includedTypes': includedTypes,
-      'maxResultCount': 20,
-      'rankPreference': 'DISTANCE',
-      'locationRestriction': _circlePayload(origin, radiusMeters),
-    };
-
-    final decoded = await _postPlacesJson(
-      endpoint: _nearbyEndpoint,
-      fieldMask: _placesFieldMask,
-      body: body,
-    );
-
-    return _mapPlaces(decoded['places'], category, origin);
-  }
-
-  Future<List<NearbyPlace>> _searchTextPlaces({
-    required NearbyPlaceCategory category,
-    required Position origin,
-    required double radiusMeters,
-    required String textQuery,
-    String? includedType,
-  }) async {
-    final body = {
-      'textQuery': textQuery,
-      'maxResultCount': 20,
-      'rankPreference': 'DISTANCE',
-      'locationBias': _circlePayload(origin, radiusMeters),
-      if (includedType != null && includedType.trim().isNotEmpty)
-        'includedType': includedType.trim(),
-    };
-
-    final decoded = await _postPlacesJson(
-      endpoint: _textEndpoint,
-      fieldMask: _placesFieldMask,
-      body: body,
-    );
-
-    return _mapPlaces(decoded['places'], category, origin);
-  }
-
-  Map<String, dynamic> _circlePayload(Position origin, double radiusMeters) {
-    return {
-      'circle': {
-        'center': {
-          'latitude': origin.latitude,
-          'longitude': origin.longitude,
-        },
-        'radius': radiusMeters,
-      },
-    };
-  }
-
-  Future<Map<String, dynamic>> _postPlacesJson({
-    required String endpoint,
-    required String fieldMask,
-    required Map<String, dynamic> body,
-  }) async {
-    final response = await _client
-        .post(
-          Uri.parse(endpoint),
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': _apiKey,
-            'X-Goog-FieldMask': fieldMask,
-          },
-          body: jsonEncode(body),
-        )
-        .timeout(_requestTimeout);
-
-    final decoded = _decodeMap(response.body);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final error = decoded['error'];
-      final message = error is Map
-          ? (error['message'] ?? 'Google Places request failed').toString()
-          : 'Google Places request failed (${response.statusCode}).';
-      throw NearbyPlacesException(message, code: 'api_failure');
-    }
-
-    return decoded;
-  }
-
-  Map<String, dynamic> _decodeMap(String body) {
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map) {
-        return decoded.map((key, value) => MapEntry(key.toString(), value));
-      }
-    } catch (_) {
-      // Fall through to an empty map.
-    }
-    return <String, dynamic>{};
-  }
-
-  List<NearbyPlace> _mapPlaces(
-    dynamic rawPlaces,
-    NearbyPlaceCategory category,
-    Position origin,
-  ) {
-    if (rawPlaces is! List) return const <NearbyPlace>[];
-    final mapped = <NearbyPlace>[];
-
-    for (final raw in rawPlaces) {
-      if (raw is! Map) continue;
-      final place = raw.map((key, value) => MapEntry(key.toString(), value));
-      final location = place['location'];
-      final locationMap = location is Map
-          ? location.map((key, value) => MapEntry(key.toString(), value))
-          : <String, dynamic>{};
-
-      final latitude = _toDouble(locationMap['latitude']);
-      final longitude = _toDouble(locationMap['longitude']);
-      if (latitude == 0 || longitude == 0) continue;
-
-      final id = (place['id'] ?? '').toString().trim();
-      final displayName = place['displayName'];
-      final name = displayName is Map
-          ? (displayName['text'] ?? '').toString().trim()
-          : '';
-      if (id.isEmpty || name.isEmpty) continue;
-
-      final openingHours = place['currentOpeningHours'];
-      final openingHoursMap = openingHours is Map
-          ? openingHours.map((key, value) => MapEntry(key.toString(), value))
-          : <String, dynamic>{};
-      final openNowKnown = openingHoursMap.containsKey('openNow');
-      final openNow = openingHoursMap['openNow'] == true;
-      final distanceKm = Geolocator.distanceBetween(
-            origin.latitude,
-            origin.longitude,
-            latitude,
-            longitude,
-          ) /
-          1000;
-
-      mapped.add(
-        NearbyPlace(
-          placeId: id,
-          name: name,
-          address: (place['formattedAddress'] ?? '').toString(),
-          latitude: latitude,
-          longitude: longitude,
-          rating: _toDouble(place['rating']),
-          openNow: openNow,
-          openStatusKnown: openNowKnown,
-          phoneNumber: _firstText(
-            place['internationalPhoneNumber'],
-            place['nationalPhoneNumber'],
-          ),
-          distanceKm: double.parse(distanceKm.toStringAsFixed(2)),
-          category: category.serviceCategory,
-          mapsUrl: _firstText(place['googleMapsUri']),
-        ),
-      );
-    }
-
-    return _dedupeAndSort(mapped);
   }
 
   List<NearbyPlace> _dedupeAndSort(List<NearbyPlace> places) {
@@ -516,5 +353,103 @@ class NearbyPlacesService {
     if (firstText.isNotEmpty) return firstText;
     final secondText = (second ?? '').toString().trim();
     return secondText.isEmpty ? null : secondText;
+  }
+
+  List<String> _backendTypesForCategory(NearbyPlaceCategory category) {
+    return switch (category) {
+      NearbyPlaceCategory.all => const [
+          'hospital',
+          'clinic',
+          'doctor',
+          'pharmacy',
+          'diagnostic_lab',
+          'ambulance',
+        ],
+      NearbyPlaceCategory.hospitals => const ['hospital'],
+      NearbyPlaceCategory.clinics => const ['clinic'],
+      NearbyPlaceCategory.doctors => const ['doctor'],
+      NearbyPlaceCategory.medicalStores => const ['pharmacy'],
+      NearbyPlaceCategory.diagnosticLabs => const ['diagnostic_lab'],
+      NearbyPlaceCategory.ambulances => const ['ambulance'],
+    };
+  }
+
+  List<NearbyPlace> _mapBackendPlaces(
+    dynamic rawServices,
+    NearbyPlaceCategory category,
+    Position origin,
+  ) {
+    if (rawServices is! List) return const <NearbyPlace>[];
+
+    final mapped = <NearbyPlace>[];
+    for (final raw in rawServices) {
+      if (raw is! Map) continue;
+      final service = raw.map((key, value) => MapEntry(key.toString(), value));
+
+      final latitude = _toDouble(service['latitude'] ?? service['lat']);
+      final longitude = _toDouble(service['longitude'] ?? service['lng']);
+      // Skip contacts without coordinates (e.g. emergency phone entries); the
+      // page shows those in its dedicated emergency section instead.
+      if (latitude == 0 || longitude == 0) continue;
+
+      final name = (service['name'] ?? '').toString().trim();
+      if (name.isEmpty) continue;
+
+      final placeId =
+          (service['placeId'] ?? service['id'] ?? '').toString().trim();
+      final availability = (service['availability'] ?? '').toString().trim();
+      final openNow = service['openNow'] == true ||
+          availability.toUpperCase() == 'OPEN_NOW';
+      final openStatusKnown = service.containsKey('openNow') ||
+          availability.toUpperCase() != 'UNKNOWN';
+      final distanceKmValue = _toDouble(service['distanceKm']);
+      final resolvedDistanceKm = distanceKmValue > 0
+          ? distanceKmValue
+          : Geolocator.distanceBetween(
+                  origin.latitude, origin.longitude, latitude, longitude) /
+              1000;
+
+      mapped.add(
+        NearbyPlace(
+          placeId: placeId.isNotEmpty
+              ? placeId
+              : 'backend_${category.cacheKey}_${latitude.toStringAsFixed(6)}_${longitude.toStringAsFixed(6)}',
+          name: name,
+          address: (service['address'] ?? '').toString(),
+          latitude: latitude,
+          longitude: longitude,
+          rating: _toDouble(service['rating']),
+          openNow: openNow,
+          openStatusKnown: openStatusKnown,
+          phoneNumber: _firstText(service['phone'], service['phoneNumber']),
+          distanceKm: double.parse(resolvedDistanceKm.toStringAsFixed(2)),
+          category: _firstText(service['type']) ?? category.serviceCategory,
+          mapsUrl: (service['mapsUrl'] ?? '').toString().trim().isNotEmpty
+              ? service['mapsUrl'].toString()
+              : _buildMapsSearchUrl(
+                  latitude: latitude,
+                  longitude: longitude,
+                  placeId: placeId,
+                ),
+        ),
+      );
+    }
+
+    return _dedupeAndSort(mapped);
+  }
+
+  String _buildMapsSearchUrl({
+    required double latitude,
+    required double longitude,
+    required String placeId,
+  }) {
+    final query =
+        '${latitude.toStringAsFixed(6)},${longitude.toStringAsFixed(6)}';
+    final uri = Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': query,
+      if (placeId.trim().isNotEmpty) 'query_place_id': placeId.trim(),
+    });
+    return uri.toString();
   }
 }

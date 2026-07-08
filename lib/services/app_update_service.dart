@@ -12,6 +12,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api_service.dart';
 
+final RegExp _sha256HexPattern = RegExp(r'^[a-f0-9]{64}$');
+
+String _normalizeSha256Hex(Object? value) =>
+    (value ?? '').toString().trim().toLowerCase();
+
+bool _isValidSha256Hex(String value) => _sha256HexPattern.hasMatch(value);
+
 @immutable
 class AppUpdateInfo {
   final String latestVersion;
@@ -40,10 +47,7 @@ class AppUpdateInfo {
           (json['minimumSupportedVersion'] ?? '').toString().trim(),
       apkUrl: (json['apkUrl'] ?? '').toString().trim(),
       releaseNotes: (json['releaseNotes'] ?? '').toString().trim(),
-      sha256: (json['sha256'] ?? json['checksum'] ?? '')
-          .toString()
-          .trim()
-          .toLowerCase(),
+      sha256: _normalizeSha256Hex(json['sha256'] ?? json['checksum']),
       hasUpdate: json['hasUpdate'] == true,
       forceUpdate: json['forceUpdate'] == true,
     );
@@ -74,6 +78,8 @@ class AppUpdateCheckResult {
 enum AppUpdateInstallState {
   launchedInstaller,
   notSupported,
+  metadataInvalid,
+  apkMissing,
   downloadFailed,
   checksumMismatch,
   permissionDenied,
@@ -96,7 +102,8 @@ class AppUpdateInstallResult {
   });
 
   bool get isSuccess => state == AppUpdateInstallState.launchedInstaller;
-  bool get installCompleted => installerStatus == PackageInstallerStatus.success;
+  bool get installCompleted =>
+      installerStatus == PackageInstallerStatus.success;
   bool get installerPromptShown =>
       installerStatus == PackageInstallerStatus.pendingUserAction;
 }
@@ -153,7 +160,16 @@ class AppUpdateService {
 
     final info = AppUpdateInfo.fromJson(data);
     if (info.latestVersion.isEmpty || info.minimumSupportedVersion.isEmpty) {
-      throw const FormatException('Invalid update response contract');
+      throw const FormatException('Update metadata invalid');
+    }
+    if (info.sha256.isEmpty) {
+      throw const FormatException(
+          'Update metadata invalid: SHA256 is missing.');
+    }
+    if (!_isValidSha256Hex(info.sha256)) {
+      throw const FormatException(
+        'Update metadata invalid: SHA256 must be a 64-character hex value.',
+      );
     }
 
     if (info.apkUrl.isNotEmpty) {
@@ -315,6 +331,12 @@ class AppUpdateService {
     await _clearCachedApkArtifacts(keepTargetPath: apkTargetPath);
     bool checksumVerified = false;
     final expectedChecksum = info.sha256.trim().toLowerCase();
+    if (expectedChecksum.isEmpty || !_isValidSha256Hex(expectedChecksum)) {
+      return const AppUpdateInstallResult(
+        state: AppUpdateInstallState.metadataInvalid,
+        message: 'Update metadata invalid.',
+      );
+    }
 
     for (int attempt = 0; attempt < 2; attempt++) {
       final shouldAddNonce = attempt > 0;
@@ -341,22 +363,31 @@ class AppUpdateService {
             },
           ),
         );
-      } catch (error) {
-        debugPrint('Update download failed: $error');
+      } on DioException catch (error) {
+        debugPrint('Update download failed: ${error.type}');
+        final status = error.response?.statusCode;
+        if (status == 404) {
+          return const AppUpdateInstallResult(
+            state: AppUpdateInstallState.apkMissing,
+            message: 'APK file missing on server.',
+          );
+        }
+        final serverMessage = _extractResponseMessage(error.response?.data);
+        return AppUpdateInstallResult(
+          state: AppUpdateInstallState.downloadFailed,
+          message: serverMessage.trim().isNotEmpty
+              ? serverMessage
+              : 'Failed to download update. Please check your connection.',
+        );
+      } catch (_) {
         return const AppUpdateInstallResult(
           state: AppUpdateInstallState.downloadFailed,
           message: 'Failed to download update. Please check your connection.',
         );
       }
 
-      if (expectedChecksum.isEmpty) {
-        break;
-      }
-
       final actualChecksum = await _computeChecksum(apkTargetPath);
-      debugPrint(
-        'APK checksum verification attempt ${attempt + 1}: expected=$expectedChecksum actual=${actualChecksum ?? "unknown"}',
-      );
+      debugPrint('APK checksum verification attempt ${attempt + 1}');
 
       final isValid = actualChecksum == expectedChecksum;
       if (isValid) {
@@ -378,7 +409,7 @@ class AppUpdateService {
 
       return const AppUpdateInstallResult(
         state: AppUpdateInstallState.checksumMismatch,
-        message: 'Downloaded APK checksum mismatch. Update aborted.',
+        message: 'Downloaded APK checksum mismatch.',
       );
     }
 
@@ -389,8 +420,7 @@ class AppUpdateService {
       if (!requestedPermission.isGranted) {
         return const AppUpdateInstallResult(
           state: AppUpdateInstallState.permissionDenied,
-          message:
-              'Allow install-unknown-apps permission to continue the update.',
+          message: 'Install permission not granted.',
         );
       }
     }
@@ -439,7 +469,8 @@ class AppUpdateService {
     return path.join(tempDir.path, fileName);
   }
 
-  Future<void> _clearCachedApkArtifacts({required String keepTargetPath}) async {
+  Future<void> _clearCachedApkArtifacts(
+      {required String keepTargetPath}) async {
     final tempDir = await getTemporaryDirectory();
     final keep = path.normalize(keepTargetPath);
     final entities = tempDir.listSync();
@@ -500,9 +531,9 @@ class AppUpdateService {
       case PackageInstallerStatus.failureAborted:
         return 'Installation was cancelled.';
       case PackageInstallerStatus.failureInvalid:
-        return 'Invalid APK package.';
+        return 'Invalid APK package. If checksum passed, verify the APK is signed with the same production keystore as the installed app.';
       case PackageInstallerStatus.failureConflict:
-        return 'Package conflict detected.';
+        return 'APK signature differs from installed app or package conflicts. Install a build signed with the same production keystore.';
       case PackageInstallerStatus.failureStorage:
         return 'Insufficient storage for update.';
       case PackageInstallerStatus.failureIncompatible:
@@ -513,6 +544,11 @@ class AppUpdateService {
   }
 
   String _friendlyCheckError(Object error) {
+    if (error is FormatException) {
+      return error.message.trim().isNotEmpty
+          ? error.message
+          : 'Update metadata invalid.';
+    }
     if (error is DioException) {
       final statusCode = error.response?.statusCode;
       if (statusCode != null) {
@@ -538,5 +574,27 @@ class AppUpdateService {
       }
     }
     return 'Unable to check for updates right now.';
+  }
+
+  String _extractResponseMessage(dynamic raw) {
+    Map<String, dynamic> payload = const <String, dynamic>{};
+    if (raw is Map<String, dynamic>) {
+      payload = raw;
+    } else if (raw is Map) {
+      payload = raw.map((key, value) => MapEntry(key.toString(), value));
+    }
+
+    for (final key in const ['message', 'msg', 'error']) {
+      final value = payload[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    final nested = payload['data'];
+    if (nested is Map) {
+      for (final key in const ['message', 'msg', 'error']) {
+        final value = nested[key]?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+    }
+    return '';
   }
 }

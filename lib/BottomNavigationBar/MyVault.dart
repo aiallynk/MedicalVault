@@ -15,6 +15,7 @@ import 'package:hello/Document_model.dart';
 import 'package:hello/UploadDocument.dart';
 import 'package:hello/api_service.dart';
 import 'package:hello/localization/app_localizations.dart';
+import 'package:hello/services/document_external_open_service.dart';
 import 'package:hello/utils/timezone_utils.dart';
 
 // ================= DOCUMENT DETAIL PAGE =================
@@ -36,21 +37,7 @@ class DocumentDetailPage extends StatelessWidget {
       final ext = document.fileName?.split('.').last.toLowerCase() ?? '';
 
       if (ext == 'pdf') {
-        // âœ… Use backend preview endpoint to get signed URL for PDFs
-        final previewUrl = await _getPreviewUrl(context, document.id!);
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PdfPreviewPage(
-              url: previewUrl,
-              title: document.title ??
-                  document.fileName ??
-                  l10n.t('documentDetail.pdfPreviewTitle'),
-              fileName: document.fileName,
-              cacheKey: document.id,
-            ),
-          ),
-        );
+        await DocumentExternalOpenService.openDocument(document);
       } else if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].contains(ext)) {
         // âœ… Use backend preview endpoint for images too
         final previewUrl = await _getPreviewUrl(context, document.id!);
@@ -65,7 +52,7 @@ class DocumentDetailPage extends StatelessWidget {
           ),
         );
       } else {
-        await _downloadAndOpenFile(context);
+        await DocumentExternalOpenService.openDocument(document);
       }
     } catch (e) {
       debugPrint("âŒ Error previewing: $e");
@@ -107,31 +94,6 @@ class DocumentDetailPage extends StatelessWidget {
       debugPrint("âŒ Error getting preview URL: $e");
       throw Exception(
           l10n.format('documentDetail.previewUrlFailed', {'message': '$e'}));
-    }
-  }
-
-  Future<void> _downloadAndOpenFile(BuildContext context) async {
-    final l10n = context.l10n;
-    try {
-      final dir = await getTemporaryDirectory();
-      final filePath = '${dir.path}/${document.fileName}';
-      final dio = Dio();
-
-      final token = await ApiService.getToken();
-      if (token != null) dio.options.headers['Authorization'] = 'Bearer $token';
-
-      await dio.download(
-          "${ApiService.baseUrl}/files/${document.id}/download", filePath);
-      await OpenFile.open(filePath);
-    } catch (e) {
-      debugPrint("âŒ Download+Open error: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.format('common.downloadFailed', {'error': e.toString()}),
-          ),
-        ),
-      );
     }
   }
 
@@ -613,8 +575,6 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
 
     final fileType = (document.fileType ?? "").toLowerCase();
     final fileName = document.fileName ?? "";
-    debugPrint("ðŸ” Opening file: $fileName ($fileType)");
-
     try {
       final lowerFileName = fileName.toLowerCase();
       final isPdf = fileType.contains("pdf") || lowerFileName.endsWith(".pdf");
@@ -624,21 +584,7 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
           lowerFileName.endsWith(".png");
 
       if (isPdf) {
-        final previewUrl = await _getPreviewUrl(document.id!);
-        if (!mounted) return;
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PdfPreviewPage(
-              url: previewUrl,
-              title: document.title ??
-                  document.fileName ??
-                  l10n.t('documentDetail.pdfPreviewTitle'),
-              fileName: document.fileName,
-              cacheKey: document.id,
-            ),
-          ),
-        );
+        await DocumentExternalOpenService.openDocument(document);
       } else if (isImage) {
         // âœ… Use backend preview endpoint for images
         final previewUrl = await _getPreviewUrl(document.id!);
@@ -654,8 +600,7 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
           ),
         );
       } else {
-        // âœ… Fallback: download & open locally
-        await _downloadAndOpenFile(document);
+        await DocumentExternalOpenService.openDocument(document);
       }
     } catch (e) {
       debugPrint("âŒ Preview error: $e");
@@ -763,52 +708,6 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
         ),
       );
     }
-  }
-
-  Future<void> _downloadAndOpenFile(Document document) async {
-    final l10n = context.l10n;
-    try {
-      final dir = await getTemporaryDirectory();
-      final filePath = '${dir.path}/${_safeDocumentFileName(document)}';
-      final cachedFile = File(filePath);
-      if (await cachedFile.exists() && await cachedFile.length() > 0) {
-        await OpenFile.open(filePath);
-        return;
-      }
-      final dio = Dio();
-      final token = await ApiService.getToken();
-      final options = Options(
-        headers: token != null ? {'Authorization': 'Bearer $token'} : {},
-        receiveTimeout: const Duration(seconds: 30),
-        sendTimeout: const Duration(seconds: 30),
-        validateStatus: (status) => status != null && status < 400,
-      );
-
-      final response = await dio.download(
-          "${ApiService.baseUrl}/files/${document.id}/download", filePath,
-          options: options);
-      if ((response.statusCode ?? 500) >= 400) {
-        throw Exception('Server returned ${response.statusCode}');
-      }
-      await OpenFile.open(filePath);
-    } catch (e) {
-      debugPrint("âŒ Download and open error: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.format('common.downloadFailed', {'error': e.toString()}),
-          ),
-        ),
-      );
-    }
-  }
-
-  String _safeDocumentFileName(Document document) {
-    final rawName = (document.fileName?.trim().isNotEmpty == true
-            ? document.fileName
-            : null) ??
-        '${document.id ?? DateTime.now().millisecondsSinceEpoch}.file';
-    return rawName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
   }
 
   Widget _buildMedicalVerificationChip(Document document) {

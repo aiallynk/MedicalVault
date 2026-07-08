@@ -142,6 +142,17 @@ class AIService {
       } else {
         throw Exception('Failed to send message: ${response.statusMessage}');
       }
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      String message = e.message ?? 'AI request failed';
+      if (data is Map) {
+        message = (data['message'] ?? data['error'] ?? message).toString();
+      }
+      return AIResponse(
+        success: false,
+        reply: message,
+        message: message,
+      );
     } catch (e) {
       print('AI Service Error: $e');
       return AIResponse(

@@ -1247,73 +1247,85 @@ class _SettingsPageState extends State<SettingsPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
+      isScrollControlled: true,
       builder: (bottomSheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SettingsSectionHeader(
-                  title: l10n.auto('Select Language'),
-                  subtitle: l10n.auto(
-                    'Choose the language that should be used throughout the app.',
+        return FractionallySizedBox(
+          heightFactor: 0.72,
+          child: SafeArea(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                16,
+                16,
+                20 + MediaQuery.of(bottomSheetContext).viewInsets.bottom,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SettingsSectionHeader(
+                    title: l10n.auto('Select Language'),
+                    subtitle: l10n.auto(
+                      'Choose the language that should be used throughout the app.',
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                SettingsGroupCard(
-                  child: Column(
-                    children: [
-                      for (var i = 0; i < languages.length; i++)
-                        SettingsItemTile(
-                          icon: Icons.language_rounded,
-                          title: languages[i]['label']!,
-                          subtitle: languages[i]['code'] == currentCode
-                              ? l10n.auto('Currently selected')
-                              : l10n.auto('Tap to switch to this language'),
-                          showDivider: i != languages.length - 1,
-                          trailing: languages[i]['code'] == currentCode
-                              ? Icon(
-                                  Icons.check_rounded,
-                                  color: Theme.of(sectionContext)
-                                      .colorScheme
-                                      .primary,
-                                )
-                              : const SizedBox.shrink(),
-                          onTap: () async {
-                            final selectedCode = languages[i]['code']!;
-                            final navigator = Navigator.of(bottomSheetContext);
-                            await languageProvider.setLocale(
-                              Locale(selectedCode),
-                            );
-                            if (!mounted) return;
-                            if (bottomSheetContext.mounted) {
-                              navigator.pop();
-                            }
-                            final updatedL10n = context.l10n;
-                            final languageDisplay = switch (selectedCode) {
-                              'hi' => updatedL10n.auto('Hindi'),
-                              'mr' => updatedL10n.auto('Marathi'),
-                              'gu' => updatedL10n.auto('Gujarati'),
-                              _ => updatedL10n.auto('English'),
-                            };
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  updatedL10n.format(
-                                    'settings.language.changed',
-                                    {'language': languageDisplay},
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: SettingsGroupCard(
+                      child: ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: languages.length,
+                        itemBuilder: (context, i) {
+                          return SettingsItemTile(
+                            icon: Icons.language_rounded,
+                            title: languages[i]['label']!,
+                            subtitle: languages[i]['code'] == currentCode
+                                ? l10n.auto('Currently selected')
+                                : l10n.auto('Tap to switch to this language'),
+                            showDivider: i != languages.length - 1,
+                            trailing: languages[i]['code'] == currentCode
+                                ? Icon(
+                                    Icons.check_rounded,
+                                    color: Theme.of(sectionContext)
+                                        .colorScheme
+                                        .primary,
+                                  )
+                                : const SizedBox.shrink(),
+                            onTap: () async {
+                              final selectedCode = languages[i]['code']!;
+                              final navigator =
+                                  Navigator.of(bottomSheetContext);
+                              await languageProvider.setLocale(
+                                Locale(selectedCode),
+                              );
+                              if (!mounted) return;
+                              if (bottomSheetContext.mounted) {
+                                navigator.pop();
+                              }
+                              final updatedL10n = context.l10n;
+                              final languageDisplay = switch (selectedCode) {
+                                'hi' => updatedL10n.auto('Hindi'),
+                                'mr' => updatedL10n.auto('Marathi'),
+                                'gu' => updatedL10n.auto('Gujarati'),
+                                _ => updatedL10n.auto('English'),
+                              };
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    updatedL10n.format(
+                                      'settings.language.changed',
+                                      {'language': languageDisplay},
+                                    ),
                                   ),
                                 ),
-                              ),
-                            );
-                          },
-                        ),
-                    ],
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -1334,66 +1346,69 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       isScrollControlled: true,
       builder: (bottomSheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SettingsSectionHeader(
-                  title: l10n.auto('Select Timezone'),
-                  subtitle: l10n.auto(
-                    'All date and time displays will follow this timezone.',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Flexible(
-                  child: SettingsGroupCard(
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: TimezoneProvider.supportedTimeZones.length,
-                      itemBuilder: (context, index) {
-                        final zone = TimezoneProvider.supportedTimeZones[index];
-                        final isSelected = zone.id == currentTimeZone;
-
-                        return SettingsItemTile(
-                          icon: Icons.public_rounded,
-                          title: zone.label,
-                          subtitle: zone.id,
-                          showDivider: index !=
-                              TimezoneProvider.supportedTimeZones.length - 1,
-                          trailing: isSelected
-                              ? Icon(
-                                  Icons.check_rounded,
-                                  color: Theme.of(sectionContext)
-                                      .colorScheme
-                                      .primary,
-                                )
-                              : const SizedBox.shrink(),
-                          onTap: () async {
-                            await timezoneProvider.setTimeZone(zone.id);
-                            if (!mounted) return;
-                            if (bottomSheetContext.mounted) {
-                              Navigator.of(bottomSheetContext).pop();
-                            }
-                            ScaffoldMessenger.of(sectionContext).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  l10n.auto(
-                                    'Timezone switched to ${zone.label}',
-                                  ),
-                                ),
-                              ),
-                            );
-                            _notifySectionRefresh();
-                          },
-                        );
-                      },
+        return FractionallySizedBox(
+          heightFactor: 0.72,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SettingsSectionHeader(
+                    title: l10n.auto('Select Timezone'),
+                    subtitle: l10n.auto(
+                      'All date and time displays will follow this timezone.',
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: SettingsGroupCard(
+                      child: ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: TimezoneProvider.supportedTimeZones.length,
+                        itemBuilder: (context, index) {
+                          final zone =
+                              TimezoneProvider.supportedTimeZones[index];
+                          final isSelected = zone.id == currentTimeZone;
+
+                          return SettingsItemTile(
+                            icon: Icons.public_rounded,
+                            title: zone.label,
+                            subtitle: zone.id,
+                            showDivider: index !=
+                                TimezoneProvider.supportedTimeZones.length - 1,
+                            trailing: isSelected
+                                ? Icon(
+                                    Icons.check_rounded,
+                                    color: Theme.of(sectionContext)
+                                        .colorScheme
+                                        .primary,
+                                  )
+                                : const SizedBox.shrink(),
+                            onTap: () async {
+                              await timezoneProvider.setTimeZone(zone.id);
+                              if (!mounted) return;
+                              if (bottomSheetContext.mounted) {
+                                Navigator.of(bottomSheetContext).pop();
+                              }
+                              ScaffoldMessenger.of(sectionContext).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    l10n.auto(
+                                      'Timezone switched to ${zone.label}',
+                                    ),
+                                  ),
+                                ),
+                              );
+                              _notifySectionRefresh();
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -1743,40 +1758,42 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Text(l10n.auto('Link Existing Profile')),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: emailController,
-                decoration: InputDecoration(
-                  labelText: l10n.auto('Email'),
-                  hintText: l10n.auto('Enter email of existing profile'),
-                ),
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: passwordController,
-                decoration: InputDecoration(
-                  labelText: l10n.auto('Password'),
-                  hintText: l10n.auto('Enter password'),
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      isPasswordVisible
-                          ? Icons.visibility_off
-                          : Icons.visibility,
-                      color: Colors.grey,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        isPasswordVisible = !isPasswordVisible;
-                      });
-                    },
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: emailController,
+                  decoration: InputDecoration(
+                    labelText: l10n.auto('Email'),
+                    hintText: l10n.auto('Enter email of existing profile'),
                   ),
+                  keyboardType: TextInputType.emailAddress,
                 ),
-                obscureText: !isPasswordVisible,
-              ),
-            ],
+                const SizedBox(height: 16),
+                TextField(
+                  controller: passwordController,
+                  decoration: InputDecoration(
+                    labelText: l10n.auto('Password'),
+                    hintText: l10n.auto('Enter password'),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        isPasswordVisible
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          isPasswordVisible = !isPasswordVisible;
+                        });
+                      },
+                    ),
+                  ),
+                  obscureText: !isPasswordVisible,
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -2047,37 +2064,39 @@ class _SettingsPageState extends State<SettingsPage> {
           title: Text(
             l10n.format('settings.switch.dialogTitle', {'name': profileName}),
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                l10n
-                    .auto('Enter password for {name}:')
-                    .replaceAll('{name}', profileName),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: passwordController,
-                decoration: InputDecoration(
-                  labelText: l10n.auto('Password'),
-                  hintText: l10n.auto('Enter password'),
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      isPasswordVisible
-                          ? Icons.visibility_off
-                          : Icons.visibility,
-                      color: Colors.grey,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        isPasswordVisible = !isPasswordVisible;
-                      });
-                    },
-                  ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  l10n
+                      .auto('Enter password for {name}:')
+                      .replaceAll('{name}', profileName),
                 ),
-                obscureText: !isPasswordVisible,
-              ),
-            ],
+                const SizedBox(height: 16),
+                TextField(
+                  controller: passwordController,
+                  decoration: InputDecoration(
+                    labelText: l10n.auto('Password'),
+                    hintText: l10n.auto('Enter password'),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        isPasswordVisible
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          isPasswordVisible = !isPasswordVisible;
+                        });
+                      },
+                    ),
+                  ),
+                  obscureText: !isPasswordVisible,
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
