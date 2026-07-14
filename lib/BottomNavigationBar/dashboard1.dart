@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:hello/api_service.dart';
+import 'package:hello/services/dashboard_display_settings.dart';
 import 'package:hello/AppFooter.dart';
 import 'package:hello/CategoryVaultPage.dart';
 import 'package:hello/core/theme/theme.dart';
@@ -21,6 +22,7 @@ import '../widgets/app_text.dart';
 import '../widgets/custom_bottom_nav_bar.dart';
 import '../widgets/custom_card.dart';
 import '../widgets/doctor_card.dart';
+import '../widgets/dashboard_fab_popover.dart';
 import 'package:hello/screens/appointments_page.dart';
 import 'package:hello/screens/doctor_detail_screen.dart';
 import 'package:hello/screens/chat_screen.dart';
@@ -35,6 +37,8 @@ import '../features/lost_found/my_lost_reports_page.dart';
 import '../features/lost_found/lost_found_report_page.dart';
 import '../features/lost_found/search_lost_persons_page.dart';
 import '../features/khoj/khoj_ai_page.dart';
+import '../features/family_care/screens/family_care_dashboard_screen.dart';
+import '../features/family_care/providers/active_patient_profile_provider.dart';
 import '../providers/dashboard_prefetch_provider.dart';
 import '../providers/timezone_provider.dart';
 import '../utils/timezone_utils.dart';
@@ -87,7 +91,10 @@ class _Dashboard1State extends State<Dashboard1>
   bool _hydratedFromPrefetch = false;
   bool _prefetchWasPartial = false;
   late final AnimationController _fabMenuController;
-  bool _fabMenuOpen = false;
+  final ValueNotifier<bool> _fabMenuOpenNotifier = ValueNotifier(false);
+  bool _fabActionInFlight = false;
+
+  bool get _fabMenuOpen => _fabMenuOpenNotifier.value;
 
   String get _activeUserId =>
       (_userData['id']?.toString() ?? _userData['_id']?.toString() ?? '')
@@ -106,13 +113,19 @@ class _Dashboard1State extends State<Dashboard1>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _userData = Map<String, dynamic>.from(widget.userData);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<ActivePatientProfileProvider>().bindAuthenticatedUser(_activeUserId);
+      }
+    });
     _promoPageController = PageController(
       initialPage: _promoPageSeed,
       viewportFraction: 0.9,
     );
     _fabMenuController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 350),
+      duration: const Duration(milliseconds: 200),
+      reverseDuration: const Duration(milliseconds: 160),
     );
     _alertController = AnimationController(
       vsync: this,
@@ -137,6 +150,7 @@ class _Dashboard1State extends State<Dashboard1>
         unawaited(_loadDashboardUiConfig(forceRefresh: true));
       }
     }
+    _loadTopDoctorsVisibilityPreference();
     _loadStoredName();
     _startUiRefreshTimer();
     _startAlertExpiryTimer();
@@ -173,6 +187,12 @@ class _Dashboard1State extends State<Dashboard1>
         // Ignore transient errors if page view not ready
       }
     });
+  }
+
+  Future<void> _loadTopDoctorsVisibilityPreference() async {
+    // Hydrates DashboardDisplaySettings().showTopDoctorsNotifier from prefs;
+    // the dashboard listens to that notifier directly for instant updates.
+    await DashboardDisplaySettings().getShowTopDoctors();
   }
 
   void _tryHydrateFromPrefetch() {
@@ -237,6 +257,7 @@ class _Dashboard1State extends State<Dashboard1>
     _publicConfigChannel = null;
     _promoPageController.dispose();
     _fabMenuController.dispose();
+    _fabMenuOpenNotifier.dispose();
     AIAssistantOverlayController.setVisible(true);
     _alertController.dispose();
     super.dispose();
@@ -1211,10 +1232,23 @@ class _Dashboard1State extends State<Dashboard1>
                             _buildPromoCarousel(context),
                             const SizedBox(height: AppSpacing.large),
                           ],
-                          if (_loadingTopDoctors || _topDoctors.isNotEmpty) ...[
-                            _buildTopDoctorsSection(context),
-                            const SizedBox(height: AppSpacing.large),
-                          ],
+                          ValueListenableBuilder<bool>(
+                            valueListenable: DashboardDisplaySettings()
+                                .showTopDoctorsNotifier,
+                            builder: (context, showTopDoctors, _) {
+                              if (!showTopDoctors ||
+                                  (!_loadingTopDoctors &&
+                                      _topDoctors.isEmpty)) {
+                                return const SizedBox.shrink();
+                              }
+                              return Column(
+                                children: [
+                                  _buildTopDoctorsSection(context),
+                                  const SizedBox(height: AppSpacing.large),
+                                ],
+                              );
+                            },
+                          ),
                           AppText(
                             l10n.t('dashboard.quickActions'),
                             variant: AppTextVariant.subtitle,
@@ -1518,27 +1552,63 @@ class _Dashboard1State extends State<Dashboard1>
               ],
             ),
           ),
-          if (_fabMenuOpen)
+          if (_currentIndex == 0)
             Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {
-                  unawaited(_closeFabMenu());
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _fabMenuOpenNotifier,
+                builder: (context, isOpen, _) {
+                  return Stack(
+                    children: [
+                      if (isOpen)
+                        Positioned.fill(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              unawaited(_closeFabMenu());
+                            },
+                            child: AnimatedBuilder(
+                              animation: _fabMenuController,
+                              builder: (context, _) {
+                                final opacity = Curves.easeOut.transform(
+                                  _fabMenuController.value,
+                                );
+                                return Container(
+                                  color: Colors.black.withValues(
+                                    alpha: 0.15 * opacity,
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      if (isOpen)
+                        DashboardFabPopover(
+                          isOpen: isOpen,
+                          animation: _fabMenuController,
+                          onAiAssistant: () {
+                            unawaited(
+                                _handleFabAction(_openAiAssistantFromFab));
+                          },
+                          onNearbyHealthcare: () {
+                            unawaited(_handleFabAction(_openNearbyFromFab));
+                          },
+                          onProducts: () {
+                            unawaited(_handleFabAction(_openStoreFromFab));
+                          },
+                          onAppointments: () {
+                            unawaited(
+                                _handleFabAction(_openAppointmentsFromFab));
+                          },
+                          onFamilyCare: () {
+                            unawaited(_handleFabAction(_openFamilyCareFromFab));
+                          },
+                        ),
+                      _buildDashboardQuickActionsFab(context),
+                    ],
+                  );
                 },
-                child: AnimatedBuilder(
-                  animation: _fabMenuController,
-                  builder: (context, _) {
-                    final opacity = Curves.easeOut.transform(
-                      _fabMenuController.value,
-                    );
-                    return Container(
-                      color: Colors.black.withValues(alpha: 0.18 * opacity),
-                    );
-                  },
-                ),
               ),
             ),
-          _buildDashboardQuickActionsFab(context),
         ],
       ),
     );
@@ -1821,9 +1891,7 @@ class _Dashboard1State extends State<Dashboard1>
     }
 
     if (!mounted) return;
-    setState(() {
-      _fabMenuOpen = true;
-    });
+    _fabMenuOpenNotifier.value = true;
     AIAssistantOverlayController.setVisible(false);
     await _fabMenuController.forward(from: 0);
   }
@@ -1835,16 +1903,20 @@ class _Dashboard1State extends State<Dashboard1>
     }
     await _fabMenuController.reverse();
     if (!mounted) return;
-    setState(() {
-      _fabMenuOpen = false;
-    });
+    _fabMenuOpenNotifier.value = false;
     AIAssistantOverlayController.setVisible(true);
   }
 
   Future<void> _handleFabAction(Future<void> Function() action) async {
-    await _closeFabMenu();
-    if (!mounted) return;
-    await action();
+    if (_fabActionInFlight) return;
+    _fabActionInFlight = true;
+    try {
+      await _closeFabMenu();
+      if (!mounted) return;
+      await action();
+    } finally {
+      _fabActionInFlight = false;
+    }
   }
 
   Future<void> _openNearbyFromFab() async {
@@ -1865,6 +1937,13 @@ class _Dashboard1State extends State<Dashboard1>
     await Navigator.push(
       context,
       _buildFadeSlideRoute(const AppointmentsPage(initialTab: 0)),
+    );
+  }
+
+  Future<void> _openFamilyCareFromFab() async {
+    await Navigator.push(
+      context,
+      _buildFadeSlideRoute(const FamilyCareDashboardScreen()),
     );
   }
 
@@ -1905,7 +1984,7 @@ class _Dashboard1State extends State<Dashboard1>
               _buildAssistantChoiceTile(
                 sheetContext,
                 icon: Icons.person_search_rounded,
-                title: sheetContext.l10n.auto('KHOJ AI'),
+                title: sheetContext.l10n.auto('CareSearch AI'),
                 subtitle: sheetContext.l10n.auto('Lost and found reports'),
                 accentColor: scheme.tertiary,
                 onTap: () => Navigator.pop(sheetContext, 'khoj'),
@@ -1917,7 +1996,7 @@ class _Dashboard1State extends State<Dashboard1>
     );
 
     if (!mounted || selected == null) return;
-    final page = selected == 'khoj' ? const KhojAiPage() : const ChatScreen();
+    final page = selected == 'khoj' ? const CareSearchAiPage() : const ChatScreen();
     await Navigator.push(context, _buildFadeSlideRoute(page));
   }
 
@@ -1984,246 +2063,71 @@ class _Dashboard1State extends State<Dashboard1>
 
   Widget _buildDashboardQuickActionsFab(BuildContext context) {
     const mainFabSize = 58.0;
-    const spacing = 10.0;
     const bottomNavOffset = 112.0;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final media = MediaQuery.of(context);
-    final availableWidth = media.size.width - 32;
-    final showLabels = availableWidth >= 300;
-    final menuWidth = showLabels
-        ? availableWidth.clamp(252.0, 324.0).toDouble()
-        : mainFabSize;
     final bottomPadding = media.padding.bottom;
-    final actions = <Map<String, dynamic>>[
-      {
-        'icon': Icons.smart_toy_rounded,
-        'label': context.l10n.auto('AI Assistant'),
-        'onTap': _openAiAssistantFromFab,
-      },
-      {
-        'icon': Icons.local_hospital_rounded,
-        'label': context.l10n.auto('Nearby Healthcare'),
-        'onTap': _openNearbyFromFab,
-      },
-      {
-        'icon': Icons.shopping_bag_rounded,
-        'label': context.l10n.auto('Products'),
-        'onTap': _openStoreFromFab,
-      },
-      {
-        'icon': Icons.calendar_month_rounded,
-        'label': context.l10n.auto('Appointments'),
-        'onTap': _openAppointmentsFromFab,
-      },
-    ];
 
     return Positioned(
       right: media.size.width >= 600 ? 24 : 16,
       bottom: bottomNavOffset + bottomPadding,
       child: RepaintBoundary(
-        child: AnimatedBuilder(
-          animation: _fabMenuController,
-          builder: (context, _) {
-            final menuProgress = Curves.easeOutCubic.transform(
-              _fabMenuController.value,
-            );
-
-            return SizedBox(
-              width: menuWidth,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  IgnorePointer(
-                    ignoring: !_fabMenuOpen || menuProgress < 0.04,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        for (var i = 0; i < actions.length; i++) ...[
-                          _buildDashboardFabAction(
-                            context,
-                            icon: actions[i]['icon'] as IconData,
-                            label: actions[i]['label'] as String,
-                            showLabel: showLabels,
-                            index: i,
-                            rawProgress: _fabMenuController.value,
-                            onTap: () {
-                              unawaited(_handleFabAction(
-                                actions[i]['onTap'] as Future<void> Function(),
-                              ));
-                            },
-                          ),
-                          if (i != actions.length - 1)
-                            const SizedBox(height: spacing),
-                        ],
-                      ],
-                    ),
+        child: Tooltip(
+          message: _fabMenuOpen
+              ? context.l10n.auto('Close quick actions')
+              : context.l10n.auto('Open quick actions'),
+          child: Semantics(
+            button: true,
+            toggled: _fabMenuOpen,
+            label: context.l10n.auto('Dashboard quick actions'),
+            child: Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              elevation: 10,
+              shadowColor: scheme.primary.withValues(alpha: 0.32),
+              child: Ink(
+                width: mainFabSize,
+                height: mainFabSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      scheme.primary,
+                      Color.lerp(scheme.primary, scheme.secondary, 0.52)!,
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  SizedBox(height: showLabels ? 14 : 12),
-                  Tooltip(
-                    message: _fabMenuOpen
-                        ? context.l10n.auto('Close quick actions')
-                        : context.l10n.auto('Open quick actions'),
-                    child: Semantics(
-                      button: true,
-                      toggled: _fabMenuOpen,
-                      label: context.l10n.auto('Dashboard quick actions'),
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: Material(
-                          color: Colors.transparent,
-                          shape: const CircleBorder(),
-                          elevation: 10,
-                          shadowColor: scheme.primary.withValues(alpha: 0.32),
-                          child: Ink(
-                            width: mainFabSize,
-                            height: mainFabSize,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: LinearGradient(
-                                colors: [
-                                  scheme.primary,
-                                  Color.lerp(
-                                    scheme.primary,
-                                    scheme.secondary,
-                                    0.52,
-                                  )!,
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                            ),
-                            child: InkWell(
-                              customBorder: const CircleBorder(),
-                              onTap: () {
-                                unawaited(_toggleFabMenu());
-                              },
-                              child: Center(
-                                child: AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 180),
-                                  switchInCurve: Curves.easeOutCubic,
-                                  switchOutCurve: Curves.easeOutCubic,
-                                  transitionBuilder: (child, animation) {
-                                    return RotationTransition(
-                                      turns: Tween<double>(begin: 0.88, end: 1)
-                                          .animate(animation),
-                                      child: FadeTransition(
-                                        opacity: animation,
-                                        child: child,
-                                      ),
-                                    );
-                                  },
-                                  child: Icon(
-                                    _fabMenuOpen
-                                        ? Icons.close_rounded
-                                        : Icons.support_agent_rounded,
-                                    key: ValueKey<bool>(_fabMenuOpen),
-                                    color: Colors.white,
-                                    size: 30,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
+                ),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () {
+                    unawaited(_toggleFabMenu());
+                  },
+                  child: Center(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeOutCubic,
+                      transitionBuilder: (child, animation) {
+                        return RotationTransition(
+                          turns: Tween<double>(begin: 0.88, end: 1)
+                              .animate(animation),
+                          child:
+                              FadeTransition(opacity: animation, child: child),
+                        );
+                      },
+                      child: Icon(
+                        _fabMenuOpen
+                            ? Icons.close_rounded
+                            : Icons.support_agent_rounded,
+                        key: ValueKey<bool>(_fabMenuOpen),
+                        color: Colors.white,
+                        size: 30,
                       ),
                     ),
                   ),
-                ],
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDashboardFabAction(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required bool showLabel,
-    required int index,
-    required double rawProgress,
-    required VoidCallback onTap,
-  }) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final delay = (index * 0.08).clamp(0.0, 0.24);
-    final intervalProgress =
-        ((rawProgress - delay) / (1 - delay)).clamp(0.0, 1.0).toDouble();
-    final progress = Curves.easeOutCubic.transform(intervalProgress);
-
-    Widget buttonChild;
-    if (showLabel) {
-      buttonChild = ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 52),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: scheme.primary.withValues(alpha: 0.12),
-                ),
-                child: Icon(icon, size: 21, color: scheme.primary),
-              ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: scheme.onSurface,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    } else {
-      buttonChild = SizedBox(
-        width: 52,
-        height: 52,
-        child: Center(
-          child: Icon(icon, size: 22, color: scheme.primary),
-        ),
-      );
-    }
-
-    return Opacity(
-      opacity: progress,
-      child: Transform.translate(
-        offset: Offset(0, (1 - progress) * 14),
-        child: Transform.scale(
-          alignment: Alignment.centerRight,
-          scale: 0.92 + (0.08 * progress),
-          child: Tooltip(
-            message: label,
-            child: Semantics(
-              button: true,
-              label: label,
-              child: Material(
-                color: theme.cardColor,
-                clipBehavior: Clip.antiAlias,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(showLabel ? 28 : 26),
-                ),
-                elevation: 8,
-                shadowColor: Colors.black.withValues(alpha: 0.18),
-                child: InkWell(
-                  onTap: onTap,
-                  borderRadius: BorderRadius.circular(showLabel ? 28 : 26),
-                  child: buttonChild,
                 ),
               ),
             ),

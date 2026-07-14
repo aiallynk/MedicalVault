@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api_service.dart';
 
 class AIResponse {
@@ -15,6 +16,10 @@ class AIResponse {
   final String? type;
   final String? title;
   final List<Map<String, dynamic>>? items;
+  final List<Map<String, dynamic>>? blocks;
+  final List<Map<String, dynamic>>? suggestedActions;
+  final String? intent;
+  final String? status;
   final String? message;
 
   AIResponse({
@@ -31,6 +36,10 @@ class AIResponse {
     this.type,
     this.title,
     this.items,
+    this.blocks,
+    this.suggestedActions,
+    this.intent,
+    this.status,
     this.message,
   });
 
@@ -54,7 +63,7 @@ class AIResponse {
 
     return AIResponse(
       success: json['success'] ?? false,
-      reply: json['reply'] ?? '',
+      reply: (json['reply'] ?? json['message'] ?? '').toString(),
       language: json['language'] ?? 'english',
       responseType: json['responseType'] ?? 'text',
       structuredData: parseMap(json['structuredData']),
@@ -66,6 +75,10 @@ class AIResponse {
       type: json['type'],
       title: json['title'],
       items: parseMapList(json['items']),
+      blocks: parseMapList(json['blocks']),
+      suggestedActions: parseMapList(json['suggestedActions']),
+      intent: json['intent']?.toString(),
+      status: json['status']?.toString(),
       message: json['message'],
     );
   }
@@ -76,7 +89,10 @@ class DocumentInfo {
   final String name;
   final String date;
   final String type;
-  final String? previewUrl;
+  final String? mimeType;
+  final String? reportDate;
+  final String? uploadedAt;
+  final bool previewAvailable;
   final String? description;
 
   DocumentInfo({
@@ -84,17 +100,23 @@ class DocumentInfo {
     required this.name,
     required this.date,
     required this.type,
-    this.previewUrl,
+    this.mimeType,
+    this.reportDate,
+    this.uploadedAt,
+    this.previewAvailable = false,
     this.description,
   });
 
   factory DocumentInfo.fromJson(Map<String, dynamic> json) {
     return DocumentInfo(
-      id: json['id'] ?? '',
-      name: json['name'] ?? '',
-      date: json['date'] ?? '',
-      type: json['type'] ?? '',
-      previewUrl: json['previewUrl'],
+      id: (json['documentId'] ?? json['id'] ?? '').toString(),
+      name: (json['displayName'] ?? json['name'] ?? 'Medical document').toString(),
+      date: (json['reportDate'] ?? json['uploadedAt'] ?? json['date'] ?? '').toString(),
+      type: (json['documentType'] ?? json['type'] ?? 'Document').toString(),
+      mimeType: (json['fileType'] ?? json['mimeType'])?.toString(),
+      reportDate: json['reportDate']?.toString(),
+      uploadedAt: json['uploadedAt']?.toString(),
+      previewAvailable: json['previewAvailable'] == true,
       description: json['description'],
     );
   }
@@ -103,11 +125,15 @@ class DocumentInfo {
 class AIService {
   static final Dio _dio = Dio();
   static const String model = 'gpt-4o';
+  static const String _activeConversationPrefix =
+      'ai_assistant_active_conversation_';
 
   /// Send a message to the AI assistant
   static Future<AIResponse> sendMessage({
     required String prompt,
     String? documentId,
+    String? patientProfileId,
+    String? conversationId,
     Map<String, dynamic>? context,
   }) async {
     try {
@@ -127,6 +153,10 @@ class AIService {
           'prompt': prompt,
           'model': model,
           if (documentId != null) 'documentId': documentId,
+          if (patientProfileId != null && patientProfileId.trim().isNotEmpty)
+            'patientProfileId': patientProfileId.trim(),
+          if (conversationId != null && conversationId.trim().isNotEmpty)
+            'conversationId': conversationId.trim(),
           if (context != null) 'context': context,
         },
         options: Options(
@@ -153,14 +183,135 @@ class AIService {
         reply: message,
         message: message,
       );
-    } catch (e) {
-      print('AI Service Error: $e');
+    } catch (_) {
       return AIResponse(
         success: false,
         reply: 'Sorry, I encountered an error. Please try again.',
-        message: e.toString(),
+        message: 'AI request failed',
       );
     }
+  }
+
+  /// The backend is authoritative. The local ID is used only to keep a
+  /// per-profile reference across app restarts; no cached message content is
+  /// read from the device.
+  static Future<Map<String, dynamic>?> getActiveConversation({
+    String? patientProfileId,
+  }) async {
+    try {
+      final token = await ApiService.getToken();
+      if (token == null) return null;
+      final response = await _dio.get(
+        '${ApiService.baseUrl}/ai/conversations/active',
+        queryParameters: {
+          if (patientProfileId != null && patientProfileId.trim().isNotEmpty)
+            'patientProfileId': patientProfileId.trim(),
+        },
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (response.statusCode != 200 || response.data is! Map) return null;
+      final data = (response.data as Map)
+          .map((key, value) => MapEntry(key.toString(), value));
+      if (data['success'] != true) return null;
+      final profile = data['patientProfile'];
+      final profileId = profile is Map ? profile['id']?.toString() : patientProfileId;
+      final conversationId = data['conversationId']?.toString();
+      if (profileId != null && profileId.isNotEmpty) {
+        if (conversationId != null && conversationId.isNotEmpty) {
+          await _saveActiveConversationReference(profileId, conversationId);
+        } else {
+          await clearActiveConversationReference(profileId);
+        }
+      }
+      return data;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> startNewChat({
+    required String conversationId,
+    required String patientProfileId,
+  }) async {
+    try {
+      final token = await ApiService.getToken();
+      if (token == null) return false;
+      final response = await _dio.post(
+        '${ApiService.baseUrl}/ai/conversations/$conversationId/new',
+        data: {'patientProfileId': patientProfileId},
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final success = response.statusCode == 200 && response.data is Map &&
+          response.data['success'] == true;
+      if (success) await clearActiveConversationReference(patientProfileId);
+      return success;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> clearActiveConversation({
+    required String conversationId,
+    required String patientProfileId,
+  }) async {
+    try {
+      final token = await ApiService.getToken();
+      if (token == null) return false;
+      final response = await _dio.delete(
+        '${ApiService.baseUrl}/ai/conversations/$conversationId',
+        queryParameters: {'patientProfileId': patientProfileId},
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final success = response.statusCode == 200 && response.data is Map &&
+          response.data['success'] == true;
+      if (success) await clearActiveConversationReference(patientProfileId);
+      return success;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getPreviewUrl(String documentId) async {
+    try {
+      final token = await ApiService.getToken();
+      if (token == null || documentId.trim().isEmpty) return null;
+      final response = await _dio.get(
+        '${ApiService.baseUrl}/files/${documentId.trim()}/preview-url',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (response.statusCode != 200 || response.data is! Map ||
+          response.data['success'] != true) {
+        return null;
+      }
+      return (response.data as Map)
+          .map((key, value) => MapEntry(key.toString(), value));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> saveActiveConversationReference({
+    required String patientProfileId,
+    required String conversationId,
+  }) => _saveActiveConversationReference(patientProfileId, conversationId);
+
+  static Future<void> _saveActiveConversationReference(
+    String patientProfileId,
+    String conversationId,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('$_activeConversationPrefix$patientProfileId', conversationId);
+  }
+
+  static Future<void> clearActiveConversationReference(String patientProfileId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_activeConversationPrefix$patientProfileId');
+  }
+
+  static Future<void> clearAllActiveConversationReferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getKeys().where((key) => key.startsWith(_activeConversationPrefix));
+    await Future.wait(keys.map(prefs.remove));
   }
 
   /// Load persisted chat history for current authorized user scope.
@@ -236,7 +387,6 @@ class AIService {
     try {
       final token = await ApiService.getToken();
       if (token == null) {
-        print('No authentication token available for getUserDocuments');
         return [];
       }
 
@@ -256,8 +406,7 @@ class AIService {
       } else {
         throw Exception('Failed to fetch documents');
       }
-    } catch (e) {
-      print('Get Documents Error: $e');
+    } catch (_) {
       return [];
     }
   }
@@ -281,8 +430,7 @@ class AIService {
       );
 
       return response.statusCode == 200 && response.data['success'] == true;
-    } catch (e) {
-      print('AI Status Check Error: $e');
+    } catch (_) {
       return false;
     }
   }

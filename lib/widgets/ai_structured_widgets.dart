@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+
+import '../utils/timezone_utils.dart';
 
 class AITableWidget extends StatelessWidget {
   final Map<String, dynamic> data;
@@ -91,12 +93,16 @@ class AITableWidget extends StatelessWidget {
               ),
               columns: columns
                   .map((column) => DataColumn(
-                        label: SelectableText(
+                        label: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 150),
+                          child: Text(
                           column,
+                          softWrap: true,
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
                             color: isDarkMode ? Colors.white : Colors.black,
+                          ),
                           ),
                         ),
                       ))
@@ -105,13 +111,17 @@ class AITableWidget extends StatelessWidget {
                   .map((row) => DataRow(
                         cells: columns
                             .map((column) => DataCell(
-                                  SelectableText(
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(maxWidth: 180),
+                                    child: Text(
                                     row[column]?.toString() ?? '',
+                                    softWrap: true,
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: isDarkMode
                                           ? Colors.white70
                                           : Colors.black87,
+                                    ),
                                     ),
                                   ),
                                 ))
@@ -449,6 +459,7 @@ class AIMessageStructuredWidget extends StatelessWidget {
     super.key,
     required this.text,
     this.sections,
+    this.blocks,
     this.structuredData,
     this.responseType,
     this.safety,
@@ -456,12 +467,22 @@ class AIMessageStructuredWidget extends StatelessWidget {
 
   final String text;
   final List<Map<String, dynamic>>? sections;
+  final List<Map<String, dynamic>>? blocks;
   final Map<String, dynamic>? structuredData;
   final String? responseType;
   final Map<String, dynamic>? safety;
 
   @override
   Widget build(BuildContext context) {
+    final responseBlocks = blocks ?? const <Map<String, dynamic>>[];
+    if (responseBlocks.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: responseBlocks
+            .map((block) => _buildResponseBlock(context, block))
+            .toList(growable: false),
+      );
+    }
     final normalizedSections = _normalizedSections();
     final hasSafetySection = normalizedSections.any(
       (section) => (section['key']?.toString().toLowerCase() ?? '') == 'safety',
@@ -476,10 +497,7 @@ class AIMessageStructuredWidget extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (normalizedSections.isEmpty)
-          SelectableText(
-            text.trim(),
-            style: Theme.of(context).textTheme.bodyMedium,
-          )
+          _markdown(context, text)
         else
           ...normalizedSections
               .map((section) => _buildSectionCard(context, section)),
@@ -507,6 +525,119 @@ class AIMessageStructuredWidget extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+
+  Widget _buildResponseBlock(BuildContext context, Map<String, dynamic> block) {
+    final type = (block['type'] ?? '').toString().toLowerCase();
+    final title = (block['title'] ?? '').toString().trim();
+    if (type == 'documentsources') {
+      // Source cards are rendered by ChatScreen, where each button can make a
+      // fresh authenticated preview request. A signed URL is never stored in a
+      // block or opened directly from Markdown.
+      return const SizedBox.shrink();
+    }
+    if (type == 'labresults') {
+      final items = block['items'] is List ? List<dynamic>.from(block['items']) : const <dynamic>[];
+      return _LabResultsBlock(title: title, items: items);
+    }
+    if (type == 'insightlist') {
+      final items = block['items'] is List ? List<dynamic>.from(block['items']) : const <dynamic>[];
+      return _sectionSurface(
+        context,
+        title: title,
+        child: _buildBullets(
+          context,
+          items.map((item) {
+            if (item is Map) {
+              final mapped = item.map((key, value) => MapEntry(key.toString(), value));
+              final heading = mapped['title']?.toString().trim() ?? '';
+              final description = (mapped['description'] ?? mapped['text'] ?? '').toString().trim();
+              return heading.isEmpty ? description : '$heading: $description';
+            }
+            return item.toString();
+          }).where((item) => item.isNotEmpty).toList(growable: false),
+        ),
+      );
+    }
+    if (type == 'table') {
+      final data = block['data'] is Map
+          ? (block['data'] as Map).map((key, value) => MapEntry(key.toString(), value))
+          : <String, dynamic>{};
+      return AITableWidget(data: data, title: title);
+    }
+    if (type == 'disclaimer') {
+      return _sectionSurface(
+        context,
+        title: title.isEmpty ? 'Important' : title,
+        tone: _SectionTone.caution,
+        child: _markdown(context, (block['text'] ?? '').toString()),
+      );
+    }
+    if (type == 'heading') {
+      return Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 6),
+        child: Text((block['text'] ?? title).toString(),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+      );
+    }
+    final markdown = (block['markdown'] ?? block['text'] ?? '').toString();
+    return _sectionSurface(
+      context,
+      title: title,
+      child: _markdown(context, markdown),
+    );
+  }
+
+  Widget _sectionSurface(
+    BuildContext context, {
+    required String title,
+    required Widget child,
+    _SectionTone tone = _SectionTone.standard,
+  }) {
+    final theme = Theme.of(context);
+    final background = tone == _SectionTone.caution
+        ? Colors.orange.withValues(alpha: theme.brightness == Brightness.dark ? .16 : .10)
+        : Colors.transparent;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title.isNotEmpty) ...[
+            Text(title, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+          ],
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _markdown(BuildContext context, String source) {
+    // The server already emits Markdown fallback. Remove any HTML tags before
+    // rendering and do not attach a link handler, so AI output cannot open an
+    // arbitrary route in the client.
+    final sanitized = source.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+    if (sanitized.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return MarkdownBody(
+      data: sanitized,
+      selectable: true,
+      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+        p: theme.textTheme.bodyMedium?.copyWith(height: 1.38),
+        h1: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+        h2: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        h3: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+        tableBorder: TableBorder.all(color: theme.dividerColor),
+        tableCellsPadding: const EdgeInsets.all(7),
+      ),
     );
   }
 
@@ -713,10 +844,7 @@ class AIMessageStructuredWidget extends StatelessWidget {
       return _buildBullets(context, bullets);
     }
 
-    return SelectableText(
-      content,
-      style: Theme.of(context).textTheme.bodyMedium,
-    );
+    return _markdown(context, content);
   }
 
   Widget _buildBullets(BuildContext context, List<String> bullets) {
@@ -798,12 +926,97 @@ class AIMessageStructuredWidget extends StatelessWidget {
   }
 }
 
+enum _SectionTone { standard, caution }
+
+class _LabResultsBlock extends StatelessWidget {
+  const _LabResultsBlock({required this.title, required this.items});
+
+  final String title;
+  final List<dynamic> items;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title.isNotEmpty) ...[
+            Text(title,
+                style: theme.textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+          ],
+          ...items.whereType<Map>().map((entry) {
+            final item = entry.map(
+                (key, value) => MapEntry(key.toString(), value));
+            final status = (item['status'] ?? '').toString().toLowerCase();
+            final statusColor = status.contains('below') ||
+                    status.contains('above') ||
+                    status.contains('attention')
+                ? Colors.amber.shade800
+                : status.contains('critical') || status.contains('urgent')
+                    ? theme.colorScheme.error
+                    : Colors.green.shade700;
+            final statusText = switch (status) {
+              'below_reference' => 'Below the displayed reference range',
+              'above_reference' => 'Above the displayed reference range',
+              'within_reference' => 'Within the displayed reference range',
+              _ => (item['statusLabel'] ?? '').toString(),
+            };
+            final value = [item['value'], item['unit']]
+                .where((part) =>
+                    part != null && part.toString().trim().isNotEmpty)
+                .join(' ');
+            final reference = item['referenceRange']?.toString().trim() ?? '';
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 7),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                border: Border.all(color: theme.dividerColor),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text((item['name'] ?? 'Result').toString(),
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  if (value.isNotEmpty)
+                    Text(value, style: theme.textTheme.bodyLarge),
+                  if (reference.isNotEmpty)
+                    Text('Reference: $reference',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant)),
+                  if (statusText.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(statusText,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                              color: statusColor,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
 class DocumentPreviewCard extends StatelessWidget {
   final String id;
   final String name;
   final String type;
   final String date;
-  final String? previewUrl;
+  final bool previewAvailable;
+  final VoidCallback? onPreview;
   final VoidCallback? onTap;
 
   const DocumentPreviewCard({
@@ -812,7 +1025,8 @@ class DocumentPreviewCard extends StatelessWidget {
     required this.name,
     required this.type,
     required this.date,
-    this.previewUrl,
+    this.previewAvailable = false,
+    this.onPreview,
     this.onTap,
   });
 
@@ -822,7 +1036,7 @@ class DocumentPreviewCard extends StatelessWidget {
     final isDarkMode = theme.brightness == Brightness.dark;
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      margin: const EdgeInsets.symmetric(vertical: 4),
       color: isDarkMode ? const Color(0xFF2E2E2E) : Colors.white,
       child: ListTile(
         leading: CircleAvatar(
@@ -832,7 +1046,7 @@ class DocumentPreviewCard extends StatelessWidget {
             color: Colors.white,
           ),
         ),
-        title: SelectableText(
+        title: Text(
           name,
           style: TextStyle(
             fontWeight: FontWeight.w500,
@@ -842,15 +1056,16 @@ class DocumentPreviewCard extends StatelessWidget {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SelectableText(
+            Text(
               type,
               style: TextStyle(
                 color: isDarkMode ? Colors.white70 : Colors.grey[600],
                 fontSize: 12,
               ),
             ),
-            SelectableText(
-              date,
+            Text(
+              formatDateForContext(context, date,
+                  pattern: 'd MMM yyyy', fallback: ''),
               style: TextStyle(
                 color: isDarkMode ? Colors.white60 : Colors.grey[500],
                 fontSize: 11,
@@ -861,25 +1076,19 @@ class DocumentPreviewCard extends StatelessWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (previewUrl != null)
+            if (previewAvailable)
               IconButton(
                 icon: const Icon(Icons.visibility, size: 18),
                 color: isDarkMode ? Colors.white70 : Colors.black54,
                 tooltip: 'Preview',
-                onPressed: () async {
-                  try {
-                    final url = previewUrl;
-                    if (url != null) {
-                      final uri = Uri.parse(url);
-                      if (await canLaunchUrl(uri)) {
-                        await launchUrl(uri,
-                            mode: LaunchMode.externalApplication);
-                      }
-                    }
-                  } catch (_) {}
-                },
+                onPressed: onPreview,
               ),
-            const Icon(Icons.arrow_forward_ios, size: 16),
+            IconButton(
+              icon: const Icon(Icons.analytics_outlined, size: 18),
+              color: isDarkMode ? Colors.white70 : Colors.black54,
+              tooltip: 'Analyze',
+              onPressed: onTap,
+            ),
           ],
         ),
         onTap: onTap,

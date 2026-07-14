@@ -85,7 +85,10 @@ tz.Location _resolveLocation(String? timeZoneId) {
   try {
     return tz.getLocation(normalized);
   } catch (_) {
-    return tz.getLocation(TimezoneProvider.defaultTimeZone);
+    // App startup initializes the timezone database, but use UTC as a safe
+    // fallback for early widget construction and tests rather than throwing
+    // or showing a raw ISO value to the user.
+    return tz.UTC;
   }
 }
 

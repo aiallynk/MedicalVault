@@ -22,17 +22,21 @@ import 'package:hello/SettingPages/SecuritySettingsPage.dart';
 import 'package:hello/SettingPages/ThemeSelectionPage.dart';
 import 'package:hello/SettingPages/TermsOfServicesPage.dart';
 import 'package:hello/SettingPages/settings_route.dart';
+import 'package:hello/SettingPages/settings_section_scaffold.dart';
 import 'package:hello/Login_Signup/loginScreen.dart';
 import 'package:hello/screens/appointments_page.dart';
 import 'package:hello/api_service.dart';
 import 'package:hello/BottomNavigationBar/dashboard1.dart';
 import 'package:hello/Notifications/notification_settings_service.dart';
+import 'package:hello/services/dashboard_display_settings.dart';
 import 'package:hello/Login_Signup/logout_service.dart';
 import 'package:hello/localization/app_localizations.dart';
 import 'package:hello/providers/language_provider.dart';
 import 'package:hello/providers/timezone_provider.dart';
 import 'package:hello/widgets/app_text.dart';
 import 'package:hello/widgets/settings_primitives.dart';
+import 'package:hello/features/family_care/screens/family_profile_access_controls_screen.dart';
+import 'package:hello/features/family_care/screens/family_care_notification_preferences_screen.dart';
 
 class SettingsPage extends StatefulWidget {
   final Map<String, dynamic> userData; // 👈 full user data map
@@ -47,6 +51,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool sessionExpiring = true;
   bool reminders = true;
   bool systemNotifs = true;
+  bool familyCareNotifs = true;
+  bool showTopDoctors = true;
   bool allowMultipleSessions = false;
   bool isLoadingSessionPolicy = false;
   bool isUpdatingSessionPolicy = false;
@@ -74,6 +80,7 @@ class _SettingsPageState extends State<SettingsPage> {
         );
     _loadLinkedProfiles();
     _loadNotificationSettings();
+    _loadDashboardDisplaySettings();
     _loadDeviceSessions();
     _loadSessionPolicy();
     _refreshUserFromPrefs();
@@ -181,6 +188,24 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _loadDashboardDisplaySettings() async {
+    final show = await DashboardDisplaySettings().getShowTopDoctors();
+    if (!mounted) return;
+    setState(() {
+      showTopDoctors = show;
+    });
+    _notifySectionRefresh();
+  }
+
+  Future<void> _updateShowTopDoctors(bool value) async {
+    await DashboardDisplaySettings().setShowTopDoctors(value);
+    if (!mounted) return;
+    setState(() {
+      showTopDoctors = value;
+    });
+    _notifySectionRefresh();
+  }
+
   Future<void> _loadNotificationSettings() async {
     if (!mounted) return;
     setState(() {
@@ -194,6 +219,7 @@ class _SettingsPageState extends State<SettingsPage> {
         sessionExpiring = settings['sessionExpiring'] ?? true;
         reminders = settings['reminders'] ?? true;
         systemNotifs = settings['system'] ?? true;
+        familyCareNotifs = settings['familyCare'] ?? true;
       });
       _notifySectionRefresh();
     } catch (e) {
@@ -350,6 +376,9 @@ class _SettingsPageState extends State<SettingsPage> {
           case 'system':
             systemNotifs = value;
             break;
+          case 'familyCare':
+            familyCareNotifs = value;
+            break;
         }
       });
       _notifySectionRefresh();
@@ -360,6 +389,7 @@ class _SettingsPageState extends State<SettingsPage> {
         'sessionExpiring' => l10n.auto('Session Expiring'),
         'reminders' => l10n.auto('Reminders'),
         'system' => l10n.auto('System'),
+        'familyCare' => l10n.auto('Family Care'),
         _ => type,
       };
       final statusText = value
@@ -526,6 +556,12 @@ class _SettingsPageState extends State<SettingsPage> {
               subtitle: l10n.auto('Choose what alerts you receive'),
               onTap: () =>
                   _openSettingsSection(_buildNotificationsSectionPage()),
+            ),
+            SettingsSectionCard(
+              icon: Icons.tune_rounded,
+              title: l10n.auto('Controls'),
+              subtitle: l10n.auto('Customize what appears on your dashboard'),
+              onTap: () => _openSettingsSection(_buildControlsSectionPage()),
             ),
             const SizedBox(height: SettingsTokens.sectionGap),
             _buildSettingsGroupHeading(
@@ -875,48 +911,131 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           );
         }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SettingsSection(
+              title: sectionContext.l10n.auto('Alert Categories'),
+              subtitle: sectionContext.l10n.auto(
+                'Choose the moments when the app should interrupt you.',
+              ),
+              child: SettingsGroupCard(
+                child: Column(
+                  children: [
+                    _buildNotificationSwitchTile(
+                      sectionContext,
+                      l10n.auto('Session Expiring'),
+                      l10n.auto(
+                        'Get notified when your session with doctor is about to expire (last 30 seconds)',
+                      ),
+                      sessionExpiring,
+                      Icons.timer,
+                      scheme.primary,
+                      (val) =>
+                          _updateNotificationSetting('sessionExpiring', val),
+                      showDivider: true,
+                    ),
+                    _buildNotificationSwitchTile(
+                      sectionContext,
+                      l10n.auto('Reminders'),
+                      l10n.auto(
+                        'Receive appointment reminders and other important notifications',
+                      ),
+                      reminders,
+                      Icons.notifications,
+                      scheme.secondary,
+                      (val) => _updateNotificationSetting('reminders', val),
+                      showDivider: true,
+                    ),
+                    _buildNotificationSwitchTile(
+                      sectionContext,
+                      l10n.auto('System'),
+                      l10n.auto(
+                        'Get system updates, advertisements, and instruction notifications',
+                      ),
+                      systemNotifs,
+                      Icons.info,
+                      scheme.tertiary,
+                      (val) => _updateNotificationSetting('system', val),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SettingsSection(
+              title: sectionContext.l10n.auto('Family Care'),
+              subtitle: sectionContext.l10n.auto(
+                'Medication, appointment and caregiver alerts for the family members you manage.',
+              ),
+              child: SettingsGroupCard(
+                child: Column(
+                  children: [
+                    _buildNotificationSwitchTile(
+                      sectionContext,
+                      l10n.auto('Family Care notifications'),
+                      l10n.auto(
+                        'Receive medication reminders, missed-dose alerts, and caregiver updates for your family profiles.',
+                      ),
+                      familyCareNotifs,
+                      Icons.family_restroom_rounded,
+                      scheme.primary,
+                      (val) => _updateNotificationSetting('familyCare', val),
+                    ),
+                    SettingsItemTile(
+                      icon: Icons.tune_rounded,
+                      title: sectionContext.l10n.auto('Manage Family Care notifications'),
+                      subtitle: sectionContext.l10n.auto('Set backend-enforced medicine, missed-dose, and caregiver alert preferences.'),
+                      onTap: () => pushSettingsRoute(
+                        sectionContext,
+                        const FamilyCareNotificationPreferencesScreen(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildControlsSectionPage() {
+    final l10n = context.l10n;
+    return SettingsSectionScaffold(
+      title: l10n.auto('Controls'),
+      subtitle: l10n.auto('Customize what appears on your dashboard'),
+      refreshListenable: _sectionRefreshToken,
+      contentBuilder: (sectionContext) {
+        final scheme = Theme.of(sectionContext).colorScheme;
         return SettingsSection(
-          title: sectionContext.l10n.auto('Alert Categories'),
+          title: sectionContext.l10n.auto('Dashboard'),
           subtitle: sectionContext.l10n.auto(
-            'Choose the moments when the app should interrupt you.',
+            'Choose which sections show up on your home dashboard.',
           ),
           child: SettingsGroupCard(
             child: Column(
               children: [
-                _buildNotificationSwitchTile(
-                  sectionContext,
-                  l10n.auto('Session Expiring'),
-                  l10n.auto(
-                    'Get notified when your session with doctor is about to expire (last 30 seconds)',
+                SettingsSwitchTile(
+                  icon: Icons.medical_services_outlined,
+                  title: sectionContext.l10n.auto('Top Doctors'),
+                  subtitle: sectionContext.l10n.auto(
+                    'Show the "Top Doctors" section on your dashboard.',
                   ),
-                  sessionExpiring,
-                  Icons.timer,
-                  scheme.primary,
-                  (val) => _updateNotificationSetting('sessionExpiring', val),
-                  showDivider: true,
+                  value: showTopDoctors,
+                  accentColor: scheme.primary,
+                  onChanged: _updateShowTopDoctors,
                 ),
-                _buildNotificationSwitchTile(
-                  sectionContext,
-                  l10n.auto('Reminders'),
-                  l10n.auto(
-                    'Receive appointment reminders and other important notifications',
+                const Divider(height: 1),
+                SettingsItemTile(
+                  icon: Icons.family_restroom_rounded,
+                  title: sectionContext.l10n.auto('Family and Profile Access'),
+                  subtitle: sectionContext.l10n.auto('Control incoming requests, consent, permissions, and active family connections.'),
+                  onTap: () => pushSettingsRoute(
+                    sectionContext,
+                    const FamilyProfileAccessControlsScreen(),
                   ),
-                  reminders,
-                  Icons.notifications,
-                  scheme.secondary,
-                  (val) => _updateNotificationSetting('reminders', val),
-                  showDivider: true,
-                ),
-                _buildNotificationSwitchTile(
-                  sectionContext,
-                  l10n.auto('System'),
-                  l10n.auto(
-                    'Get system updates, advertisements, and instruction notifications',
-                  ),
-                  systemNotifs,
-                  Icons.info,
-                  scheme.tertiary,
-                  (val) => _updateNotificationSetting('system', val),
                 ),
               ],
             ),

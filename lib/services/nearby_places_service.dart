@@ -4,7 +4,9 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../api_service.dart';
+import '../config/app_environment.dart';
 import '../models/nearby_place.dart';
+import 'google_places_service.dart';
 import 'offline/offline_storage_service.dart';
 
 class NearbyPlacesException implements Exception {
@@ -19,21 +21,29 @@ class NearbyPlacesException implements Exception {
 
 /// Nearby healthcare lookup.
 ///
-/// All results come from our backend (`GET /api/nearby/services`), which talks
-/// to Google Places using the single backend key. The app never calls Google
-/// Places directly.
+/// The app calls Google Places directly on-device (via [GooglePlacesService])
+/// using the app's own `GOOGLE_MAPS_API_KEY` as the primary path: current
+/// location -> Google Places request -> local parsing/distance/sort. If the
+/// device has no Google Maps key configured, or the direct call fails, the
+/// backend (`GET /api/nearby/services`) is used as a secondary source, and a
+/// stale local cache is used as a last resort so the screen is never empty
+/// purely because Google Places failed.
 class NearbyPlacesService {
   NearbyPlacesService({
     OfflineStorageService? storage,
-  }) : _storage = storage ?? OfflineStorageService.instance;
+    GooglePlacesService? googlePlaces,
+  })  : _storage = storage ?? OfflineStorageService.instance,
+        _googlePlaces = googlePlaces ?? const GooglePlacesService();
 
   static const Duration cacheDuration = Duration(minutes: 15);
   static const double _cacheLocationToleranceMeters = 750;
 
   final OfflineStorageService _storage;
+  final GooglePlacesService _googlePlaces;
 
   bool lastResultFromCache = false;
   bool lastResultFromBackend = false;
+  bool lastResultFromGoogle = false;
   bool lastResultWasStale = false;
   String lastStatusMessage = '';
 
@@ -136,6 +146,7 @@ class NearbyPlacesService {
   }) async {
     lastResultFromCache = false;
     lastResultFromBackend = false;
+    lastResultFromGoogle = false;
     lastResultWasStale = false;
     lastStatusMessage = '';
 
@@ -173,6 +184,32 @@ class NearbyPlacesService {
         'No internet connection. Check your network and try again.',
         code: 'no_internet',
       );
+    }
+
+    // Primary path: call Google Places directly from the device.
+    if (AppEnvironment.hasGoogleMapsApiKey) {
+      try {
+        final places = await _googlePlaces.searchNearby(
+          category: category,
+          origin: resolvedOrigin,
+          radiusMeters: resolvedRadius,
+        );
+        lastResultFromGoogle = true;
+        if (places.isNotEmpty) {
+          await _cachePlaces(
+            category: category,
+            origin: resolvedOrigin,
+            radiusMeters: resolvedRadius,
+            places: places,
+          );
+          return places;
+        }
+        // Zero results from Google: fall through to the backend, which may
+        // have internal directory/fallback data for this area.
+      } catch (_) {
+        // Direct Google Places call failed (network, key restriction, quota,
+        // etc.) — fall through to the backend as a secondary source.
+      }
     }
 
     Map<String, dynamic> backend;

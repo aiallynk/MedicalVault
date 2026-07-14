@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:hello/api_service.dart';
+import 'package:hello/widgets/ai_thinking_indicator.dart';
 
-class KhojAiPage extends StatefulWidget {
-  const KhojAiPage({
+class CareSearchAiPage extends StatefulWidget {
+  const CareSearchAiPage({
     super.key,
     this.reportId,
     this.reportType,
@@ -12,20 +13,22 @@ class KhojAiPage extends StatefulWidget {
   final String? reportType;
 
   @override
-  State<KhojAiPage> createState() => _KhojAiPageState();
+  State<CareSearchAiPage> createState() => _CareSearchAiPageState();
 }
 
-class _KhojAiPageState extends State<KhojAiPage> {
+class _CareSearchAiPageState extends State<CareSearchAiPage> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final List<_KhojMessage> _messages = [
-    _KhojMessage(
-      role: _KhojRole.assistant,
-      text:
-          'KHOJ AI can summarize lost/found reports, compare possible matches, and suggest verification steps.',
-    ),
-  ];
+  List<_CareSearchMessage> _messages = [];
+  String? _conversationId;
   bool _sending = false;
+  bool _loadingHistory = true;
+
+  static const _greeting = _CareSearchMessage(
+    role: _CareSearchRole.assistant,
+    text:
+        'CareSearch AI can summarize lost/found reports, compare possible matches, and suggest verification steps.',
+  );
 
   static const List<String> _quickActions = [
     'Find possible matches',
@@ -34,6 +37,27 @@ class _KhojAiPageState extends State<KhojAiPage> {
     'What information is missing?',
     'Draft verification questions',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    final response = await ApiService.getKhojChatHistory();
+    if (!mounted) return;
+    final rawMessages = (response?['messages'] as List?) ?? const [];
+    final loaded = rawMessages
+        .map((m) => _CareSearchMessage.fromJson(m as Map))
+        .toList();
+    setState(() {
+      _messages = loaded.isNotEmpty ? loaded : [_greeting];
+      _conversationId = response?['conversationId']?.toString();
+      _loadingHistory = false;
+    });
+    _scrollToBottom();
+  }
 
   @override
   void dispose() {
@@ -48,7 +72,9 @@ class _KhojAiPageState extends State<KhojAiPage> {
 
     setState(() {
       _sending = true;
-      _messages.add(_KhojMessage(role: _KhojRole.user, text: text));
+      _messages.add(
+        _CareSearchMessage(role: _CareSearchRole.user, text: text),
+      );
       _controller.clear();
     });
     _scrollToBottom();
@@ -65,18 +91,49 @@ class _KhojAiPageState extends State<KhojAiPage> {
         (response?['reply'] ?? response?['message'] ?? '').toString().trim();
     setState(() {
       _sending = false;
+      _conversationId = response?['conversationId']?.toString() ?? _conversationId;
       _messages.add(
-        _KhojMessage(
-          role: _KhojRole.assistant,
+        _CareSearchMessage(
+          role: _CareSearchRole.assistant,
           text: reply.isNotEmpty
               ? reply
               : success
-                  ? 'KHOJ AI completed the analysis.'
-                  : 'KHOJ AI could not complete the request.',
+                  ? 'CareSearch AI completed the analysis.'
+                  : 'CareSearch AI could not complete the request.',
         ),
       );
     });
     _scrollToBottom();
+  }
+
+  Future<void> _startNewChat() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Start new chat?'),
+        content: const Text(
+          'This will clear the current CareSearch AI conversation. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Start new chat'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await ApiService.clearKhojChatHistory();
+    if (!mounted) return;
+    setState(() {
+      _messages = [_greeting];
+      _conversationId = null;
+    });
   }
 
   void _scrollToBottom() {
@@ -95,8 +152,15 @@ class _KhojAiPageState extends State<KhojAiPage> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('KHOJ AI'),
+        title: const Text('CareSearch AI'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add_comment_outlined),
+            tooltip: 'Start new chat',
+            onPressed: _startNewChat,
+          ),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -121,17 +185,21 @@ class _KhojAiPageState extends State<KhojAiPage> {
             ),
             const Divider(height: 1),
             Expanded(
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(16),
-                itemCount: _messages.length + (_sending ? 1 : 0),
-                itemBuilder: (context, index) {
-                  if (_sending && index == _messages.length) {
-                    return const _TypingBubble();
-                  }
-                  return _MessageBubble(message: _messages[index]);
-                },
-              ),
+              child: _loadingHistory
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _messages.length + (_sending ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (_sending && index == _messages.length) {
+                          return const AiThinkingIndicator(
+                            avatarIcon: Icons.person_search_rounded,
+                          );
+                        }
+                        return _MessageBubble(message: _messages[index]);
+                      },
+                    ),
             ),
             Container(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -152,7 +220,7 @@ class _KhojAiPageState extends State<KhojAiPage> {
                       textInputAction: TextInputAction.send,
                       onSubmitted: (_) => _send(),
                       decoration: const InputDecoration(
-                        hintText: 'Ask KHOJ AI about lost/found reports',
+                        hintText: 'Ask CareSearch AI about lost/found reports',
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -174,66 +242,83 @@ class _KhojAiPageState extends State<KhojAiPage> {
   }
 }
 
-enum _KhojRole { user, assistant }
+enum _CareSearchRole { user, assistant }
 
-class _KhojMessage {
-  const _KhojMessage({
+class _CareSearchMessage {
+  const _CareSearchMessage({
     required this.role,
     required this.text,
   });
 
-  final _KhojRole role;
+  factory _CareSearchMessage.fromJson(Map json) {
+    final role = json['role']?.toString() == 'user'
+        ? _CareSearchRole.user
+        : _CareSearchRole.assistant;
+    return _CareSearchMessage(
+      role: role,
+      text: (json['content'] ?? '').toString(),
+    );
+  }
+
+  final _CareSearchRole role;
   final String text;
 }
 
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({required this.message});
 
-  final _KhojMessage message;
+  final _CareSearchMessage message;
 
   @override
   Widget build(BuildContext context) {
-    final isUser = message.role == _KhojRole.user;
+    final isUser = message.role == _CareSearchRole.user;
     final theme = Theme.of(context);
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.82,
+    final bubble = Container(
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.sizeOf(context).width * 0.78,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isUser
+            ? theme.colorScheme.primary
+            : theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(18),
+          topRight: const Radius.circular(18),
+          bottomLeft: Radius.circular(isUser ? 18 : 4),
+          bottomRight: Radius.circular(isUser ? 4 : 18),
         ),
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: isUser
-              ? theme.colorScheme.primary
-              : theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          message.text,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: isUser ? theme.colorScheme.onPrimary : null,
-          ),
+      ),
+      child: SelectableText(
+        message.text,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: isUser ? theme.colorScheme.onPrimary : null,
+          height: 1.35,
         ),
       ),
     );
-  }
-}
 
-class _TypingBubble extends StatelessWidget {
-  const _TypingBubble();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Align(
-      alignment: Alignment.centerLeft,
-      child: Padding(
-        padding: EdgeInsets.only(bottom: 10),
-        child: SizedBox(
-          height: 22,
-          width: 22,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (!isUser) ...[
+            CircleAvatar(
+              radius: 14,
+              backgroundColor: theme.colorScheme.primaryContainer,
+              child: Icon(
+                Icons.person_search_rounded,
+                size: 16,
+                color: theme.colorScheme.onPrimaryContainer,
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Flexible(child: bubble),
+        ],
       ),
     );
   }

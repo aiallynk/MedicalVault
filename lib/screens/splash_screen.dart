@@ -527,6 +527,7 @@ class _SplashScreenState extends State<SplashScreen>
                           : () async {
                               await _appUpdateService.skipVersionFor24Hours(
                                 info.latestVersion,
+                                buildNumber: info.latestBuildNumber,
                               );
                               if (!mounted || !dialogContext.mounted) return;
                               Navigator.of(dialogContext).pop(true);

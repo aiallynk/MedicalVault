@@ -1,6 +1,9 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hello/services/secure_token_storage.dart';
+import 'package:hello/services/ai_service.dart';
+import 'package:hello/features/family_care/providers/active_patient_profile_provider.dart';
+import 'package:hello/features/family_care/providers/family_dashboard_provider.dart';
 
 class LogoutService {
   static final LogoutService _instance = LogoutService._internal();
@@ -22,6 +25,9 @@ class LogoutService {
       await prefs.remove('privacy_accepted');
       await prefs.remove('privacy_accepted_date');
       await prefs.remove('privacy_version');
+      await AIService.clearAllActiveConversationReferences();
+      ActivePatientProfileProvider.clearGlobalSession();
+      FamilyDashboardProvider.clearGlobalSession();
 
       // Clear notification settings if needed
       await prefs.remove('notification_session_expiring');

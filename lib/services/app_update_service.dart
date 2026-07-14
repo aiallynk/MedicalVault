@@ -19,10 +19,25 @@ String _normalizeSha256Hex(Object? value) =>
 
 bool _isValidSha256Hex(String value) => _sha256HexPattern.hasMatch(value);
 
+/// Parses a server-provided build number field defensively. Older backend
+/// responses omit these fields entirely, which must continue to work
+/// exactly as before (null, not an error).
+int? _parseOptionalBuildNumber(Object? value) {
+  if (value == null) return null;
+  if (value is int) return value > 0 ? value : null;
+  final parsed = int.tryParse(value.toString().trim());
+  if (parsed == null || parsed <= 0) return null;
+  return parsed;
+}
+
 @immutable
 class AppUpdateInfo {
   final String latestVersion;
+  final int? latestBuildNumber;
   final String minimumSupportedVersion;
+  final int? minimumSupportedBuildNumber;
+  final bool mandatory;
+  final String releaseDate;
   final String apkUrl;
   final String releaseNotes;
   final String sha256;
@@ -31,7 +46,11 @@ class AppUpdateInfo {
 
   const AppUpdateInfo({
     required this.latestVersion,
+    this.latestBuildNumber,
     required this.minimumSupportedVersion,
+    this.minimumSupportedBuildNumber,
+    this.mandatory = false,
+    this.releaseDate = '',
     required this.apkUrl,
     required this.releaseNotes,
     required this.sha256,
@@ -39,12 +58,38 @@ class AppUpdateInfo {
     required this.forceUpdate,
   });
 
+  AppUpdateInfo copyWith({String? apkUrl}) {
+    return AppUpdateInfo(
+      latestVersion: latestVersion,
+      latestBuildNumber: latestBuildNumber,
+      minimumSupportedVersion: minimumSupportedVersion,
+      minimumSupportedBuildNumber: minimumSupportedBuildNumber,
+      mandatory: mandatory,
+      releaseDate: releaseDate,
+      apkUrl: apkUrl ?? this.apkUrl,
+      releaseNotes: releaseNotes,
+      sha256: sha256,
+      hasUpdate: hasUpdate,
+      forceUpdate: forceUpdate,
+    );
+  }
+
   factory AppUpdateInfo.fromJson(Map<String, dynamic> json) {
     return AppUpdateInfo(
       latestVersion:
           (json['latestVersion'] ?? json['version'] ?? '').toString().trim(),
+      // Additive field. Backends that predate build-number support simply
+      // omit this key, and _parseOptionalBuildNumber returns null for that
+      // — callers must treat null as "server did not provide a build
+      // number" and fall back to version-only comparison.
+      latestBuildNumber: _parseOptionalBuildNumber(
+          json['latestBuildNumber'] ?? json['latestBuild']),
       minimumSupportedVersion:
           (json['minimumSupportedVersion'] ?? '').toString().trim(),
+      minimumSupportedBuildNumber: _parseOptionalBuildNumber(
+          json['minimumSupportedBuildNumber'] ?? json['minimumSupportedBuild']),
+      mandatory: json['mandatory'] == true,
+      releaseDate: (json['releaseDate'] ?? '').toString().trim(),
       apkUrl: (json['apkUrl'] ?? '').toString().trim(),
       releaseNotes: (json['releaseNotes'] ?? '').toString().trim(),
       sha256: _normalizeSha256Hex(json['sha256'] ?? json['checksum']),
@@ -157,6 +202,7 @@ class AppUpdateInstallResult {
 
 class AppUpdateService {
   static const String skipVersionKey = 'update_skip_version';
+  static const String skipBuildNumberKey = 'update_skip_build_number';
   static const String skipUntilMsKey = 'update_skip_until_ms';
   static const String pendingInstallVersionKey = 'update_pending_version';
   static const String pendingInstallApkPathKey = 'update_pending_apk_path';
@@ -186,18 +232,36 @@ class AppUpdateService {
     return package.version.trim();
   }
 
+  /// Installed Android build number (versionCode), parsed defensively.
+  /// Returns null if PackageInfo does not report a usable numeric value
+  /// (e.g. unsupported platform), in which case callers must fall back to
+  /// version-only comparison rather than treating this as an update block.
+  Future<int?> getInstalledBuildNumber() async {
+    final package = await PackageInfo.fromPlatform();
+    return _parseOptionalBuildNumber(package.buildNumber);
+  }
+
   Future<PackageInfo> getPackageInfo() {
     return PackageInfo.fromPlatform();
   }
 
-  Future<AppUpdateInfo> fetchUpdateInfo({String? currentVersion}) async {
+  Future<AppUpdateInfo> fetchUpdateInfo({
+    String? currentVersion,
+    int? currentBuildNumber,
+  }) async {
     final version = (currentVersion == null || currentVersion.trim().isEmpty)
         ? await getInstalledVersion()
         : currentVersion.trim();
+    final buildNumber = currentBuildNumber ?? await getInstalledBuildNumber();
+
+    final queryParameters = <String, dynamic>{'currentVersion': version};
+    if (buildNumber != null) {
+      queryParameters['currentBuildNumber'] = buildNumber.toString();
+    }
 
     final response = await _dio.get<Map<String, dynamic>>(
       '${ApiService.baseUrl}/app/update',
-      queryParameters: {'currentVersion': version},
+      queryParameters: queryParameters,
       options: Options(
         sendTimeout: const Duration(seconds: 8),
         receiveTimeout: const Duration(seconds: 12),
@@ -223,52 +287,70 @@ class AppUpdateService {
       );
     }
 
+    // copyWith preserves latestBuildNumber/minimumSupportedBuildNumber
+    // (additive fields) that a manual reconstruction would otherwise drop.
+    final AppUpdateInfo normalized;
     if (info.apkUrl.isNotEmpty) {
-      final normalized = AppUpdateInfo(
-        latestVersion: info.latestVersion,
-        minimumSupportedVersion: info.minimumSupportedVersion,
-        apkUrl: _withVersionQuery(info.apkUrl, info.latestVersion),
-        releaseNotes: info.releaseNotes,
-        sha256: info.sha256,
-        hasUpdate: info.hasUpdate,
-        forceUpdate: info.forceUpdate,
+      normalized = info.copyWith(
+          apkUrl: _withVersionQuery(info.apkUrl, info.latestVersion));
+    } else {
+      // Backward-compatible fallback for deployments that return an empty apkUrl.
+      normalized = info.copyWith(
+        apkUrl: _withVersionQuery(
+          '${ApiService.baseUrl}/app/apk/${info.latestVersion}',
+          info.latestVersion,
+        ),
       );
-      await _clearStaleSkipData(normalized.latestVersion);
-      return normalized;
     }
-
-    // Backward-compatible fallback for deployments that return an empty apkUrl.
-    final fallback = AppUpdateInfo(
-      latestVersion: info.latestVersion,
-      minimumSupportedVersion: info.minimumSupportedVersion,
-      apkUrl: _withVersionQuery(
-        '${ApiService.baseUrl}/app/apk/${info.latestVersion}',
-        info.latestVersion,
-      ),
-      releaseNotes: info.releaseNotes,
-      sha256: info.sha256,
-      hasUpdate: info.hasUpdate,
-      forceUpdate: info.forceUpdate,
-    );
-    await _clearStaleSkipData(fallback.latestVersion);
-    return fallback;
+    await _clearStaleSkipData(normalized.latestVersion);
+    return normalized;
   }
 
   Future<AppUpdateCheckResult> checkForUpdate({
     bool ignoreSkipWindow = false,
   }) async {
     final currentVersion = await getInstalledVersion();
+    final currentBuildNumber = await getInstalledBuildNumber();
     try {
-      final info = await fetchUpdateInfo(currentVersion: currentVersion);
-      final hasUpdateFromVersion =
-          compareVersions(currentVersion, info.latestVersion) < 0;
-      final forceUpdateFromVersion =
-          compareVersions(currentVersion, info.minimumSupportedVersion) < 0;
+      final info = await fetchUpdateInfo(
+        currentVersion: currentVersion,
+        currentBuildNumber: currentBuildNumber,
+      );
+      final versionCmp = compareVersions(currentVersion, info.latestVersion);
+      var hasUpdateFromVersion = versionCmp < 0;
+      // Same version: a higher build number on the server is still an
+      // update (e.g. a same-day re-release with a corrected build).
+      if (!hasUpdateFromVersion &&
+          versionCmp == 0 &&
+          currentBuildNumber != null &&
+          info.latestBuildNumber != null &&
+          currentBuildNumber < info.latestBuildNumber!) {
+        hasUpdateFromVersion = true;
+      }
 
-      // Prefer deterministic client-side version comparison so splash checks
-      // still work even if backend flags are missing/outdated.
-      final hasUpdate = hasUpdateFromVersion || info.hasUpdate;
-      final forceUpdate = forceUpdateFromVersion || info.forceUpdate;
+      final minCmp =
+          compareVersions(currentVersion, info.minimumSupportedVersion);
+      var forceUpdateFromVersion = minCmp < 0;
+      // Same version as the minimum, but below the minimum build number.
+      if (!forceUpdateFromVersion &&
+          minCmp == 0 &&
+          currentBuildNumber != null &&
+          info.minimumSupportedBuildNumber != null &&
+          currentBuildNumber < info.minimumSupportedBuildNumber!) {
+        forceUpdateFromVersion = true;
+      }
+
+      // Never downgrade: if the installed version is strictly newer than
+      // latest, no client-side signal should ever suggest an update,
+      // regardless of what the (stale) server hasUpdate/forceUpdate says.
+      final installedIsNewer = versionCmp > 0;
+
+      // Prefer deterministic client-side version/build comparison so splash
+      // checks still work even if backend flags are missing/outdated.
+      final hasUpdate =
+          !installedIsNewer && (hasUpdateFromVersion || info.hasUpdate);
+      final forceUpdate = !installedIsNewer &&
+          (forceUpdateFromVersion || info.forceUpdate || info.mandatory);
 
       if (!hasUpdate) {
         return AppUpdateCheckResult(
@@ -294,7 +376,10 @@ class AppUpdateService {
 
       final skipped = ignoreSkipWindow
           ? false
-          : await _shouldSkipVersion(info.latestVersion);
+          : await _shouldSkipVersion(
+              info.latestVersion,
+              latestBuildNumber: info.latestBuildNumber,
+            );
       return AppUpdateCheckResult(
         currentVersion: currentVersion,
         info: info,
@@ -316,25 +401,48 @@ class AppUpdateService {
     }
   }
 
-  Future<void> skipVersionFor24Hours(String version) async {
+  /// [buildNumber] is optional and additive: when the server provides
+  /// latestBuildNumber, passing it here ensures skipping version X build Y
+  /// does not suppress a later same-version build Z > Y (the skip key
+  /// encodes the exact build that was skipped).
+  Future<void> skipVersionFor24Hours(String version, {int? buildNumber}) async {
     final prefs = await SharedPreferences.getInstance();
     final until = DateTime.now().add(skipWindow).millisecondsSinceEpoch;
     await prefs.setString(skipVersionKey, version);
+    if (buildNumber != null) {
+      await prefs.setInt(skipBuildNumberKey, buildNumber);
+    } else {
+      await prefs.remove(skipBuildNumberKey);
+    }
     await prefs.setInt(skipUntilMsKey, until);
   }
 
   Future<void> clearSkipWindow() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(skipVersionKey);
+    await prefs.remove(skipBuildNumberKey);
     await prefs.remove(skipUntilMsKey);
   }
 
-  Future<bool> _shouldSkipVersion(String version) async {
+  /// [latestBuildNumber] is optional and additive. When present, a skip is
+  /// only honored if it was recorded for this exact version AND this exact
+  /// build number — so skipping version X build Y never suppresses a later
+  /// same-version build Z > Y (a newly published build must still prompt).
+  Future<bool> _shouldSkipVersion(String version,
+      {int? latestBuildNumber}) async {
     final prefs = await SharedPreferences.getInstance();
     final skippedVersion = prefs.getString(skipVersionKey);
     final skipUntilMs = prefs.getInt(skipUntilMsKey);
     if (skippedVersion == null || skipUntilMs == null) return false;
     if (skippedVersion != version) return false;
+
+    if (latestBuildNumber != null) {
+      final skippedBuildNumber = prefs.getInt(skipBuildNumberKey);
+      if (skippedBuildNumber == null ||
+          skippedBuildNumber != latestBuildNumber) {
+        return false;
+      }
+    }
 
     final isActive = DateTime.now().millisecondsSinceEpoch < skipUntilMs;
     if (!isActive) {

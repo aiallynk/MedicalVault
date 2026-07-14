@@ -5,6 +5,7 @@ class NotificationSettingsService {
   static const String _sessionExpiringKey = 'notification_session_expiring';
   static const String _remindersKey = 'notification_reminders';
   static const String _systemKey = 'notification_system';
+  static const String _familyCareKey = 'notification_family_care';
 
   // Singleton pattern
   static final NotificationSettingsService _instance =
@@ -19,6 +20,7 @@ class NotificationSettingsService {
       'sessionExpiring': prefs.getBool(_sessionExpiringKey) ?? true,
       'reminders': prefs.getBool(_remindersKey) ?? true,
       'system': prefs.getBool(_systemKey) ?? true,
+      'familyCare': prefs.getBool(_familyCareKey) ?? true,
     };
   }
 
@@ -36,6 +38,9 @@ class NotificationSettingsService {
         break;
       case 'system':
         key = _systemKey;
+        break;
+      case 'familyCare':
+        key = _familyCareKey;
         break;
       default:
         throw ArgumentError('Invalid notification type: $type');

@@ -31,6 +31,8 @@ import 'services/offline/offline_storage_service.dart';
 import 'services/offline/offline_sync_engine.dart';
 import 'services/session_conflict_service.dart';
 import 'widgets/ai_floating_button.dart';
+import 'features/family_care/providers/active_patient_profile_provider.dart';
+import 'features/family_care/providers/family_dashboard_provider.dart';
 
 export 'core/theme/app_theme.dart';
 export 'core/theme/status_bar_helper.dart';
@@ -128,6 +130,8 @@ void main() async {
           ),
         ),
         ChangeNotifierProvider(create: (_) => DashboardPrefetchProvider()),
+        ChangeNotifierProvider(create: (_) => ActivePatientProfileProvider()),
+        ChangeNotifierProvider(create: (_) => FamilyDashboardProvider()),
         ChangeNotifierProvider(create: (_) => LanguageProvider(initialLocale)),
         ChangeNotifierProvider(
           create: (_) => TimezoneProvider(initialTimeZone),

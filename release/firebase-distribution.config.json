@@ -1,0 +1,28 @@
+{
+  "_comment": "Firebase App Distribution release configuration for MedicalVault. Committed template — no secrets or real tester PII belong here. Copy this file to firebase-distribution.local.json (gitignored) and override any field to use real tester emails without risking a commit. Local overrides are shallow-merged on top of this file, key by key.",
+
+  "appName": "MedicalVault",
+
+  "firebase": {
+    "androidAppId": "1:17869523090:android:4e9fa2ca8f13c122533e4b",
+    "_androidAppIdSource": "MedicalVault/firebase.json and lib/firebase_options.dart (medicalvaultnotifications project)"
+  },
+
+  "testers": {
+    "groups": [
+      "qa-team"
+    ],
+    "emails": []
+  },
+
+  "releaseNotes": {
+    "template": "Version {version}\n• Bug fixes\n• Performance improvements\n• UI enhancements",
+    "_note": "Used only when --notes / --notes-file is not supplied. {version} and {buildNumber} placeholders are substituted."
+  },
+
+  "artifactDirectory": "../releases",
+
+  "pubspecPath": "../pubspec.yaml",
+
+  "androidAppDir": "."
+}

@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api_service.dart';
+import '../services/chat_socket_service.dart';
 import '../utils/timezone_utils.dart';
+import '../widgets/ai_thinking_indicator.dart';
 
 class DirectChatScreen extends StatefulWidget {
   final String counterpartId;
@@ -31,23 +33,52 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
   final ScrollController _scrollController = ScrollController();
 
   Timer? _pollTimer;
+  Timer? _typingStopTimer;
   bool _loading = true;
   bool _sending = false;
+  bool _counterpartTyping = false;
   String? _error;
   List<Map<String, dynamic>> _messages = [];
+  late final ChatSocketService _socket;
 
   @override
   void initState() {
     super.initState();
+    _socket = ChatSocketService(onEvent: _handleSocketEvent);
+    _socket.connect();
+    _composerController.addListener(_onComposerChanged);
     _bootstrap();
   }
 
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _typingStopTimer?.cancel();
+    _composerController.removeListener(_onComposerChanged);
     _composerController.dispose();
     _scrollController.dispose();
+    _socket.dispose();
     super.dispose();
+  }
+
+  void _handleSocketEvent(Map<String, dynamic> event) {
+    if (!mounted) return;
+    final type = event['type']?.toString();
+    if (type == 'typing') {
+      setState(() => _counterpartTyping = true);
+    } else if (type == 'typing_stop') {
+      setState(() => _counterpartTyping = false);
+    } else if (type == 'new_message') {
+      _loadMessages(silent: true);
+    }
+  }
+
+  void _onComposerChanged() {
+    _socket.sendTyping(widget.counterpartId);
+    _typingStopTimer?.cancel();
+    _typingStopTimer = Timer(const Duration(seconds: 2), () {
+      _socket.sendTypingStop(widget.counterpartId);
+    });
   }
 
   Future<void> _bootstrap() async {
@@ -85,6 +116,9 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
   Future<void> _sendMessage() async {
     final text = _composerController.text.trim();
     if (text.isEmpty || _sending) return;
+
+    _typingStopTimer?.cancel();
+    _socket.sendTypingStop(widget.counterpartId);
 
     final tempId = "temp_${DateTime.now().millisecondsSinceEpoch}";
     final optimistic = <String, dynamic>{
@@ -183,6 +217,7 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final subtitle = "Doctor chat";
     final displayNameRaw = widget.counterpartName.trim();
     final displayName = displayNameRaw.isEmpty
@@ -237,8 +272,13 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
                     : ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-                        itemCount: _messages.length,
+                        itemCount:
+                            _messages.length + (_counterpartTyping ? 1 : 0),
                         itemBuilder: (context, index) {
+                          if (_counterpartTyping &&
+                              index == _messages.length) {
+                            return const TypingDotsBubble();
+                          }
                           final message = _messages[index];
                           final senderRole = (message["senderRole"] ?? "")
                               .toString()
@@ -247,52 +287,80 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
                           final isMine = senderRole == _patientRole;
                           final pending = message["pending"] == true;
 
-                          return Align(
-                            alignment: isMine
-                                ? Alignment.centerRight
-                                : Alignment.centerLeft,
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 4),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 9),
-                              constraints: const BoxConstraints(maxWidth: 320),
-                              decoration: BoxDecoration(
-                                color: isMine
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context)
-                                        .colorScheme
-                                        .surfaceContainerHighest,
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    (message["message"] ?? "").toString(),
-                                    style: TextStyle(
-                                      color: isMine
-                                          ? Colors.white
-                                          : Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium
-                                              ?.color,
-                                    ),
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              mainAxisAlignment: isMine
+                                  ? MainAxisAlignment.end
+                                  : MainAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                if (!isMine) ...[
+                                  CircleAvatar(
+                                    radius: 14,
+                                    backgroundImage: avatarUrl.isNotEmpty
+                                        ? NetworkImage(avatarUrl)
+                                        : null,
+                                    child: avatarUrl.isEmpty
+                                        ? const Icon(
+                                            Icons.medical_services_rounded,
+                                            size: 14,
+                                          )
+                                        : null,
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    "${_formatMessageTime(message["createdAt"])}${pending ? " - sending..." : ""}",
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: isMine
-                                          ? Colors.white70
-                                          : Theme.of(context)
-                                              .textTheme
-                                              .bodySmall
-                                              ?.color,
-                                    ),
-                                  ),
+                                  const SizedBox(width: 8),
                                 ],
-                              ),
+                                Flexible(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14, vertical: 10),
+                                    constraints:
+                                        const BoxConstraints(maxWidth: 320),
+                                    decoration: BoxDecoration(
+                                      color: isMine
+                                          ? theme.colorScheme.primary
+                                          : theme
+                                              .colorScheme.surfaceContainerHighest,
+                                      borderRadius: BorderRadius.only(
+                                        topLeft: const Radius.circular(18),
+                                        topRight: const Radius.circular(18),
+                                        bottomLeft:
+                                            Radius.circular(isMine ? 18 : 4),
+                                        bottomRight:
+                                            Radius.circular(isMine ? 4 : 18),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          (message["message"] ?? "").toString(),
+                                          style: TextStyle(
+                                            color: isMine
+                                                ? theme.colorScheme.onPrimary
+                                                : theme
+                                                    .textTheme.bodyMedium?.color,
+                                            height: 1.35,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          "${_formatMessageTime(message["createdAt"])}${pending ? " - sending..." : ""}",
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            color: isMine
+                                                ? theme.colorScheme.onPrimary
+                                                    .withValues(alpha: 0.7)
+                                                : theme
+                                                    .textTheme.bodySmall?.color,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           );
                         },

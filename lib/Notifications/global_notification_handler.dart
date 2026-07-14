@@ -8,6 +8,7 @@ import '../screens/appointments_page.dart';
 import '../screens/appointment_detail_screen.dart';
 import '../screens/direct_chat_screen.dart';
 import '../screens/chat_threads_screen.dart';
+import '../features/family_care/screens/family_member_detail_screen.dart';
 import 'package:flutter/foundation.dart';
 
 class GlobalNotificationHandler {
@@ -156,7 +157,8 @@ class GlobalNotificationHandler {
     }
 
     final data = message.data;
-    final type = data['type'] ?? 'system';
+    final type = data['type'] ??
+        (data['module']?.toString() == 'family_care' ? 'FAMILY_CARE' : 'system');
     final title = message.notification?.title ?? 'Notification';
     final body = message.notification?.body ?? 'You have a new notification';
     final onTap = _buildNavigationAction(data, type.toString());
@@ -205,6 +207,9 @@ class GlobalNotificationHandler {
         break;
       case 'MEDICATION_REMINDER':
         await _handleMedicationReminder(data, title, body, onTap: onTap);
+        break;
+      case 'FAMILY_CARE':
+        await _handleFamilyCareMedication(data, title, body, onTap: onTap);
         break;
       case 'SYSTEM_NOTIFICATION':
         await _handleSystemNotification(data, title, body, onTap: onTap);
@@ -478,6 +483,22 @@ class GlobalNotificationHandler {
     );
   }
 
+  Future<void> _handleFamilyCareMedication(
+    Map<String, dynamic> data,
+    String title,
+    String body, {
+    VoidCallback? onTap,
+  }) async {
+    final isEnabled = await _settingsService.isNotificationEnabled('familyCare');
+    if (!isEnabled || _globalContext == null) return;
+    _notificationManager.showSystemNotification(
+      _globalContext!,
+      title,
+      body,
+      onTap: onTap,
+    );
+  }
+
   // Handle system notification
   Future<void> _handleSystemNotification(
     Map<String, dynamic> data,
@@ -502,6 +523,11 @@ class GlobalNotificationHandler {
   ) {
     if (_globalContext == null || !_globalContext!.mounted) return null;
     final normalizedType = type.trim().toUpperCase();
+    final familyProfileId = data['patientProfileId']?.toString().trim() ?? '';
+    if (data['module']?.toString() == 'family_care' && familyProfileId.isNotEmpty) {
+      final doseEventId = data['doseEventId']?.toString().trim() ?? '';
+      return () => _openFamilyCareDose(familyProfileId, doseEventId);
+    }
     final appointmentId = data['appointmentId']?.toString().trim() ?? '';
     if (appointmentId.isNotEmpty &&
         (normalizedType.startsWith('APPOINTMENT_') ||
@@ -565,6 +591,19 @@ class GlobalNotificationHandler {
     Navigator.of(_globalContext!).push(
       MaterialPageRoute(
         builder: (context) => const AppointmentsPage(initialTab: 0),
+      ),
+    );
+  }
+
+  void _openFamilyCareDose(String profileId, String doseEventId) {
+    if (_globalContext == null || !_globalContext!.mounted) return;
+    Navigator.of(_globalContext!).push(
+      MaterialPageRoute(
+        builder: (_) => FamilyMemberDetailScreen(
+          profileId: profileId,
+          initialTab: 1,
+          highlightedDoseEventId: doseEventId.isEmpty ? null : doseEventId,
+        ),
       ),
     );
   }

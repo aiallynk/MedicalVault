@@ -48,3 +48,10 @@ node_modules/
 .env
 db.env
 ios/Flutter/GoogleMapsKeys.xcconfig
+
+# Firebase App Distribution release pipeline (release/release.mjs)
+# Built/archived artifacts are regenerated per machine and are never
+# overwritten, so they are not committed. The local config override can
+# carry real tester emails and must never be committed.
+/releases/
+release/firebase-distribution.local.json

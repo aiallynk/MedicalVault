@@ -4009,18 +4009,50 @@ class ApiService {
       }
       return {
         "success": false,
-        "message": data['message'] ?? 'KHOJ AI request failed',
+        "message": data['message'] ?? 'CareSearch AI request failed',
         "reply":
-            "KHOJ AI can only analyze lost/found person reports you are authorized to access."
+            "CareSearch AI can only analyze lost/found person reports you are authorized to access."
       };
     } catch (e) {
-      print("KHOJ AI error: $e");
+      print("CareSearch AI error: $e");
       return {
         "success": false,
         "message": "Network error",
         "reply":
-            "KHOJ AI is unavailable right now. Please check your connection and try again."
+            "CareSearch AI is unavailable right now. Please check your connection and try again."
       };
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getKhojChatHistory() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.get(
+        Uri.parse("$khojUrl/assistant/chat"),
+        headers: headers,
+      );
+      final data = _decodeJsonMap(res.body);
+      if (res.statusCode == 200) {
+        return data;
+      }
+      return {"success": false, "messages": []};
+    } catch (e) {
+      print("CareSearch AI history error: $e");
+      return {"success": false, "messages": []};
+    }
+  }
+
+  static Future<bool> clearKhojChatHistory() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.delete(
+        Uri.parse("$khojUrl/assistant/chat"),
+        headers: headers,
+      );
+      return res.statusCode == 200;
+    } catch (e) {
+      print("CareSearch AI clear error: $e");
+      return false;
     }
   }
 
