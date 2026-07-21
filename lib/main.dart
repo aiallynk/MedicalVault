@@ -15,7 +15,6 @@ import 'Login_Signup/VerifyEmailPage.dart';
 import 'Login_Signup/loginScreen.dart';
 import 'Notifications/fcm_service.dart';
 import 'Notifications/global_notification_handler.dart';
-import 'api_service.dart';
 import 'config/app_environment.dart';
 import 'core/navigation/app_navigator.dart';
 import 'core/navigation/app_route_observer.dart';
@@ -55,6 +54,8 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  // Must be registered before any foreground service/listener is initialized.
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
   // Initialize encrypted offline storage + reconnect sync engine.
   try {
@@ -65,68 +66,25 @@ void main() async {
   }
 
   await FCMService().initialize();
-  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
+  // Theme defaults come only from the app's own palette/gradient options
+  // (Theme Studio) or a user's previously saved choice - never from the
+  // backend's remote UI config, so every new user starts on the same
+  // Aqua Shield default regardless of what's configured server-side.
   final localThemeConfig = await ThemeProvider.loadThemeConfig();
-  final hasSavedThemePreferences =
-      await ThemeProvider.hasSavedThemePreferences();
   final initialLocale = await LanguageProvider.loadLocale();
   final initialTimeZone = await TimezoneProvider.loadTimeZone();
-  final remoteUiConfig = await ApiService.fetchUiConfig().timeout(
-    const Duration(seconds: 2),
-    onTimeout: () => null,
-  );
-
-  int colorToValue(Color color) {
-    final a = (color.a * 255).round() & 0xFF;
-    final r = (color.r * 255).round() & 0xFF;
-    final g = (color.g * 255).round() & 0xFF;
-    final b = (color.b * 255).round() & 0xFF;
-    return (a << 24) | (r << 16) | (g << 8) | b;
-  }
-
-  final remotePrimary = ThemeProvider.parseHexColor(
-    remoteUiConfig?['buttonColor'],
-  );
-  final remoteSecondary = ThemeProvider.parseHexColor(
-    remoteUiConfig?['iconColor'],
-  );
-  final remoteThemeMode = ThemeProvider.parseThemeMode(
-    remoteUiConfig?['themeMode'],
-  );
-
-  final useRemoteThemeAsDefault = !hasSavedThemePreferences;
-  final remotePrimaryValue =
-      remotePrimary != null ? colorToValue(remotePrimary) : null;
-  final remoteSecondaryValue =
-      remoteSecondary != null ? colorToValue(remoteSecondary) : null;
-  final shouldUseRemotePalette =
-      useRemoteThemeAsDefault && remotePrimaryValue != null;
-
-  final themeConfig = ThemeProviderConfig(
-    themeMode: useRemoteThemeAsDefault
-        ? (remoteThemeMode ?? localThemeConfig.themeMode)
-        : localThemeConfig.themeMode,
-    palette: shouldUseRemotePalette
-        ? AppThemePalette.custom
-        : localThemeConfig.palette,
-    customPrimaryColorValue: shouldUseRemotePalette
-        ? remotePrimaryValue
-        : localThemeConfig.customPrimaryColorValue,
-    customSecondaryColorValue: shouldUseRemotePalette
-        ? remoteSecondaryValue
-        : localThemeConfig.customSecondaryColorValue,
-  );
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(
           create: (_) => ThemeProvider(
-            themeMode: themeConfig.themeMode,
-            palette: themeConfig.palette,
-            customPrimaryColorValue: themeConfig.customPrimaryColorValue,
-            customSecondaryColorValue: themeConfig.customSecondaryColorValue,
+            themeMode: localThemeConfig.themeMode,
+            palette: localThemeConfig.palette,
+            customPrimaryColorValue: localThemeConfig.customPrimaryColorValue,
+            customSecondaryColorValue:
+                localThemeConfig.customSecondaryColorValue,
           ),
         ),
         ChangeNotifierProvider(create: (_) => DashboardPrefetchProvider()),
@@ -211,49 +169,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   @override
   void initState() {
     super.initState();
-    FirebaseMessaging.instance.getToken().then((token) {
-      debugPrint('Firebase Messaging Token: $token');
-    });
-
     messaging = FirebaseMessaging.instance;
-    messaging.requestPermission(
-      criticalAlert: true,
-      alert: true,
-      badge: true,
-      sound: true,
-    );
-
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      if (message.notification != null) {
-        if (!mounted) return;
-        showDialog(
-          context: context,
-          builder: (BuildContext context) {
-            return AlertDialog(
-              icon: const Icon(Icons.warning),
-              title: Text(message.notification!.title ?? 'Notification'),
-              content: Column(
-                mainAxisAlignment: MainAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-              ),
-              actions: <Widget>[
-                TextButton(
-                  child: const Text('Close'),
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                  },
-                ),
-              ],
-            );
-          },
-        );
-      }
-    });
-
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      debugPrint(
-          'Message clicked while app is in background: ${message.messageId}');
-    });
   }
 
   @override

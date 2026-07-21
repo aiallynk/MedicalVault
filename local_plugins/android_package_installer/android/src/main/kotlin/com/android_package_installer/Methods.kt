@@ -1,5 +1,6 @@
 package com.android_package_installer
 
+import android.util.Log
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -40,6 +41,13 @@ internal class MethodCallHandler(private val installer: Installer) : MethodChann
                     val apkFilePath = call.arguments.toString()
                     installer.installPackage(apkFilePath)
                 } catch (e: Exception) {
+                    // Log the real cause (missing activity reference,
+                    // SecurityException from a denied install-packages
+                    // grant, IOException from a bad path, etc) so a native
+                    // install failure is diagnosable via adb logcat instead
+                    // of only ever surfacing as an opaque "Unknown
+                    // installer status." on the Dart side.
+                    Log.e("AndroidPackageInstaller", "installApk failed", e)
                     resultSuccess(installStatusUnknown)
                 }
             }

@@ -1,3 +1,9 @@
 {
-    "git.ignoreLimitWarning": true
+    "git.ignoreLimitWarning": true,
+    "dart.analysisExcludedFolders": [
+        "../Backend-MedicalVault/node_modules",
+        "../HealthVaultWeb/node_modules",
+        "build",
+        ".dart_tool"
+    ]
 }

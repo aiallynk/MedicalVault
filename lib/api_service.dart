@@ -14,6 +14,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hello/helpers/google_auth_helper.dart';
 import 'package:hello/services/offline/offline_storage_service.dart';
 import 'package:hello/services/secure_token_storage.dart';
+import 'package:uuid/uuid.dart';
 
 class DocumentUploadResult {
   final bool success;
@@ -66,6 +67,7 @@ class ApiService {
   static String get khojUrl => "$baseUrl/khoj";
   static String get patientAppointmentsUrl => "$baseUrl/patient/appointments";
   static String get publicUrl => "$baseUrl/public";
+  static String get guestSessionsUrl => "$baseUrl/guest-sessions";
 
   static String get _apiOrigin {
     var parsed = Uri.tryParse(baseUrl) ?? Uri.parse(_defaultApiBaseUrl);
@@ -1161,6 +1163,48 @@ class ApiService {
       'message': 'Unable to update session policy',
       'allowMultipleSessions': allowMultipleSessions,
     };
+  }
+
+  /// Fetches the account's dashboard display preferences (e.g. "Show Top
+  /// Doctors") from the backend. This is the source of truth - it is the
+  /// same on every device/login for this account, unlike a purely local
+  /// SharedPreferences value.
+  static Future<bool?> fetchShowTopDoctorsPreference() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.get(
+        Uri.parse("$authUrl/dashboard-preferences"),
+        headers: headers,
+      );
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final data = _decodeJsonMap(res.body);
+      final prefs = data['dashboardPreferences'];
+      if (prefs is Map && prefs['showTopDoctors'] is bool) {
+        return prefs['showTopDoctors'] as bool;
+      }
+    } catch (e) {
+      _debugLog("fetchShowTopDoctorsPreference error: $e");
+    }
+    return null;
+  }
+
+  /// Persists the "Show Top Doctors" toggle to the account, so it stays
+  /// consistent across logout/login and across devices.
+  static Future<bool> updateShowTopDoctorsPreference(bool value) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.put(
+        Uri.parse("$authUrl/dashboard-preferences"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({'showTopDoctors': value}),
+      );
+      if (res.statusCode < 200 || res.statusCode >= 300) return false;
+      final data = _decodeJsonMap(res.body);
+      return data['success'] == true;
+    } catch (e) {
+      _debugLog("updateShowTopDoctorsPreference error: $e");
+      return false;
+    }
   }
 
   static Future<bool> logoutDeviceSession(String sessionId) async {
@@ -2948,6 +2992,33 @@ class ApiService {
   }
 
   // ---------------- APPOINTMENTS ----------------
+  static Future<List<Map<String, dynamic>>> fetchDoctorDirectory() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http
+          .get(
+            Uri.parse("$patientAppointmentsUrl/doctors"),
+            headers: headers,
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode == 200) {
+        final data = _decodeJsonMap(res.body);
+        final doctors = data['doctors'];
+        if (data['success'] == true && doctors is List) {
+          return doctors
+              .whereType<Map>()
+              .map((doctor) => doctor.map(
+                    (key, value) => MapEntry(key.toString(), value),
+                  ))
+              .toList(growable: false);
+        }
+      }
+    } catch (e) {
+      print("fetchDoctorDirectory error: $e");
+    }
+    return const [];
+  }
+
   static Future<List<dynamic>> fetchUpcomingAppointments() async {
     try {
       final headers = await _authHeaders();
@@ -3050,7 +3121,9 @@ class ApiService {
       );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        return data['success'] == true;
+        final success = data['success'] == true;
+        if (success) _pastAppointmentsCache = null;
+        return success;
       }
     } catch (e) {
       print("cancelAppointment error: $e");
@@ -3133,6 +3206,7 @@ class ApiService {
       final data = _decodeJsonMap(response.body);
       if ((response.statusCode == 200 || response.statusCode == 201) &&
           data['success'] == true) {
+        _pastAppointmentsCache = null;
         return {
           "success": true,
           "message":
@@ -3262,6 +3336,137 @@ class ApiService {
     return [];
   }
 
+  /// Fetches a page of the notification inbox using cursor-based pagination,
+  /// for the notification bell/inbox screen's infinite scroll. Pass `cursor`
+  /// from the previous response's `nextCursor` to fetch the next page; omit
+  /// it (or pass null) to fetch the first page.
+  static Future<Map<String, dynamic>> fetchNotificationInbox({
+    String? cursor,
+    int limit = 20,
+    bool unreadOnly = false,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final uri = Uri.parse("$baseUrl/notifications").replace(
+        queryParameters: {
+          'limit': '$limit',
+          if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+          if (unreadOnly) 'unreadOnly': 'true',
+        },
+      );
+      final res = await http.get(uri, headers: headers);
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (data['success'] == true && data['data'] is Map) {
+          final body = data['data'] as Map;
+          final itemsRaw = body['items'] ?? body['notifications'];
+          return {
+            'success': true,
+            'notifications': (itemsRaw is List)
+                ? List<Map<String, dynamic>>.from(
+                    itemsRaw.whereType<Map>().map(
+                          (item) => item.map(
+                            (key, value) => MapEntry(key.toString(), value),
+                          ),
+                        ),
+                  )
+                : <Map<String, dynamic>>[],
+            'unreadCount': body['unreadCount'] ?? 0,
+            'nextCursor': body['nextCursor'],
+            'hasMore': body['hasMore'] ?? false,
+            'pagination': body['pagination'] ?? {},
+          };
+        }
+      }
+    } catch (e) {
+      print("fetchNotificationInbox error: $e");
+    }
+    return {
+      'success': false,
+      'notifications': <Map<String, dynamic>>[],
+      'unreadCount': 0,
+      'nextCursor': null,
+      'hasMore': false,
+      'pagination': {},
+    };
+  }
+
+  /// Permanently clears the authenticated user's notification history.
+  /// Returns the number of deleted records on success, or null on failure so
+  /// the caller can distinguish "cleared zero notifications" from "the
+  /// request failed" and offer a retry.
+  static Future<int?> clearAllNotifications() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.delete(
+        Uri.parse("$baseUrl/notifications"),
+        headers: headers,
+      );
+      if (res.statusCode != 200) return null;
+      final data = jsonDecode(res.body);
+      if (data['success'] != true) return null;
+      final deletedCount = data['data']?['deletedCount'];
+      return int.tryParse(deletedCount?.toString() ?? '0') ?? 0;
+    } catch (e) {
+      print("clearAllNotifications error: $e");
+      return null;
+    }
+  }
+
+  /// Returns just the unread notification count, for the bell icon's badge.
+  static Future<int> fetchUnreadNotificationCount() async {
+    final inbox = await fetchNotificationInbox(limit: 1, unreadOnly: true);
+    return int.tryParse(inbox['unreadCount'].toString()) ?? 0;
+  }
+
+  static Future<bool> markNotificationRead(String notificationId) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.put(
+        Uri.parse("$baseUrl/notifications/$notificationId/read"),
+        headers: headers,
+      );
+      if (res.statusCode != 200) return false;
+      final data = jsonDecode(res.body);
+      return data['success'] == true;
+    } catch (e) {
+      print("markNotificationRead error: $e");
+      return false;
+    }
+  }
+
+  static Future<bool> markAllNotificationsRead() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.put(
+        Uri.parse("$baseUrl/notifications/read-all"),
+        headers: headers,
+      );
+      if (res.statusCode != 200) return false;
+      final data = jsonDecode(res.body);
+      return data['success'] == true;
+    } catch (e) {
+      print("markAllNotificationsRead error: $e");
+      return false;
+    }
+  }
+
+  static Future<bool> deleteNotification(String notificationId) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.delete(
+        Uri.parse("$baseUrl/notifications/$notificationId"),
+        headers: headers,
+      );
+      if (res.statusCode != 200) return false;
+      final data = jsonDecode(res.body);
+      return data['success'] == true;
+    } catch (e) {
+      print("deleteNotification error: $e");
+      return false;
+    }
+  }
+
   static Future<List<Map<String, dynamic>>> fetchChatThreads() async {
     try {
       final headers = await _authHeaders();
@@ -3289,36 +3494,119 @@ class ApiService {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> fetchChatMessages(
+  /// Fetches a page of direct-chat messages using reverse-cursor pagination.
+  /// Omit [before] for the latest page; pass the oldest currently-loaded
+  /// message's `id` as [before] to fetch the next page of older messages
+  /// when the user scrolls up.
+  static Future<Map<String, dynamic>> fetchChatMessages(
     String counterpartId, {
-    int limit = 300,
+    int limit = 30,
+    String? before,
   }) async {
     try {
       final headers = await _authHeaders();
       final normalizedId = counterpartId.trim();
-      if (normalizedId.isEmpty) return [];
-      final safeLimit = limit.clamp(1, 500);
-      final uri = Uri.parse(
-          "$baseUrl/sessions/chat/messages/$normalizedId?limit=$safeLimit");
+      if (normalizedId.isEmpty) return _emptyChatMessagesPage;
+      final safeLimit = limit.clamp(1, 100);
+      final uri = Uri.parse("$baseUrl/sessions/chat/messages/$normalizedId")
+          .replace(queryParameters: {
+        'limit': '$safeLimit',
+        if (before != null && before.isNotEmpty) 'before': before,
+      });
       final response = await http.get(uri, headers: headers);
-      if (response.statusCode != 200) return [];
+      if (response.statusCode != 200) return _emptyChatMessagesPage;
       final data = jsonDecode(response.body);
-      if (data["success"] != true || data["messages"] is! List) return [];
-      return (data["messages"] as List)
+      if (data["success"] != true || data["messages"] is! List) {
+        return _emptyChatMessagesPage;
+      }
+      final messages = (data["messages"] as List)
           .whereType<Map>()
           .map((entry) => entry.map(
                 (key, value) => MapEntry(key.toString(), value),
               ))
           .toList(growable: false);
+      return {
+        'success': true,
+        'messages': messages,
+        'hasMore': data['hasMore'] == true,
+        'nextBefore': data['nextBefore'],
+      };
     } catch (e) {
       print("fetchChatMessages error: $e");
-      return [];
+      return _emptyChatMessagesPage;
+    }
+  }
+
+  static const Map<String, dynamic> _emptyChatMessagesPage = {
+    'success': false,
+    'messages': <Map<String, dynamic>>[],
+    'hasMore': false,
+    'nextBefore': null,
+  };
+
+  /// Deletes a single chat message. [scope] is `'for-me'` (hides it from
+  /// only this account) or `'for-everyone'` (sender only, within the
+  /// server-enforced recall window; scrubs the content for both sides).
+  static Future<Map<String, dynamic>> deleteChatMessage(
+    String messageId, {
+    required String scope,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final normalizedId = messageId.trim();
+      if (normalizedId.isEmpty) {
+        return {"success": false, "message": "Invalid message"};
+      }
+      final response = await http.delete(
+        Uri.parse("$baseUrl/sessions/chat/messages/$normalizedId/$scope"),
+        headers: headers,
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return (data as Map)
+            .map((key, value) => MapEntry(key.toString(), value));
+      }
+      return {
+        "success": false,
+        "code": data["code"]?.toString(),
+        "message": data["message"]?.toString() ?? "Failed to delete message",
+      };
+    } catch (e) {
+      print("deleteChatMessage error: $e");
+      return {"success": false, "message": "Network error"};
+    }
+  }
+
+  /// Deletes a direct-chat thread. [mode] is `'me'` (hides the thread from
+  /// only this account - the other side's view is unaffected, and the
+  /// thread reappears if a new message arrives) or `'everyone'` (removes
+  /// the conversation permanently for both participants).
+  static Future<bool> deleteChatThread(
+    String counterpartId, {
+    required String mode,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final normalizedId = counterpartId.trim();
+      if (normalizedId.isEmpty) return false;
+      final response = await http.delete(
+        Uri.parse("$baseUrl/sessions/chat/threads/$normalizedId"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({'mode': mode}),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) return false;
+      final data = jsonDecode(response.body);
+      return data["success"] == true;
+    } catch (e) {
+      print("deleteChatThread error: $e");
+      return false;
     }
   }
 
   static Future<Map<String, dynamic>?> sendDirectMessage({
     required String counterpartId,
     required String message,
+    required String clientMessageId,
     String? sessionId,
   }) async {
     try {
@@ -3332,6 +3620,7 @@ class ApiService {
         body: jsonEncode({
           "counterpartId": counterpartId.trim(),
           "message": message.trim(),
+          "clientMessageId": clientMessageId,
           if (sessionId != null && sessionId.trim().isNotEmpty)
             "sessionId": sessionId.trim(),
         }),
@@ -3362,8 +3651,276 @@ class ApiService {
     return sendDirectMessage(
       counterpartId: doctorId,
       message: message,
+      clientMessageId: const Uuid().v4(),
       sessionId: sessionId,
     );
+  }
+
+  // ---------------- Session Data Sharing ----------------
+
+  /// Fetches the patient's saved default sharing preferences (or product
+  /// defaults if they have never customized them).
+  static Future<Map<String, dynamic>?> fetchSharingPreferences() async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.get(
+        Uri.parse("$baseUrl/sessions/sharing-preferences"),
+        headers: headers,
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data["success"] == true) {
+        return _mapOf(data["data"]?["preferences"]);
+      }
+      return null;
+    } catch (e) {
+      print("fetchSharingPreferences error: $e");
+      return null;
+    }
+  }
+
+  /// Saves a partial patch of the patient's default sharing preferences.
+  static Future<Map<String, dynamic>?> updateSharingPreferences({
+    Map<String, dynamic>? categoryDefaults,
+    Map<String, dynamic>? structuredDataDefaults,
+    Map<String, dynamic>? capabilities,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.patch(
+        Uri.parse("$baseUrl/sessions/sharing-preferences"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({
+          if (categoryDefaults != null) "categoryDefaults": categoryDefaults,
+          if (structuredDataDefaults != null)
+            "structuredDataDefaults": structuredDataDefaults,
+          if (capabilities != null) "capabilities": capabilities,
+        }),
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data["success"] == true) {
+        return _mapOf(data["data"]?["preferences"]);
+      }
+      return null;
+    } catch (e) {
+      print("updateSharingPreferences error: $e");
+      return null;
+    }
+  }
+
+  /// Fetches the approval-screen preview for a pending session request:
+  /// category/document counts, pre-selection defaults, and structured-data
+  /// defaults.
+  static Future<Map<String, dynamic>?> fetchApprovalPreview(
+    String sessionId,
+  ) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.get(
+        Uri.parse("$baseUrl/sessions/$sessionId/approval-preview"),
+        headers: headers,
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data["success"] == true) {
+        return _mapOf(data["data"]);
+      }
+      return null;
+    } catch (e) {
+      print("fetchApprovalPreview error: $e");
+      return null;
+    }
+  }
+
+  /// Accepts or declines a session request. When accepting, [selection]
+  /// carries the patient's explicit approval-screen choice (document ids,
+  /// structured-data scopes, capability toggles); omit it to fall back
+  /// entirely to the patient's saved defaults.
+  static Future<Map<String, dynamic>> respondToSessionRequest({
+    required String sessionId,
+    required String status,
+    Map<String, dynamic>? selection,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.post(
+        Uri.parse("$baseUrl/sessions/$sessionId/respond"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({
+          "status": status,
+          if (selection != null) "selection": selection,
+        }),
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data["success"] == true) {
+        return (data as Map)
+            .map((key, value) => MapEntry(key.toString(), value));
+      }
+      return {
+        "success": false,
+        "message":
+            data["message"]?.toString() ?? "Failed to respond to request",
+      };
+    } catch (e) {
+      print("respondToSessionRequest error: $e");
+      return {"success": false, "message": "Network error"};
+    }
+  }
+
+  /// Revokes a single document from an active session's access grant.
+  static Future<Map<String, dynamic>?> fetchSessionAccessGrant(
+    String sessionId,
+  ) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.get(
+        Uri.parse("$baseUrl/sessions/$sessionId/access-grant"),
+        headers: headers,
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode == 200 && data["success"] == true) {
+        return _mapOf(data["data"]);
+      }
+    } catch (e) {
+      print("fetchSessionAccessGrant error: $e");
+    }
+    return null;
+  }
+
+  static Future<bool> revokeSessionDocument({
+    required String sessionId,
+    required String documentId,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.delete(
+        Uri.parse(
+          "$baseUrl/sessions/$sessionId/access-grant/documents/$documentId",
+        ),
+        headers: headers,
+      );
+      final data = jsonDecode(response.body);
+      return response.statusCode == 200 && data["success"] == true;
+    } catch (e) {
+      print("revokeSessionDocument error: $e");
+      return false;
+    }
+  }
+
+  /// Revokes a doctor's entire session access immediately.
+  static Future<bool> revokeSessionAccess(String sessionId) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.post(
+        Uri.parse("$baseUrl/sessions/$sessionId/revoke"),
+        headers: headers,
+      );
+      final data = jsonDecode(response.body);
+      return response.statusCode == 200 && data["success"] == true;
+    } catch (e) {
+      print("revokeSessionAccess error: $e");
+      return false;
+    }
+  }
+
+  /// Updates an active session's access grant (add/remove document ids,
+  /// replace structured-data scopes, adjust capabilities).
+  static Future<Map<String, dynamic>?> updateSessionAccessGrant({
+    required String sessionId,
+    List<String>? addDocumentIds,
+    List<String>? removeDocumentIds,
+    List<String>? structuredDataScopes,
+    Map<String, dynamic>? capabilities,
+    int? expectedVersion,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.patch(
+        Uri.parse("$baseUrl/sessions/$sessionId/access-grant"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({
+          if (addDocumentIds != null) "addDocumentIds": addDocumentIds,
+          if (removeDocumentIds != null) "removeDocumentIds": removeDocumentIds,
+          if (structuredDataScopes != null)
+            "structuredDataScopes": structuredDataScopes,
+          if (capabilities != null) "capabilities": capabilities,
+          if (expectedVersion != null) "expectedVersion": expectedVersion,
+        }),
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data["success"] == true) {
+        return _mapOf(data["data"]);
+      }
+      return null;
+    } catch (e) {
+      print("updateSessionAccessGrant error: $e");
+      return null;
+    }
+  }
+
+  static Map<String, dynamic> _mapOf(dynamic value) => value is Map
+      ? value.map((key, item) => MapEntry(key.toString(), item))
+      : <String, dynamic>{};
+
+  // ---------------- Guest clinical sessions ----------------
+  // Guest sessions are intentionally separate from registered-doctor sessions.
+  // Callers must provide an explicit scope; saved defaults never grant access.
+  static Future<Map<String, dynamic>?> createGuestClinicalSession({
+    List<String> documentIds = const [],
+    List<String> dataCategories = const [],
+    Map<String, dynamic> permissions = const {},
+    int durationMinutes = 20,
+    String? patientProfileId,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.post(
+        Uri.parse(guestSessionsUrl),
+        headers: {...headers, 'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'documentIds': documentIds,
+          'dataCategories': dataCategories,
+          'permissions': permissions,
+          'durationMinutes': durationMinutes,
+          if (patientProfileId != null && patientProfileId.trim().isNotEmpty)
+            'patientProfileId': patientProfileId.trim(),
+        }),
+      );
+      final data = _decodeJsonMap(response.body);
+      if (response.statusCode == 201 && data['success'] == true) return data;
+    } catch (e) {
+      _debugLog('createGuestClinicalSession error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> approveGuestClinicalSession(String sessionId) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.post(Uri.parse('$guestSessionsUrl/$sessionId/approve'), headers: headers);
+      final data = _decodeJsonMap(response.body);
+      return response.statusCode == 200 && data['success'] == true ? data : null;
+    } catch (e) { _debugLog('approveGuestClinicalSession error: $e'); return null; }
+  }
+
+  static Future<Map<String, dynamic>?> fetchGuestClinicalSession(String sessionId) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.get(Uri.parse('$guestSessionsUrl/$sessionId'), headers: headers);
+      final data = _decodeJsonMap(response.body);
+      return response.statusCode == 200 && data['success'] == true ? _mapOf(data['session']) : null;
+    } catch (e) { _debugLog('fetchGuestClinicalSession error: $e'); return null; }
+  }
+
+  static Future<bool> endGuestClinicalSession(String sessionId, {bool revoke = false, String reason = ''}) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.post(
+        Uri.parse('$guestSessionsUrl/$sessionId/${revoke ? 'revoke' : 'end'}'),
+        headers: {...headers, 'Content-Type': 'application/json'},
+        body: jsonEncode({'reason': reason}),
+      );
+      final data = _decodeJsonMap(response.body);
+      return response.statusCode == 200 && data['success'] == true;
+    } catch (e) { _debugLog('endGuestClinicalSession error: $e'); return false; }
   }
 
   // ---------------- PUBLIC CONFIG ----------------
@@ -3739,13 +4296,17 @@ class ApiService {
 
   static Future<Map<String, dynamic>> createStoreOrder({
     required Map<String, dynamic> delivery,
+    String paymentMethod = "cod",
   }) async {
     try {
       final response = await _sendAuthorizedRequestWithRetry(
         (headers) => http.post(
           Uri.parse("$baseUrl/orders"),
           headers: {...headers, "Content-Type": "application/json"},
-          body: jsonEncode({"delivery": delivery}),
+          body: jsonEncode({
+            "delivery": delivery,
+            "paymentMethod": paymentMethod,
+          }),
         ),
       );
       final data = _decodeJsonMap(response.body);

@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'local_notification_service.dart';
 import 'notification_manager.dart';
 import 'notification_settings_service.dart';
 import '../BottomNavigationBar/Requests.dart';
@@ -27,6 +30,8 @@ class GlobalNotificationHandler {
   final NotificationManager _notificationManager = NotificationManager();
   final NotificationSettingsService _settingsService =
       NotificationSettingsService();
+  final LocalNotificationService _localNotificationService =
+      LocalNotificationService();
   final Set<String> _extensionPromptSessions = <String>{};
 
   // Global context for showing notifications
@@ -181,7 +186,7 @@ class GlobalNotificationHandler {
       case 'DIRECT_MESSAGE':
       case 'PATIENT_MESSAGE':
       case 'DOCTOR_MESSAGE':
-        await _handleSystemNotification(data, title, body, onTap: onTap);
+        await _handleDirectMessage(data, title, body, onTap: onTap);
         break;
       case 'APPOINTMENT_SCHEDULED':
         await _handleAppointmentScheduled(data, title, body, onTap: onTap);
@@ -497,6 +502,35 @@ class GlobalNotificationHandler {
       body,
       onTap: onTap,
     );
+  }
+
+  // Handle a direct (doctor<->patient) chat message notification: shows the
+  // existing in-app banner, plus a real OS notification with the sender's
+  // avatar as the large icon (WhatsApp-style), while the app is foregrounded.
+  Future<void> _handleDirectMessage(
+    Map<String, dynamic> data,
+    String title,
+    String body, {
+    VoidCallback? onTap,
+  }) async {
+    final isEnabled = await _settingsService.isNotificationEnabled('system');
+    if (!isEnabled) return;
+
+    _notificationManager.showSystemNotification(
+      _globalContext!,
+      title,
+      body,
+      onTap: onTap,
+    );
+
+    final avatarUrl = data['senderAvatar']?.toString().trim() ??
+        data['counterpartAvatar']?.toString().trim() ??
+        '';
+    unawaited(_localNotificationService.showChatMessageNotification(
+      title: title,
+      body: body,
+      avatarUrl: avatarUrl.isNotEmpty ? avatarUrl : null,
+    ));
   }
 
   // Handle system notification

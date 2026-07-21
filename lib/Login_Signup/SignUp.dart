@@ -283,15 +283,20 @@ class _SignUpPageState extends State<SignUpPage> {
             ),
             SafeArea(
               child: SingleChildScrollView(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _animatedSection(
-                      order: 0,
-                      child: const SizedBox(height: 12),
-                    ),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 480),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 22, vertical: 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _animatedSection(
+                            order: 0,
+                            child: const SizedBox(height: 12),
+                          ),
                     _animatedSection(
                       order: 1,
                       child: Center(
@@ -482,12 +487,17 @@ class _SignUpPageState extends State<SignUpPage> {
                                     borderRadius: BorderRadius.circular(14),
                                   ),
                                 ),
-                                child: const Row(
+                                child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.account_circle_outlined),
-                                    SizedBox(width: 10),
-                                    Text('Sign up with Google'),
+                                    const Icon(Icons.account_circle_outlined),
+                                    const SizedBox(width: 10),
+                                    Flexible(
+                                      child: Text(
+                                        'Sign up with Google',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -662,7 +672,10 @@ class _SignUpPageState extends State<SignUpPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                  ],
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),

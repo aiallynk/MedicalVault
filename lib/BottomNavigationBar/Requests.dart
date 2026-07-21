@@ -13,6 +13,7 @@ import '../screens/appointments_page.dart';
 import '../screens/doctor_sessions_screen.dart';
 import '../screens/direct_chat_screen.dart';
 import '../screens/chat_threads_screen.dart';
+import '../screens/session_approval_screen.dart';
 
 DateTime _parseDateOrNow(dynamic value) {
   if (value == null) return DateTime.now();
@@ -226,6 +227,12 @@ class _RequestsPageState extends State<RequestsPage> {
 
         setState(() {});
 
+        // Keep an accepted session, an approved extension, and a session end
+        // in sync even when the app was already open when the event happened.
+        if (timer.tick % 15 == 0) {
+          _loadSessionRequests();
+        }
+
         // Check for session expiring notifications
         _checkSessionExpiringNotifications();
       }
@@ -373,12 +380,16 @@ class _RequestsPageState extends State<RequestsPage> {
         final data = jsonDecode(response.body);
         if (data['success']) {
           final List<dynamic> requestsJson = data['requests'] as List<dynamic>;
-          final serverPending = requestsJson
+          final serverActive = requestsJson
               .whereType<Map>()
               .map((json) =>
                   SessionRequest.fromJson(Map<String, dynamic>.from(json)))
               .toList();
-          final merged = _mergeRequests(serverPending, cachedAccepted);
+          // The server is authoritative for both pending and accepted
+          // sessions. Cached accepted cards are an offline fallback only;
+          // merging them after a successful response could resurrect a
+          // session the doctor/patient had already ended.
+          final merged = _mergeRequests(serverActive, const []);
           List<SessionExtensionRequest> extensionPending = [];
 
           try {
@@ -438,6 +449,45 @@ class _RequestsPageState extends State<RequestsPage> {
         });
       }
       print('Error loading session requests: $e');
+    }
+  }
+
+  /// Opens the patient's sharing-approval screen for an incoming session
+  /// request. Accept/decline is submitted from within that screen (carrying
+  /// the patient's explicit document/structured-data/capability selection),
+  /// so this method only needs to refresh local state afterward.
+  Future<void> _openApprovalScreen(SessionRequest request) async {
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => SessionApprovalScreen(
+          sessionId: request.id,
+          doctorName: request.doctor.name,
+          doctorAvatarUrl: request.doctor.profilePicture,
+          doctorSpecialization: request.doctor.specialization,
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+
+    if (result == 'declined') {
+      setState(() {
+        sessionRequests.removeWhere((item) => item.id == request.id);
+      });
+      return;
+    }
+
+    if (result == 'accepted') {
+      await _loadSessionRequests();
+      await _persistAcceptedRequests();
+      if (mounted) {
+        final l10n = context.l10n;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.t('requests.acceptedSuccess')),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+          ),
+        );
+      }
     }
   }
 
@@ -895,6 +945,109 @@ class _RequestsPageState extends State<RequestsPage> {
     );
   }
 
+  Future<void> _manageSessionDocuments(SessionRequest request) async {
+    final grant = await ApiService.fetchSessionAccessGrant(request.id);
+    if (!mounted) return;
+    if (grant == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('Could not load the documents shared in this session.')),
+      );
+      return;
+    }
+    final documents = (grant['documents'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: true);
+    final active = grant['status']?.toString() == 'active';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+            child: SizedBox(
+              height: MediaQuery.of(sheetContext).size.height * .7,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Shared session documents',
+                      style: Theme.of(sheetContext)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 6),
+                  const Text(
+                      'Remove access to any file immediately. The doctor will lose access without ending the session.'),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: documents.isEmpty
+                        ? const Center(
+                            child: Text(
+                                'No documents are shared in this session.'))
+                        : ListView.separated(
+                            itemCount: documents.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
+                            itemBuilder: (_, index) {
+                              final document = documents[index];
+                              final title =
+                                  document['title']?.toString() ?? 'Document';
+                              final category =
+                                  document['category']?.toString() ?? '';
+                              return ListTile(
+                                leading: const Icon(Icons.description_outlined),
+                                title: Text(title),
+                                subtitle:
+                                    category.isEmpty ? null : Text(category),
+                                trailing: active
+                                    ? TextButton(
+                                        onPressed: () async {
+                                          final removed = await ApiService
+                                              .revokeSessionDocument(
+                                            sessionId: request.id,
+                                            documentId:
+                                                document['id']?.toString() ??
+                                                    '',
+                                          );
+                                          if (!sheetContext.mounted) return;
+                                          if (!removed) {
+                                            ScaffoldMessenger.of(sheetContext)
+                                                .showSnackBar(
+                                              const SnackBar(
+                                                  content: Text(
+                                                      'Could not revoke access. Please try again.')),
+                                            );
+                                            return;
+                                          }
+                                          setSheetState(
+                                              () => documents.removeAt(index));
+                                          ScaffoldMessenger.of(sheetContext)
+                                              .showSnackBar(
+                                            SnackBar(
+                                                content: Text(
+                                                    'Access to $title was revoked.')),
+                                          );
+                                        },
+                                        child: const Text('Revoke'),
+                                      )
+                                    : null,
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildRequestCard(SessionRequest request) {
     final l10n = context.l10n;
     final doctor = request.doctor;
@@ -1074,8 +1227,7 @@ class _RequestsPageState extends State<RequestsPage> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      onPressed: () =>
-                          _respondToRequest(request.id, 'accepted'),
+                      onPressed: () => _openApprovalScreen(request),
                       icon: const Icon(Icons.check, size: 18),
                       label: Text(l10n.t('requests.accept')),
                     ),
@@ -1111,6 +1263,15 @@ class _RequestsPageState extends State<RequestsPage> {
                 child: const Text(
                   "Access accepted. This card stays here until the session expires.",
                   style: TextStyle(fontSize: 13),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _manageSessionDocuments(request),
+                  icon: const Icon(Icons.folder_shared_outlined),
+                  label: const Text('Manage shared documents'),
                 ),
               ),
             ],

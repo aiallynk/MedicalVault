@@ -2,6 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hello/services/secure_token_storage.dart';
 import 'package:hello/services/ai_service.dart';
+import 'package:hello/services/dashboard_display_settings.dart';
 import 'package:hello/features/family_care/providers/active_patient_profile_provider.dart';
 import 'package:hello/features/family_care/providers/family_dashboard_provider.dart';
 
@@ -33,6 +34,13 @@ class LogoutService {
       await prefs.remove('notification_session_expiring');
       await prefs.remove('notification_reminders');
       await prefs.remove('notification_system');
+
+      // Dashboard display preferences are account-scoped (backend-synced);
+      // clear the local cache so the next login always re-fetches from the
+      // signed-in account instead of showing whichever account last used
+      // this device.
+      await prefs.remove('dashboard_show_top_doctors');
+      DashboardDisplaySettings().resetHydration();
 
       if (kDebugMode) {
         print('User logged out successfully - all session data cleared');

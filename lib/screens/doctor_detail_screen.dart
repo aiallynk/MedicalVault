@@ -10,7 +10,6 @@ import '../utils/timezone_utils.dart';
 import '../widgets/app_text.dart';
 import '../widgets/custom_button.dart';
 import '../widgets/custom_card.dart';
-import 'appointments_page.dart';
 import 'doctor_sessions_screen.dart';
 import 'direct_chat_screen.dart';
 
@@ -70,8 +69,15 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
       ],
     );
     final resolvedImageUrl = ApiService.resolveMediaUrl(imageUrl) ?? '';
-    final rating = (widget.doctor['rating'] as num?)?.toDouble() ?? 4.6;
     final appointmentCount = widget.appointments.length;
+    final experience = _doctorField(['yearsOfExperience', 'experience']);
+    final bio = _doctorField(['bio']);
+    final languages = widget.doctor['languages'] is List
+        ? (widget.doctor['languages'] as List)
+            .map((item) => item.toString().trim())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false)
+        : const <String>[];
     final doctorId = _doctorField(['_id', 'id', 'doctorId']);
     final doctorEmail = _doctorField(['email', 'doctorEmail']);
     final doctorPhone =
@@ -147,32 +153,6 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                                 ],
                               ),
                             ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.18),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Row(
-                                children: [
-                                  const Icon(
-                                    Icons.star_rounded,
-                                    color: Colors.amber,
-                                    size: 17,
-                                  ),
-                                  const SizedBox(width: 3),
-                                  AppText(
-                                    rating.toStringAsFixed(1),
-                                    variant: AppTextVariant.caption,
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ],
-                              ),
-                            ),
                           ],
                         ),
                       ],
@@ -202,10 +182,16 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                                 fontWeight: FontWeight.w700,
                               ),
                               const SizedBox(height: 6),
-                              AppText(
-                                '$appointmentCount appointment history entries',
-                                variant: AppTextVariant.caption,
-                              ),
+                              if (experience.trim().isNotEmpty)
+                                AppText(
+                                  '$experience years of experience',
+                                  variant: AppTextVariant.caption,
+                                )
+                              else if (appointmentCount > 0)
+                                AppText(
+                                  '$appointmentCount appointment history entries',
+                                  variant: AppTextVariant.caption,
+                                ),
                               if (doctorEmail.trim().isNotEmpty) ...[
                                 const SizedBox(height: 4),
                                 AppText(
@@ -224,6 +210,40 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                       ],
                     ),
                   ),
+                  if (bio.trim().isNotEmpty || languages.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    CustomCard(
+                      glass: true,
+                      radius: AppRadii.large,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const AppText(
+                            'About this doctor',
+                            variant: AppTextVariant.subtitle,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          if (bio.trim().isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            AppText(bio, variant: AppTextVariant.caption),
+                          ],
+                          if (languages.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: languages
+                                  .map((language) => Chip(
+                                        label: Text(language),
+                                        visualDensity: VisualDensity.compact,
+                                      ))
+                                  .toList(growable: false),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   const AppText(
                     'Select Date',
@@ -279,7 +299,7 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                   ),
                   const SizedBox(height: 18),
                   const AppText(
-                    'Available Time Slots',
+                    'Preferred Time',
                     variant: AppTextVariant.subtitle,
                     fontWeight: FontWeight.w700,
                   ),
@@ -297,7 +317,7 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: const AppText(
-                              'No future slots available for this date. Try another day.',
+                              'No preferred times are available for this date. Try another day.',
                               variant: AppTextVariant.caption,
                             ),
                           )
@@ -320,6 +340,11 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                           ),
                   ),
                   const SizedBox(height: 24),
+                  const AppText(
+                    'Your request is confirmed after the doctor reviews it.',
+                    variant: AppTextVariant.caption,
+                  ),
+                  const SizedBox(height: 10),
                   CustomButton(
                     label: _bookingAppointment
                         ? 'Submitting...'
@@ -404,6 +429,9 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
         appointmentTime: selectedTime,
         reason: bookingInput.reason,
         notes: bookingInput.notes,
+        appointmentType: bookingInput.appointmentType,
+        mode: bookingInput.mode,
+        duration: bookingInput.duration,
       );
 
       if (!mounted) return;
@@ -424,12 +452,7 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
       );
 
       if (success) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const AppointmentsPage(initialTab: 0),
-          ),
-        );
+        Navigator.pop(context, true);
       }
     } finally {
       if (mounted) {
@@ -444,6 +467,9 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
     final reasonController = TextEditingController();
     final notesController = TextEditingController();
     String? localError;
+    String appointmentType = 'consultation';
+    String mode = 'in-person';
+    int duration = 30;
 
     final result = await showDialog<_AppointmentInput>(
       context: context,
@@ -474,6 +500,56 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                         labelText: 'Notes (optional)',
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: appointmentType,
+                      decoration: const InputDecoration(
+                        labelText: 'Appointment type',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'consultation', child: Text('Consultation')),
+                        DropdownMenuItem(
+                            value: 'follow-up', child: Text('Follow-up')),
+                        DropdownMenuItem(
+                            value: 'routine', child: Text('Routine check-up')),
+                        DropdownMenuItem(
+                            value: 'specialist',
+                            child: Text('Specialist visit')),
+                      ],
+                      onChanged: (value) => setDialogState(() {
+                        appointmentType = value ?? 'consultation';
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: mode,
+                      decoration:
+                          const InputDecoration(labelText: 'Visit mode'),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'in-person', child: Text('In person')),
+                        DropdownMenuItem(
+                            value: 'online', child: Text('Online')),
+                      ],
+                      onChanged: (value) => setDialogState(() {
+                        mode = value ?? 'in-person';
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      initialValue: duration,
+                      decoration: const InputDecoration(labelText: 'Duration'),
+                      items: const [
+                        DropdownMenuItem(value: 15, child: Text('15 minutes')),
+                        DropdownMenuItem(value: 30, child: Text('30 minutes')),
+                        DropdownMenuItem(value: 45, child: Text('45 minutes')),
+                        DropdownMenuItem(value: 60, child: Text('1 hour')),
+                      ],
+                      onChanged: (value) => setDialogState(() {
+                        duration = value ?? 30;
+                      }),
+                    ),
                     if (localError != null) ...[
                       const SizedBox(height: 10),
                       Text(
@@ -503,7 +579,13 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
                     }
                     Navigator.pop(
                       dialogContext,
-                      _AppointmentInput(reason: reason, notes: notes),
+                      _AppointmentInput(
+                        reason: reason,
+                        notes: notes,
+                        appointmentType: appointmentType,
+                        mode: mode,
+                        duration: duration,
+                      ),
                     );
                   },
                   child: const Text('Submit'),
@@ -905,9 +987,15 @@ class _DoctorDetailScreenState extends State<DoctorDetailScreen> {
 class _AppointmentInput {
   final String reason;
   final String notes;
+  final String appointmentType;
+  final String mode;
+  final int duration;
 
   const _AppointmentInput({
     required this.reason,
     required this.notes,
+    required this.appointmentType,
+    required this.mode,
+    required this.duration,
   });
 }

@@ -52,8 +52,8 @@ class ThemeSelectionPage extends StatelessWidget {
   static const List<_GradientOption> _gradientOptions = [
     _GradientOption(
       label: 'Aqua Shield',
-      start: Color(0xFF00A9C7),
-      end: Color(0xFF3D86F4),
+      start: AppDefaultTheme.gradientStart,
+      end: AppDefaultTheme.gradientEnd,
     ),
     _GradientOption(
       label: 'Clinical Sky',

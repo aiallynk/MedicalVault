@@ -13,6 +13,7 @@ import 'package:hello/services/dashboard_display_settings.dart';
 import 'package:hello/AppFooter.dart';
 import 'package:hello/CategoryVaultPage.dart';
 import 'package:hello/core/theme/theme.dart';
+import 'package:hello/core/responsive/responsive.dart';
 import 'MyVault.dart';
 import 'QR.dart';
 import 'Requests.dart';
@@ -27,9 +28,11 @@ import 'package:hello/screens/appointments_page.dart';
 import 'package:hello/screens/doctor_detail_screen.dart';
 import 'package:hello/screens/chat_screen.dart';
 import 'package:hello/screens/chat_threads_screen.dart';
+import 'package:hello/screens/notification_inbox_screen.dart';
 import 'package:hello/screens/sos_page.dart';
 import 'package:hello/screens/medical_store_page.dart';
 import 'package:hello/screens/nearby_services_page.dart';
+import 'package:hello/Notifications/fcm_service.dart';
 import 'package:hello/Notifications/global_notification_handler.dart';
 import 'package:hello/SettingPages/ProfilePageSetting.dart';
 import 'package:hello/localization/app_localizations.dart';
@@ -70,6 +73,10 @@ class _Dashboard1State extends State<Dashboard1>
   Timer? _uiRefreshTimer;
   Timer? _alertExpiryTimer;
   Timer? _publicConfigReconnectTimer;
+  Timer? _unreadMessagesTimer;
+  int _unreadMessageCount = 0;
+  Timer? _unreadNotificationsTimer;
+  int _unreadNotificationCount = 0;
   StreamSubscription<dynamic>? _connectivitySubscription;
   late AnimationController _alertController;
   WebSocketChannel? _publicConfigChannel;
@@ -115,7 +122,9 @@ class _Dashboard1State extends State<Dashboard1>
     _userData = Map<String, dynamic>.from(widget.userData);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        context.read<ActivePatientProfileProvider>().bindAuthenticatedUser(_activeUserId);
+        context
+            .read<ActivePatientProfileProvider>()
+            .bindAuthenticatedUser(_activeUserId);
       }
     });
     _promoPageController = PageController(
@@ -154,6 +163,8 @@ class _Dashboard1State extends State<Dashboard1>
     _loadStoredName();
     _startUiRefreshTimer();
     _startAlertExpiryTimer();
+    _startUnreadMessagesTimer();
+    _startUnreadNotificationsTimer();
     _initializeConnectivityObserver();
     _connectPublicConfigSocket();
     SchedulerBinding.instance.addTimingsCallback(_handleFrameTimings);
@@ -248,6 +259,8 @@ class _Dashboard1State extends State<Dashboard1>
     _promoTimer?.cancel();
     _uiRefreshTimer?.cancel();
     _alertExpiryTimer?.cancel();
+    _unreadMessagesTimer?.cancel();
+    _unreadNotificationsTimer?.cancel();
     _publicConfigReconnectTimer?.cancel();
     _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
@@ -268,6 +281,13 @@ class _Dashboard1State extends State<Dashboard1>
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshUserData(forceRemote: true));
       unawaited(_loadDocumentCounts());
+      unawaited(_loadUnreadMessageCount());
+      // Defense-in-depth alongside FCMService's onTokenRefresh listener: if
+      // the backend cleared a stale token (see the auto-clear added to
+      // Backend-MedicalVault/utils/notifications.js) while this device was
+      // backgrounded, re-registering here restores delivery without
+      // waiting for the user's next full login.
+      unawaited(FCMService().registerToken());
     }
   }
 
@@ -392,6 +412,59 @@ class _Dashboard1State extends State<Dashboard1>
         });
       }
     });
+  }
+
+  void _startUnreadMessagesTimer() {
+    unawaited(_loadUnreadMessageCount());
+    _unreadMessagesTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!mounted) return;
+      unawaited(_loadUnreadMessageCount());
+    });
+  }
+
+  Future<void> _loadUnreadMessageCount() async {
+    try {
+      final threads = await ApiService.fetchChatThreads();
+      final total = threads.fold<int>(0, (sum, thread) {
+        final unread =
+            int.tryParse((thread['unreadCount'] ?? '0').toString()) ?? 0;
+        return sum + unread;
+      });
+      if (!mounted) return;
+      // Guard setState behind an actual-change check so this 15s poll
+      // never triggers a needless rebuild — the same discipline applied to
+      // the chat screens' own poll loops.
+      if (total != _unreadMessageCount) {
+        setState(() {
+          _unreadMessageCount = total;
+        });
+      }
+    } catch (_) {
+      // Best-effort — a failed poll should not disturb the badge or throw.
+    }
+  }
+
+  void _startUnreadNotificationsTimer() {
+    unawaited(_loadUnreadNotificationCount());
+    _unreadNotificationsTimer =
+        Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!mounted) return;
+      unawaited(_loadUnreadNotificationCount());
+    });
+  }
+
+  Future<void> _loadUnreadNotificationCount() async {
+    try {
+      final total = await ApiService.fetchUnreadNotificationCount();
+      if (!mounted) return;
+      if (total != _unreadNotificationCount) {
+        setState(() {
+          _unreadNotificationCount = total;
+        });
+      }
+    } catch (_) {
+      // Best-effort — a failed poll should not disturb the badge or throw.
+    }
   }
 
   Future<void> _connectPublicConfigSocket() async {
@@ -1211,285 +1284,310 @@ class _Dashboard1State extends State<Dashboard1>
                         await _loadDashboardUiConfig(forceRefresh: true);
                         await _refreshUserData();
                       },
-                      child: ListView(
-                        key: const PageStorageKey<String>(
-                            'dashboard-home-scroll'),
-                        cacheExtent: 1600,
-                        physics: const AlwaysScrollableScrollPhysics(
-                          parent: ClampingScrollPhysics(),
-                        ),
-                        padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-                        children: [
-                          _buildGreetingSection(context, userName),
-                          const SizedBox(height: AppSpacing.medium),
-                          if (hasActiveAlerts) ...[
-                            RepaintBoundary(
-                              child: _buildAlertTicker(context),
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: AppResponsive.maxPageWidth,
+                          ),
+                          child: ListView(
+                            key: const PageStorageKey<String>(
+                                'dashboard-home-scroll'),
+                            cacheExtent: 1600,
+                            physics: const AlwaysScrollableScrollPhysics(
+                              parent: ClampingScrollPhysics(),
                             ),
-                            const SizedBox(height: AppSpacing.medium),
-                          ],
-                          if (_dashboardAds.isNotEmpty) ...[
-                            _buildPromoCarousel(context),
-                            const SizedBox(height: AppSpacing.large),
-                          ],
-                          ValueListenableBuilder<bool>(
-                            valueListenable: DashboardDisplaySettings()
-                                .showTopDoctorsNotifier,
-                            builder: (context, showTopDoctors, _) {
-                              if (!showTopDoctors ||
-                                  (!_loadingTopDoctors &&
-                                      _topDoctors.isEmpty)) {
-                                return const SizedBox.shrink();
-                              }
-                              return Column(
-                                children: [
-                                  _buildTopDoctorsSection(context),
-                                  const SizedBox(height: AppSpacing.large),
-                                ],
-                              );
-                            },
-                          ),
-                          AppText(
-                            l10n.t('dashboard.quickActions'),
-                            variant: AppTextVariant.subtitle,
-                            fontWeight: FontWeight.w700,
-                          ),
-                          const SizedBox(height: AppSpacing.medium),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildQuickActionCard(
-                                  context,
-                                  icon: Icons.qr_code,
-                                  title: l10n
-                                      .t('dashboard.action.generateShareQR'),
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => QRPage(),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _buildQuickActionCard(
-                                  context,
-                                  icon: Icons.person_add_alt_1,
-                                  title:
-                                      l10n.t('dashboard.action.accessRequests'),
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => RequestsPage(),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildQuickActionCard(
-                                  context,
-                                  icon: Icons.emergency,
-                                  title:
-                                      l10n.t('dashboard.action.emergencySOS'),
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            SosPage(userData: _userData),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _buildQuickActionCard(
-                                  context,
-                                  icon: Icons.manage_search_rounded,
-                                  title: l10n.auto('Lost & Found'),
-                                  onTap: () async {
-                                    await _openLostFound(context);
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildQuickActionCard(
-                                  context,
-                                  icon: Icons.person_search_rounded,
-                                  title: l10n.auto('Search Lost Persons'),
-                                  onTap: () async {
-                                    await _openSearchLostPersons(context);
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _buildQuickActionCard(
-                                  context,
-                                  icon: Icons.list,
-                                  title:
-                                      l10n.t('dashboard.action.myLostReports'),
-                                  onTap: () async {
-                                    await _openMyLostReports(context);
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (activeDashboardCards.isNotEmpty) ...[
-                            const SizedBox(height: AppSpacing.large),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: AppText(
-                                l10n.auto('Featured'),
-                                variant: AppTextVariant.subtitle,
-                                fontWeight: FontWeight.w700,
-                              ),
+                            padding: EdgeInsets.fromLTRB(
+                              AppResponsive.pageGutter(context),
+                              24,
+                              AppResponsive.pageGutter(context),
+                              20,
                             ),
-                            const SizedBox(height: AppSpacing.medium),
-                            SizedBox(
-                              height: 124,
-                              child: ListView.separated(
-                                scrollDirection: Axis.horizontal,
-                                itemCount: activeDashboardCards.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(width: 12),
-                                itemBuilder: (context, index) {
-                                  final card = activeDashboardCards[index];
-                                  final title =
-                                      card['title']?.toString().trim();
-                                  if (title == null || title.isEmpty) {
+                            children: [
+                              _buildGreetingSection(context, userName),
+                              const SizedBox(height: AppSpacing.medium),
+                              if (hasActiveAlerts) ...[
+                                RepaintBoundary(
+                                  child: _buildAlertTicker(context),
+                                ),
+                                const SizedBox(height: AppSpacing.medium),
+                              ],
+                              if (_dashboardAds.isNotEmpty) ...[
+                                _buildPromoCarousel(context),
+                                const SizedBox(height: AppSpacing.large),
+                              ],
+                              ValueListenableBuilder<bool>(
+                                valueListenable: DashboardDisplaySettings()
+                                    .showTopDoctorsNotifier,
+                                builder: (context, showTopDoctors, _) {
+                                  if (!showTopDoctors ||
+                                      (!_loadingTopDoctors &&
+                                          _topDoctors.isEmpty)) {
                                     return const SizedBox.shrink();
                                   }
-                                  final subtitle =
-                                      card['subtitle']?.toString().trim() ?? '';
-                                  final redirectUrl =
-                                      card['redirectUrl']?.toString().trim() ??
-                                          '';
-                                  return SizedBox(
-                                    width: 220,
-                                    child: CustomCard(
-                                      onTap: redirectUrl.isEmpty
-                                          ? null
-                                          : () => _openExternalUrl(redirectUrl),
-                                      radius: AppRadii.medium,
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          AppText(
-                                            title,
-                                            variant: AppTextVariant.body,
-                                            fontWeight: FontWeight.w700,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                          if (subtitle.isNotEmpty) ...[
-                                            const SizedBox(height: 6),
-                                            AppText(
-                                              subtitle,
-                                              variant: AppTextVariant.caption,
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ],
-                                          if (redirectUrl.isNotEmpty) ...[
-                                            const SizedBox(height: 10),
-                                            Row(
-                                              children: [
-                                                Icon(
-                                                  Icons.open_in_new_rounded,
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .primary,
-                                                  size: 16,
-                                                ),
-                                                const SizedBox(width: 4),
-                                                AppText(
-                                                  l10n.auto('Open'),
-                                                  variant:
-                                                      AppTextVariant.caption,
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .primary,
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                              ],
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
+                                  return Column(
+                                    children: [
+                                      _buildTopDoctorsSection(context),
+                                      const SizedBox(height: AppSpacing.large),
+                                    ],
                                   );
                                 },
                               ),
-                            ),
-                          ],
-                          const SizedBox(height: AppSpacing.large),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
                               AppText(
-                                l10n.t('dashboard.documentsTitle'),
+                                l10n.t('dashboard.quickActions'),
                                 variant: AppTextVariant.subtitle,
                                 fontWeight: FontWeight.w700,
                               ),
-                              if (!_isLoadingCounts)
-                                AppText(
-                                  l10n.format('dashboard.documentsTotal', {
-                                    'count':
-                                        '${_documentCounts.values.fold(0, (sum, count) => sum + count)}'
-                                  }),
-                                  variant: AppTextVariant.caption,
-                                  fontWeight: FontWeight.w600,
+                              const SizedBox(height: AppSpacing.medium),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildQuickActionCard(
+                                      context,
+                                      icon: Icons.qr_code,
+                                      title: l10n.t(
+                                          'dashboard.action.generateShareQR'),
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) => QRPage(),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _buildQuickActionCard(
+                                      context,
+                                      icon: Icons.person_add_alt_1,
+                                      title: l10n
+                                          .t('dashboard.action.accessRequests'),
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                RequestsPage(),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildQuickActionCard(
+                                      context,
+                                      icon: Icons.emergency,
+                                      title: l10n
+                                          .t('dashboard.action.emergencySOS'),
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                SosPage(userData: _userData),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _buildQuickActionCard(
+                                      context,
+                                      icon: Icons.manage_search_rounded,
+                                      title: l10n.auto('Lost & Found'),
+                                      onTap: () async {
+                                        await _openLostFound(context);
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildQuickActionCard(
+                                      context,
+                                      icon: Icons.person_search_rounded,
+                                      title: l10n.auto('Search Lost Persons'),
+                                      onTap: () async {
+                                        await _openSearchLostPersons(context);
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _buildQuickActionCard(
+                                      context,
+                                      icon: Icons.list,
+                                      title: l10n
+                                          .t('dashboard.action.myLostReports'),
+                                      onTap: () async {
+                                        await _openMyLostReports(context);
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (activeDashboardCards.isNotEmpty) ...[
+                                const SizedBox(height: AppSpacing.large),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: AppText(
+                                    l10n.auto('Featured'),
+                                    variant: AppTextVariant.subtitle,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
+                                const SizedBox(height: AppSpacing.medium),
+                                SizedBox(
+                                  height: 124,
+                                  child: ListView.separated(
+                                    scrollDirection: Axis.horizontal,
+                                    itemCount: activeDashboardCards.length,
+                                    separatorBuilder: (_, __) =>
+                                        const SizedBox(width: 12),
+                                    itemBuilder: (context, index) {
+                                      final card = activeDashboardCards[index];
+                                      final title =
+                                          card['title']?.toString().trim();
+                                      if (title == null || title.isEmpty) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      final subtitle =
+                                          card['subtitle']?.toString().trim() ??
+                                              '';
+                                      final redirectUrl = card['redirectUrl']
+                                              ?.toString()
+                                              .trim() ??
+                                          '';
+                                      return SizedBox(
+                                        width: 220,
+                                        child: CustomCard(
+                                          onTap: redirectUrl.isEmpty
+                                              ? null
+                                              : () =>
+                                                  _openExternalUrl(redirectUrl),
+                                          radius: AppRadii.medium,
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              AppText(
+                                                title,
+                                                variant: AppTextVariant.body,
+                                                fontWeight: FontWeight.w700,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              if (subtitle.isNotEmpty) ...[
+                                                const SizedBox(height: 6),
+                                                AppText(
+                                                  subtitle,
+                                                  variant:
+                                                      AppTextVariant.caption,
+                                                  maxLines: 2,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ],
+                                              if (redirectUrl.isNotEmpty) ...[
+                                                const SizedBox(height: 10),
+                                                Row(
+                                                  children: [
+                                                    Icon(
+                                                      Icons.open_in_new_rounded,
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .primary,
+                                                      size: 16,
+                                                    ),
+                                                    const SizedBox(width: 4),
+                                                    AppText(
+                                                      l10n.auto('Open'),
+                                                      variant: AppTextVariant
+                                                          .caption,
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .primary,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: AppSpacing.large),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  AppText(
+                                    l10n.t('dashboard.documentsTitle'),
+                                    variant: AppTextVariant.subtitle,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  if (!_isLoadingCounts)
+                                    AppText(
+                                      l10n.format('dashboard.documentsTotal', {
+                                        'count':
+                                            '${_documentCounts.values.fold(0, (sum, count) => sum + count)}'
+                                      }),
+                                      variant: AppTextVariant.caption,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: AppSpacing.medium),
+                              GridView.builder(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: categories.length,
+                                addRepaintBoundaries: true,
+                                // Width-driven column count: 2 columns on
+                                // phones, more on tablets/expanded screens,
+                                // instead of a fixed crossAxisCount that would
+                                // stretch each tile to half the tablet width.
+                                gridDelegate:
+                                    const SliverGridDelegateWithMaxCrossAxisExtent(
+                                  maxCrossAxisExtent: 200,
+                                  crossAxisSpacing: 14,
+                                  mainAxisSpacing: 14,
+                                  childAspectRatio: 0.98,
+                                ),
+                                itemBuilder: (context, index) {
+                                  final item = categories[index];
+                                  return _buildCategoryCard(
+                                    context,
+                                    title: item['title'] as String,
+                                    imagePath: item['image'] as String,
+                                    category: item['category'] as String,
+                                    count: item['count'] as int,
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 10),
+                              const Center(child: AppFooter()),
                             ],
                           ),
-                          const SizedBox(height: AppSpacing.medium),
-                          GridView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: categories.length,
-                            addRepaintBoundaries: true,
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 2,
-                              crossAxisSpacing: 14,
-                              mainAxisSpacing: 14,
-                              childAspectRatio: 0.98,
-                            ),
-                            itemBuilder: (context, index) {
-                              final item = categories[index];
-                              return _buildCategoryCard(
-                                context,
-                                title: item['title'] as String,
-                                imagePath: item['image'] as String,
-                                category: item['category'] as String,
-                                count: item['count'] as int,
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          const Center(child: AppFooter()),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -1585,6 +1683,10 @@ class _Dashboard1State extends State<Dashboard1>
                         DashboardFabPopover(
                           isOpen: isOpen,
                           animation: _fabMenuController,
+                          unreadMessageCount: _unreadMessageCount,
+                          onMessages: () {
+                            unawaited(_handleFabAction(_openMessagesFromFab));
+                          },
                           onAiAssistant: () {
                             unawaited(
                                 _handleFabAction(_openAiAssistantFromFab));
@@ -1690,13 +1792,47 @@ class _Dashboard1State extends State<Dashboard1>
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              IconButton(
-                onPressed: () => _openMessagesHub(context),
-                icon: const Icon(
-                  Icons.chat_bubble_outline_rounded,
-                  color: Colors.white,
-                ),
-                tooltip: l10n.auto('Messages'),
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  IconButton(
+                    onPressed: () => _openNotificationInbox(context),
+                    icon: const Icon(
+                      Icons.notifications_outlined,
+                      color: Colors.white,
+                    ),
+                    tooltip: l10n.auto('Notifications'),
+                  ),
+                  if (_unreadNotificationCount > 0)
+                    Positioned(
+                      right: 4,
+                      top: 4,
+                      child: IgnorePointer(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          constraints: const BoxConstraints(minWidth: 16),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.error,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: Colors.white, width: 1.2),
+                          ),
+                          child: Text(
+                            _unreadNotificationCount > 99
+                                ? '99+'
+                                : '$_unreadNotificationCount',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              height: 1.2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               IconButton(
                 onPressed: () => _showProfileSwitcher(context),
@@ -1996,7 +2132,8 @@ class _Dashboard1State extends State<Dashboard1>
     );
 
     if (!mounted || selected == null) return;
-    final page = selected == 'khoj' ? const CareSearchAiPage() : const ChatScreen();
+    final page =
+        selected == 'khoj' ? const CareSearchAiPage() : const ChatScreen();
     await Navigator.push(context, _buildFadeSlideRoute(page));
   }
 
@@ -2070,7 +2207,8 @@ class _Dashboard1State extends State<Dashboard1>
     final bottomPadding = media.padding.bottom;
 
     return Positioned(
-      right: media.size.width >= 600 ? 24 : 16,
+      right:
+          responsiveValue(context, compact: 16.0, medium: 24.0, expanded: 24.0),
       bottom: bottomNavOffset + bottomPadding,
       child: RepaintBoundary(
         child: Tooltip(
@@ -2198,11 +2336,25 @@ class _Dashboard1State extends State<Dashboard1>
     await _loadLinkedProfiles();
   }
 
-  Future<void> _openMessagesHub(BuildContext context) async {
+  Future<void> _openMessagesFromFab() async {
     await Navigator.push(
       context,
       _buildFadeSlideRoute(const ChatThreadsScreen()),
     );
+    // The thread list marks messages read as a side effect of opening them,
+    // so the badge should reflect that immediately on return rather than
+    // waiting up to 15s for the next poll tick.
+    unawaited(_loadUnreadMessageCount());
+  }
+
+  Future<void> _openNotificationInbox(BuildContext context) async {
+    await Navigator.push(
+      context,
+      _buildFadeSlideRoute(const NotificationInboxScreen()),
+    );
+    // Reading/deleting notifications happens inside the inbox, so refresh
+    // the badge immediately on return rather than waiting for the next poll.
+    unawaited(_loadUnreadNotificationCount());
   }
 
   void _showProfileSwitcher(BuildContext context) {

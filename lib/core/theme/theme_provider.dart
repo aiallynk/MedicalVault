@@ -68,12 +68,27 @@ class ThemeProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final savedMode = prefs.getString(_themeModeKey);
     final savedPalette = prefs.getString(_themePaletteKey);
+    final hasSavedPalette = prefs.containsKey(_themePaletteKey);
+    final savedPrimaryColorValue = prefs.getInt(_customThemeColorKey);
+    final savedSecondaryColorValue = prefs.getInt(_customThemeSecondaryColorKey);
+
+    // A brand-new user has no saved palette yet: default to the Aqua Shield
+    // gradient (the same gradient selectable in Theme Studio), never to a
+    // remote/backend-configured color.
+    if (!hasSavedPalette) {
+      return ThemeProviderConfig(
+        themeMode: _themeModeFromStorage(savedMode),
+        palette: AppThemePalette.custom,
+        customPrimaryColorValue: _toColorValue(AppDefaultTheme.gradientStart),
+        customSecondaryColorValue: _toColorValue(AppDefaultTheme.gradientEnd),
+      );
+    }
 
     return ThemeProviderConfig(
       themeMode: _themeModeFromStorage(savedMode),
       palette: appThemePaletteFromStorage(savedPalette),
-      customPrimaryColorValue: prefs.getInt(_customThemeColorKey),
-      customSecondaryColorValue: prefs.getInt(_customThemeSecondaryColorKey),
+      customPrimaryColorValue: savedPrimaryColorValue,
+      customSecondaryColorValue: savedSecondaryColorValue,
     );
   }
 
@@ -135,40 +150,15 @@ class ThemeProvider extends ChangeNotifier {
   }
 
   Future<void> clearCustomPrimaryColor() async {
-    _customPrimaryColorValue = null;
-    _customSecondaryColorValue = null;
     if (_palette == AppThemePalette.custom) {
-      _palette = AppThemePalette.teal;
+      // Reset to the same Aqua Shield default a brand-new user starts on.
+      _customPrimaryColorValue = _toColorValue(AppDefaultTheme.gradientStart);
+      _customSecondaryColorValue = _toColorValue(AppDefaultTheme.gradientEnd);
+    } else {
+      _customPrimaryColorValue = null;
+      _customSecondaryColorValue = null;
     }
     await _persist();
-    notifyListeners();
-  }
-
-  Future<void> applyRemoteUiConfig(
-    Map<String, dynamic> config, {
-    bool persist = true,
-  }) async {
-    bool changed = false;
-
-    final remoteButtonColor = parseHexColor(config['buttonColor']);
-    final remoteIconColor = parseHexColor(config['iconColor']);
-    final remoteThemeMode = parseThemeMode(config['themeMode']);
-
-    if (remoteButtonColor != null) {
-      _customPrimaryColorValue = _toColorValue(remoteButtonColor);
-      _customSecondaryColorValue =
-          remoteIconColor != null ? _toColorValue(remoteIconColor) : null;
-      _palette = AppThemePalette.custom;
-      changed = true;
-    }
-
-    if (remoteThemeMode != null && _themeMode != remoteThemeMode) {
-      _themeMode = remoteThemeMode;
-      changed = true;
-    }
-
-    if (!changed) return;
-    if (persist) await _persist();
     notifyListeners();
   }
 
@@ -197,31 +187,6 @@ class ThemeProvider extends ChangeNotifier {
     final g = (color.g * 255).round() & 0xFF;
     final b = (color.b * 255).round() & 0xFF;
     return (a << 24) | (r << 16) | (g << 8) | b;
-  }
-
-  static Color? parseHexColor(dynamic value) {
-    final raw = value?.toString().trim() ?? '';
-    if (raw.isEmpty) return null;
-    var hex = raw.replaceAll('#', '').replaceAll('0x', '');
-    if (hex.length == 6) hex = 'FF$hex';
-    if (hex.length != 8) return null;
-    final intValue = int.tryParse(hex, radix: 16);
-    if (intValue == null) return null;
-    return Color(intValue);
-  }
-
-  static ThemeMode? parseThemeMode(dynamic value) {
-    final mode = value?.toString().trim().toUpperCase();
-    switch (mode) {
-      case 'LIGHT':
-        return ThemeMode.light;
-      case 'DARK':
-        return ThemeMode.dark;
-      case 'SYSTEM':
-        return ThemeMode.system;
-      default:
-        return null;
-    }
   }
 
   static ThemeMode _themeModeFromStorage(String? value) {

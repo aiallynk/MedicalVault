@@ -17,6 +17,17 @@ enum AppThemePalette {
   custom,
 }
 
+/// The app's default gradient accent for every new user, before they choose
+/// anything in Theme Studio (Settings > Theme). Kept here as the single
+/// source of truth so the startup default and the "Aqua Shield" option in
+/// Theme Studio can never drift apart.
+class AppDefaultTheme {
+  const AppDefaultTheme._();
+
+  static const Color gradientStart = Color(0xFF00A9C7);
+  static const Color gradientEnd = Color(0xFF3D86F4);
+}
+
 AppThemePalette appThemePaletteFromStorage(String? value) {
   switch (value) {
     case 'soft_blue':

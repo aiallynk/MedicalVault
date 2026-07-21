@@ -112,6 +112,12 @@ class _AboutAppPageState extends State<AboutAppPage>
       _readyToInstall = downloadResult.isReady;
       _downloadedApkPath = downloadResult.apkPath;
     });
+
+    if (!downloadResult.isReady) return;
+
+    // Hand off to the installer in the same flow — the user should not
+    // have to tap a second, relabeled button for the install to happen.
+    await _installDownloadedUpdate(info);
   }
 
   Future<void> _installDownloadedUpdate(AppUpdateInfo info) async {
@@ -362,11 +368,13 @@ class _AboutAppPageState extends State<AboutAppPage>
                         ? Icons.install_mobile_rounded
                         : Icons.download_rounded),
                 label: Text(
-                  _updating || _installing
-                      ? '${l10n.t('update.action.updateNow')}...'
-                      : _readyToInstall
-                          ? 'Install'
-                          : l10n.t('update.action.updateNow'),
+                  _updating
+                      ? 'Downloading...'
+                      : _installing
+                          ? 'Installing...'
+                          : _readyToInstall
+                              ? 'Install'
+                              : l10n.t('update.action.updateNow'),
                 ),
               ),
             ],

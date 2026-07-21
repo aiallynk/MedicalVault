@@ -24,11 +24,12 @@ class _AppointmentsPageState extends State<AppointmentsPage>
 
   List<dynamic> _upcoming = [];
   List<dynamic> _past = [];
-  List<Map<String, dynamic>> _doctorProfiles = [];
+  List<Map<String, dynamic>> _doctors = [];
   String _selectedSpecialization = 'All';
 
   bool _loadingUpcoming = true;
   bool _loadingPast = true;
+  bool _loadingDoctors = true;
 
   @override
   void initState() {
@@ -39,6 +40,7 @@ class _AppointmentsPageState extends State<AppointmentsPage>
     _searchController.addListener(_onSearchChanged);
     _loadUpcoming();
     _loadPast();
+    _loadDoctors();
   }
 
   @override
@@ -57,7 +59,6 @@ class _AppointmentsPageState extends State<AppointmentsPage>
     setState(() {
       _upcoming = list;
       _loadingUpcoming = false;
-      _doctorProfiles = _buildDoctorProfiles();
     });
   }
 
@@ -68,7 +69,16 @@ class _AppointmentsPageState extends State<AppointmentsPage>
     setState(() {
       _past = list;
       _loadingPast = false;
-      _doctorProfiles = _buildDoctorProfiles();
+    });
+  }
+
+  Future<void> _loadDoctors() async {
+    setState(() => _loadingDoctors = true);
+    final doctors = await ApiService.fetchDoctorDirectory();
+    if (!mounted) return;
+    setState(() {
+      _doctors = doctors;
+      _loadingDoctors = false;
     });
   }
 
@@ -76,78 +86,8 @@ class _AppointmentsPageState extends State<AppointmentsPage>
     if (mounted) setState(() {});
   }
 
-  List<Map<String, dynamic>> _buildDoctorProfiles() {
-    final allAppointments = [..._upcoming, ..._past];
-    final grouped = <String, Map<String, dynamic>>{};
-
-    for (final raw in allAppointments) {
-      if (raw is! Map<String, dynamic>) continue;
-      final doctorData = raw['doctorId'];
-      final name = (doctorData is Map ? doctorData['name'] : raw['doctorName'])
-              ?.toString()
-              .trim() ??
-          '';
-      if (name.isEmpty) continue;
-
-      final id = (doctorData is Map ? doctorData['_id'] : raw['doctorId'])
-              ?.toString() ??
-          name;
-      final specialization = (doctorData is Map
-                  ? doctorData['specialty'] ?? doctorData['specialization']
-                  : raw['doctorSpecialization'])
-              ?.toString() ??
-          '';
-      final location = (doctorData is Map
-                  ? doctorData['location']
-                  : raw['hospitalClinicName'])
-              ?.toString() ??
-          '';
-      final image = (doctorData is Map
-              ? doctorData['profilePictureUrl'] ??
-                  doctorData['profilePicture'] ??
-                  doctorData['avatarUrl'] ??
-                  doctorData['avatar']
-              : raw['doctorProfilePicture'])
-          ?.toString();
-
-      final current = grouped.putIfAbsent(
-        id,
-        () => {
-          'id': id,
-          'name': name,
-          'specialization': specialization,
-          'location': location,
-          'imageUrl': image,
-          'appointments': <Map<String, dynamic>>[],
-          'count': 0,
-          'rating': _estimateRating(name),
-        },
-      );
-
-      if ((current['specialization'] as String).isEmpty &&
-          specialization.isNotEmpty) {
-        current['specialization'] = specialization;
-      }
-      if ((current['location'] as String).isEmpty && location.isNotEmpty) {
-        current['location'] = location;
-      }
-
-      (current['appointments'] as List<Map<String, dynamic>>).add(raw);
-      current['count'] = (current['count'] as int) + 1;
-    }
-
-    final doctors = grouped.values.toList()
-      ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
-    return doctors;
-  }
-
-  double _estimateRating(String name) {
-    final hash = name.codeUnits.fold<int>(0, (sum, c) => sum + c);
-    return 4.2 + ((hash % 7) / 10);
-  }
-
   List<String> get _specializations {
-    final specs = _doctorProfiles
+    final specs = _doctors
         .map((doc) => doc['specialization']?.toString() ?? '')
         .where((spec) => spec.trim().isNotEmpty)
         .toSet()
@@ -158,7 +98,7 @@ class _AppointmentsPageState extends State<AppointmentsPage>
 
   List<Map<String, dynamic>> get _filteredDoctors {
     final query = _searchController.text.trim().toLowerCase();
-    return _doctorProfiles.where((doctor) {
+    return _doctors.where((doctor) {
       final name = doctor['name']?.toString().toLowerCase() ?? '';
       final specialization = doctor['specialization']?.toString() ?? '';
       final specMatch = _selectedSpecialization == 'All' ||
@@ -168,6 +108,24 @@ class _AppointmentsPageState extends State<AppointmentsPage>
           specialization.toLowerCase().contains(query);
       return specMatch && queryMatch;
     }).toList();
+  }
+
+  List<Map<String, dynamic>> _appointmentsForDoctor(
+      Map<String, dynamic> doctor) {
+    final doctorId = doctor['id']?.toString() ?? '';
+    return [..._upcoming, ..._past]
+        .whereType<Map>()
+        .map((appointment) => appointment.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ))
+        .where((appointment) {
+      final appointmentDoctor = appointment['doctorId'];
+      final appointmentDoctorId = appointmentDoctor is Map
+          ? appointmentDoctor['_id']?.toString() ??
+              appointmentDoctor['id']?.toString()
+          : appointmentDoctor?.toString();
+      return appointmentDoctorId == doctorId;
+    }).toList(growable: false);
   }
 
   void _openDetail(String id) {
@@ -235,8 +193,7 @@ class _AppointmentsPageState extends State<AppointmentsPage>
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          await _loadUpcoming();
-          await _loadPast();
+          await Future.wait([_loadDoctors(), _loadUpcoming(), _loadPast()]);
         },
         child: TabBarView(
           controller: _tabController,
@@ -252,7 +209,7 @@ class _AppointmentsPageState extends State<AppointmentsPage>
 
   Widget _buildDoctorsTab() {
     final doctors = _filteredDoctors;
-    final loading = _loadingUpcoming || _loadingPast;
+    final loading = _loadingDoctors;
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -311,9 +268,21 @@ class _AppointmentsPageState extends State<AppointmentsPage>
             child: Center(child: CircularProgressIndicator()),
           )
         else if (doctors.isEmpty)
-          const Padding(
-            padding: EdgeInsets.only(top: 50),
-            child: Center(child: AppText('No doctors found for this filter.')),
+          Padding(
+            padding: const EdgeInsets.only(top: 50),
+            child: Center(
+              child: Column(
+                children: [
+                  const AppText('No doctors found for this filter.'),
+                  const SizedBox(height: 10),
+                  TextButton.icon(
+                    onPressed: _loadDoctors,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Try again'),
+                  ),
+                ],
+              ),
+            ),
           )
         else
           GridView.builder(
@@ -331,20 +300,20 @@ class _AppointmentsPageState extends State<AppointmentsPage>
               return DoctorCard(
                 name: doctor['name']?.toString() ?? 'Doctor',
                 specialization: doctor['specialization']?.toString() ?? '',
-                rating: (doctor['rating'] as num?)?.toDouble() ?? 4.5,
-                imageUrl: doctor['imageUrl']?.toString(),
-                onTap: () {
-                  Navigator.push(
+                imageUrl: doctor['profilePictureUrl']?.toString(),
+                onTap: () async {
+                  final booked = await Navigator.push<bool>(
                     context,
                     _buildFadeSlideRoute(
                       DoctorDetailScreen(
                         doctor: doctor,
-                        appointments: List<Map<String, dynamic>>.from(
-                          doctor['appointments'] as List? ?? const [],
-                        ),
+                        appointments: _appointmentsForDoctor(doctor),
                       ),
                     ),
                   );
+                  if (booked == true && mounted) {
+                    await _loadUpcoming();
+                  }
                 },
               );
             },
@@ -437,8 +406,8 @@ class _AppointmentsPageState extends State<AppointmentsPage>
     );
   }
 
-  Route _buildFadeSlideRoute(Widget page) {
-    return PageRouteBuilder(
+  Route<T> _buildFadeSlideRoute<T>(Widget page) {
+    return PageRouteBuilder<T>(
       pageBuilder: (_, __, ___) => page,
       transitionDuration: const Duration(milliseconds: 280),
       reverseTransitionDuration: const Duration(milliseconds: 220),

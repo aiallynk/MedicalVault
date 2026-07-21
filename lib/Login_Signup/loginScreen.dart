@@ -266,16 +266,21 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               SafeArea(
                 child: SingleChildScrollView(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _animatedSection(
-                        order: 0,
-                        child: const SizedBox(height: 20),
-                      ),
-                      _animatedSection(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 480),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 22, vertical: 14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _animatedSection(
+                              order: 0,
+                              child: const SizedBox(height: 20),
+                            ),
+                            _animatedSection(
                         order: 1,
                         child: Center(
                           child: Column(
@@ -647,12 +652,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                     borderRadius: BorderRadius.circular(14),
                                   ),
                                 ),
-                                child: const Row(
+                                child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.account_circle_outlined),
-                                    SizedBox(width: 10),
-                                    Text('Log in with Google'),
+                                    const Icon(Icons.account_circle_outlined),
+                                    const SizedBox(width: 10),
+                                    Flexible(
+                                      child: Text(
+                                        'Log in with Google',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -689,8 +699,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 16),
-                    ],
+                            const SizedBox(height: 16),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),

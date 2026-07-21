@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -48,6 +49,20 @@ class FCMService {
       // Handle background messages when app is in background
       FirebaseMessaging.onMessageOpenedApp.listen(_handleBackgroundMessage);
 
+      // FCM can rotate the token at any time (app reinstall, data clear,
+      // periodic OS-driven rotation) independent of login/splash/signup.
+      // Without this listener the backend keeps sending pushes to a dead
+      // token indefinitely until the user's next login — this is the
+      // client-side half of keeping the registered token valid; the
+      // backend auto-clears a token once FCM reports it dead, but only
+      // this listener re-registers the new one.
+      _firebaseMessaging.onTokenRefresh.listen((token) {
+        if (kDebugMode) {
+          print('🔄 FCM token refreshed');
+        }
+        unawaited(_saveTokenToBackend(token));
+      });
+
       // Handle messages when app is terminated
       RemoteMessage? initialMessage =
           await _firebaseMessaging.getInitialMessage();
@@ -67,7 +82,7 @@ class FCMService {
       final token = await _firebaseMessaging.getToken();
       if (token != null) {
         if (kDebugMode) {
-          print('FCM Token: $token');
+        print('FCM token acquired (suffix: ${token.length > 6 ? token.substring(token.length - 6) : "masked"})');
         }
 
         // Save token to backend
@@ -91,7 +106,7 @@ class FCMService {
         print('🔑 FCM Token Registration Debug:');
         print('  - Auth Token: ${authToken != null ? "Present" : "Missing"}');
         print('  - User ID: ${userId ?? "Missing"}');
-        print('  - FCM Token: ${token.substring(0, 20)}...');
+        print('  - FCM Token suffix: ${token.length > 6 ? token.substring(token.length - 6) : "masked"}');
       }
 
       if (authToken == null || userId == null) {
@@ -109,15 +124,16 @@ class FCMService {
         },
         body: jsonEncode({
           'fcmToken': token,
-          'userId': userId,
-          'role': 'patient', // Flutter app is for patients
+          'platform': defaultTargetPlatform == TargetPlatform.iOS
+              ? 'ios'
+              : 'android',
         }),
       );
 
       if (kDebugMode) {
         print('📡 FCM Token Save Response:');
         print('  - Status Code: ${response.statusCode}');
-        print('  - Response Body: ${response.body}');
+        print('  - Response: ${response.statusCode == 200 ? "saved" : "rejected"}');
       }
 
       if (response.statusCode == 200) {
@@ -126,7 +142,7 @@ class FCMService {
         }
       } else {
         if (kDebugMode) {
-          print('❌ Failed to save FCM token: ${response.body}');
+          print('❌ Failed to save FCM token (HTTP ${response.statusCode})');
         }
       }
     } catch (e) {

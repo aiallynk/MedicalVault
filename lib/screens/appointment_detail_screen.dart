@@ -158,6 +158,7 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
     final linkedDocs = apt['linkedDocuments'] as List<dynamic>? ?? [];
 
     final isUpcoming = ['scheduled', 'confirmed', 'pending'].contains(status);
+    final canReschedule = ['scheduled', 'confirmed'].contains(status);
     final isCompleted = status == 'completed';
     final dateLabel = formatDateForContext(
       context,
@@ -228,26 +229,31 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            _buildDateSelector(),
-            const SizedBox(height: 14),
-            _buildTimeSelector(),
-            const SizedBox(height: 16),
-            CustomButton(
-              label: 'Book Appointment',
-              icon: Icons.calendar_month_rounded,
-              gradient: [
-                Theme.of(context).colorScheme.primary,
-                Theme.of(context).colorScheme.secondary,
-              ],
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Preferred slot selected for this doctor.'),
-                  ),
-                );
-              },
-            ),
+            if (canReschedule) ...[
+              const SizedBox(height: 16),
+              _buildDateSelector(),
+              const SizedBox(height: 14),
+              _buildTimeSelector(),
+              const SizedBox(height: 16),
+              CustomButton(
+                label: 'Request Reschedule',
+                icon: Icons.edit_calendar_rounded,
+                gradient: [
+                  Theme.of(context).colorScheme.primary,
+                  Theme.of(context).colorScheme.secondary,
+                ],
+                onPressed: _requestReschedule,
+              ),
+            ] else if (isUpcoming) ...[
+              const SizedBox(height: 16),
+              CustomCard(
+                glass: true,
+                child: const AppText(
+                  'This request is waiting for the doctor to confirm it. You can still cancel it if your plans change.',
+                  variant: AppTextVariant.caption,
+                ),
+              ),
+            ],
             if (isUpcoming && mode == 'online' && videoUrl.isNotEmpty) ...[
               const SizedBox(height: 12),
               SizedBox(
@@ -570,12 +576,17 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
   }
 
   void _initSchedule(Map<String, dynamic> apt) {
-    final baseDate =
-        _parseDate(apt['appointmentDate']) ?? nowForContextTimeZone(context);
-    _selectedDate = baseDate;
+    final now = nowForContextTimeZone(context);
+    final appointmentDate = _parseDate(apt['appointmentDate']);
+    final baseDate = appointmentDate != null && appointmentDate.isAfter(now)
+        ? appointmentDate
+        : now;
+    _selectedDate = DateTime(baseDate.year, baseDate.month, baseDate.day);
 
-    _dateOptions =
-        List.generate(7, (index) => baseDate.add(Duration(days: index - 2)));
+    _dateOptions = List.generate(
+      14,
+      (index) => DateTime(now.year, now.month, now.day + index),
+    );
 
     final time = apt['appointmentTime']?.toString();
     final normalized =
@@ -616,6 +627,69 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  Future<void> _requestReschedule() async {
+    final selectedDate = _selectedDate;
+    final selectedTime = _selectedTime;
+    if (selectedDate == null || selectedTime == null) return;
+
+    final reason = await _collectRescheduleReason();
+    if (reason == null || !mounted) return;
+
+    final response = await ApiService.requestReschedule(widget.appointmentId, {
+      'preferredDate':
+          '${selectedDate.year.toString().padLeft(4, '0')}-${selectedDate.month.toString().padLeft(2, '0')}-${selectedDate.day.toString().padLeft(2, '0')}',
+      'preferredTime': selectedTime,
+      'reason': reason,
+    });
+    if (!mounted) return;
+    final success = response?['success'] == true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text((response?['message'] ??
+                (success
+                    ? 'Reschedule request submitted.'
+                    : 'Unable to request a reschedule.'))
+            .toString()),
+      ),
+    );
+    if (success) {
+      widget.onUpdated?.call();
+      await _load();
+    }
+  }
+
+  Future<String?> _collectRescheduleReason() async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Request reschedule'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: 'Reason (optional)',
+            hintText: 'Tell the doctor why you need a new time',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Back'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Send request'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result;
   }
 
   Future<void> _cancelAppointment() async {

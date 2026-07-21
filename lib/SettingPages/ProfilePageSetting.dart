@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:lottie/lottie.dart';
-import '../Document_model.dart';
 import '../api_service.dart';
 import '../localization/app_localizations.dart';
 import '../services/secure_token_storage.dart';
@@ -21,12 +20,6 @@ class ProfileName extends StatefulWidget {
 class _ProfileNameState extends State<ProfileName> {
   late Map<String, dynamic> user;
   bool _loading = true;
-  Map<String, List<dynamic>> medicalRecords = {
-    "reports": [],
-    "prescriptions": [],
-    "bills": [],
-    "insurance": [],
-  };
   final ImagePicker _imagePicker = ImagePicker();
   File? _pendingProfileImage;
   bool _isUploadingProfileImage = false;
@@ -98,7 +91,6 @@ class _ProfileNameState extends State<ProfileName> {
     super.initState();
     user = widget.userData;
     _fetchProfile();
-    _fetchMedicalRecords();
   }
 
   Future<void> _fetchProfile() async {
@@ -135,66 +127,6 @@ class _ProfileNameState extends State<ProfileName> {
       print("❌ Fetch error: $e");
       if (!mounted) return;
       setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _fetchMedicalRecords() async {
-    try {
-      final email = user['email'];
-      if (email == null) {
-        print("❌ No email found in user data");
-        return;
-      }
-
-      print("🔍 Fetching medical records for email: $email");
-
-      // ✅ Use the new API service method
-      final response = await ApiService.fetchGroupedDocsByEmail(email);
-
-      print("📋 API Response: $response");
-
-      if (response != null && response['success'] == true) {
-        final records = response['records'];
-        print("📁 Records structure: $records");
-
-        if (records != null) {
-          if (!mounted) return;
-          setState(() {
-            medicalRecords = {
-              "reports":
-                  List<Map<String, dynamic>>.from(records["reports"] ?? []),
-              "prescriptions": List<Map<String, dynamic>>.from(
-                  records["prescriptions"] ?? []),
-              "bills": List<Map<String, dynamic>>.from(records["bills"] ?? []),
-              "insurance":
-                  List<Map<String, dynamic>>.from(records["insurance"] ?? []),
-            };
-          });
-
-          print(
-              "✅ Medical records loaded: Reports: ${medicalRecords["reports"]?.length ?? 0}, "
-              "Prescriptions: ${medicalRecords["prescriptions"]?.length ?? 0}, "
-              "Bills: ${medicalRecords["bills"]?.length ?? 0}, "
-              "Insurance: ${medicalRecords["insurance"]?.length ?? 0}");
-        } else {
-          print("❌ Records is null in response");
-        }
-      } else {
-        print("❌ Error fetching records - Response: $response");
-        print("❌ Success flag: ${response?['success']}");
-        print("❌ Error message: ${response?['msg']}");
-      }
-    } catch (e) {
-      print("❌ Medical Records fetch error: $e");
-      if (!mounted) return;
-      setState(() {
-        medicalRecords = {
-          "reports": [],
-          "prescriptions": [],
-          "bills": [],
-          "insurance": [],
-        };
-      });
     }
   }
 
@@ -564,7 +496,6 @@ class _ProfileNameState extends State<ProfileName> {
                       ),
                     ),
                   ),
-                _medicalRecordsSection(),
                 const SizedBox(height: 24),
                 // Modern edit all button
                 Container(
@@ -954,83 +885,6 @@ class _ProfileNameState extends State<ProfileName> {
               );
             }).toList(),
           );
-  }
-
-  Widget _medicalRecordsSection() {
-    final l10n = context.l10n;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _sectionTitle(l10n.t('profile.medicalRecords')),
-        _recordCategoryTile(l10n.t('documents.category.reports'),
-            medicalRecords["reports"] ?? []),
-        _recordCategoryTile(l10n.t('documents.category.prescriptions'),
-            medicalRecords["prescriptions"] ?? []),
-        _recordCategoryTile(
-            l10n.t('documents.category.bills'), medicalRecords["bills"] ?? []),
-        _recordCategoryTile(l10n.t('documents.category.insurance'),
-            medicalRecords["insurance"] ?? []),
-      ],
-    );
-  }
-
-  Widget _recordCategoryTile(String title, List items) {
-    final l10n = context.l10n;
-    return Card(
-      color: Theme.of(context).cardColor,
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      child: ExpansionTile(
-        title: Text(title,
-            style: Theme.of(context)
-                .textTheme
-                .titleSmall
-                ?.copyWith(fontWeight: FontWeight.bold)),
-        children: items.isEmpty
-            ? [
-                ListTile(
-                    title: Text(l10n.t('profile.noRecords'),
-                        style: Theme.of(context).textTheme.bodyMedium))
-              ]
-            : items.map<Widget>((item) {
-                // ✅ Convert to Document object for consistent handling
-                final document = Document.fromApi(item);
-
-                return ListTile(
-                  leading: _getFileIcon(document.fileType ?? ""),
-                  title: Text(
-                      document.title ?? l10n.t('documentDetail.untitled'),
-                      style: Theme.of(context).textTheme.bodyLarge),
-                  subtitle: Text(
-                      "${document.date ?? l10n.t('profile.unknownDate')} • ${document.fileType ?? l10n.t('profile.unknownType')}",
-                      style: Theme.of(context).textTheme.bodySmall),
-                  // ✅ No onTap - just show metadata as requested
-                );
-              }).toList(),
-      ),
-    );
-  }
-
-  // ✅ Helper method to get appropriate file icon
-  Widget _getFileIcon(String fileType) {
-    final type = fileType.toLowerCase();
-    final theme = Theme.of(context);
-    final iconColor = theme.iconTheme.color ?? theme.colorScheme.onSurface;
-
-    if (type.contains("pdf")) {
-      return Icon(Icons.picture_as_pdf, color: Colors.red.shade700);
-    } else if (type.startsWith("image/")) {
-      return Icon(Icons.image,
-          color: theme.brightness == Brightness.dark
-              ? Colors.blue.shade300
-              : Colors.blue.shade700);
-    } else if (type.contains("word")) {
-      return Icon(Icons.description,
-          color: theme.brightness == Brightness.dark
-              ? Colors.blue.shade300
-              : Colors.blue.shade700);
-    } else {
-      return Icon(Icons.insert_drive_file, color: iconColor.withOpacity(0.7));
-    }
   }
 
   // Quick edit field dialog

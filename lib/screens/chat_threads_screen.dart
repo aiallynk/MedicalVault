@@ -39,6 +39,26 @@ class _ChatThreadsScreenState extends State<ChatThreadsScreen> {
     );
   }
 
+  /// Cheap content signature used to decide whether a poll actually changed
+  /// anything worth rebuilding for — avoids calling setState() (and thus
+  /// rebuilding/repainting every thread row) every 4 seconds when the
+  /// server returned the same data as before.
+  String _threadsSignature(List<Map<String, dynamic>> threads) {
+    final buffer = StringBuffer();
+    for (final thread in threads) {
+      buffer
+        ..write(thread['counterpartId'])
+        ..write('|')
+        ..write(thread['unreadCount'])
+        ..write('|')
+        ..write(thread['lastMessage'])
+        ..write('|')
+        ..write(thread['lastAt'])
+        ..write(';');
+    }
+    return buffer.toString();
+  }
+
   Future<void> _loadThreads({bool silent = false}) async {
     if (!silent && mounted) {
       setState(() {
@@ -50,10 +70,14 @@ class _ChatThreadsScreenState extends State<ChatThreadsScreen> {
     try {
       final threads = await ApiService.fetchChatThreads();
       if (!mounted) return;
-      setState(() {
-        _threads = threads;
-        _loading = false;
-      });
+      final changed = _threadsSignature(threads) != _threadsSignature(_threads);
+      if (changed || _loading || _error != null) {
+        setState(() {
+          _threads = threads;
+          _loading = false;
+          _error = null;
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -61,6 +85,91 @@ class _ChatThreadsScreenState extends State<ChatThreadsScreen> {
         _error = e.toString();
       });
     }
+  }
+
+  Future<void> _confirmDeleteThread(
+    Map<String, dynamic> thread, {
+    required String mode,
+  }) async {
+    final counterpartId = (thread["counterpartId"] ?? "").toString().trim();
+    if (counterpartId.isEmpty) return;
+
+    final isEveryone = mode == 'everyone';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(isEveryone ? 'Delete for everyone?' : 'Delete chat?'),
+        content: Text(
+          isEveryone
+              ? 'This will permanently delete this conversation for both you and the other person. This cannot be undone.'
+              : 'This will remove the conversation from your chat list. The other person will still see it. It will reappear if a new message arrives.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: isEveryone
+                ? FilledButton.styleFrom(
+                    backgroundColor: Theme.of(dialogContext).colorScheme.error,
+                  )
+                : null,
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final success = await ApiService.deleteChatThread(counterpartId, mode: mode);
+    if (!mounted) return;
+    if (success) {
+      setState(() {
+        _threads.removeWhere(
+          (item) => (item["counterpartId"] ?? "").toString() == counterpartId,
+        );
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not delete chat. Please try again.')),
+      );
+    }
+  }
+
+  void _showThreadOptions(Map<String, dynamic> thread) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Delete for me'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _confirmDeleteThread(thread, mode: 'me');
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.delete_forever_outlined,
+                color: Theme.of(sheetContext).colorScheme.error,
+              ),
+              title: Text(
+                'Delete for everyone',
+                style: TextStyle(color: Theme.of(sheetContext).colorScheme.error),
+              ),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _confirmDeleteThread(thread, mode: 'everyone');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _openThread(Map<String, dynamic> thread) {
@@ -182,6 +291,7 @@ class _ChatThreadsScreenState extends State<ChatThreadsScreen> {
 
                       return ListTile(
                         onTap: () => _openThread(thread),
+                        onLongPress: () => _showThreadOptions(thread),
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 14,
                           vertical: 4,
@@ -205,34 +315,56 @@ class _ChatThreadsScreenState extends State<ChatThreadsScreen> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        trailing: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              _formatMessageTime(thread["lastAt"]),
-                              style: theme.textTheme.bodySmall,
-                            ),
-                            const SizedBox(height: 4),
-                            if (unread > 0)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 7,
-                                  vertical: 2,
+                            Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  _formatMessageTime(thread["lastAt"]),
+                                  style: theme.textTheme.bodySmall,
                                 ),
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.error,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  unread > 99 ? "99+" : "$unread",
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
+                                const SizedBox(height: 4),
+                                if (unread > 0)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 7,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: theme.colorScheme.error,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      unread > 99 ? "99+" : "$unread",
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
                                   ),
+                              ],
+                            ),
+                            PopupMenuButton<String>(
+                              tooltip: 'Chat options',
+                              padding: EdgeInsets.zero,
+                              icon: const Icon(Icons.more_vert, size: 20),
+                              onSelected: (mode) =>
+                                  _confirmDeleteThread(thread, mode: mode),
+                              itemBuilder: (_) => const [
+                                PopupMenuItem(
+                                  value: 'me',
+                                  child: Text('Delete for me'),
                                 ),
-                              ),
+                                PopupMenuItem(
+                                  value: 'everyone',
+                                  child: Text('Delete for everyone'),
+                                ),
+                              ],
+                            ),
                           ],
                         ),
                       );

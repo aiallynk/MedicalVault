@@ -13,6 +13,7 @@ import java.io.IOException
 internal class Installer(private val context: Context, private var activity: Activity?) {
     private var sessionId: Int = 0
     private lateinit var session: PackageInstaller.Session
+    private var sessionCreated: Boolean = false
     private lateinit var packageManager: PackageManager
     private lateinit var packageInstaller: PackageInstaller
 
@@ -36,28 +37,33 @@ internal class Installer(private val context: Context, private var activity: Act
             session.commit(statusReceiver)
             session.close()
         } catch (e: IOException) {
+            // session was assigned by createSession() before loadAPKFile()
+            // could throw, so it is always safe to abandon here.
+            if (sessionCreated) session.abandon()
             throw RuntimeException("IO exception", e)
         } catch (e: Exception) {
-            session.abandon()
+            // session may not have been assigned yet (e.g. activity!! threw
+            // because the activity was null, or createSession() itself
+            // failed) — calling session.abandon() on an unassigned
+            // lateinit var would throw UninitializedPropertyAccessException
+            // and mask the real cause instead of propagating it.
+            if (sessionCreated) session.abandon()
             throw e
         }
     }
 
     private fun createSession(activity: Activity): PackageInstaller.Session {
-        try {
-            packageManager = activity.packageManager
-            packageInstaller = packageManager.packageInstaller
-            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        packageManager = activity.packageManager
+        packageInstaller = packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                params.setInstallReason(PackageManager.INSTALL_REASON_USER)
-            }
-
-            sessionId = packageInstaller.createSession(params)
-            session = packageInstaller.openSession(sessionId)
-        } catch (e: Exception) {
-            throw e
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            params.setInstallReason(PackageManager.INSTALL_REASON_USER)
         }
+
+        sessionId = packageInstaller.createSession(params)
+        session = packageInstaller.openSession(sessionId)
+        sessionCreated = true
         return session
     }
 

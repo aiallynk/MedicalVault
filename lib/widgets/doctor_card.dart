@@ -13,7 +13,9 @@ class DoctorCard extends StatelessWidget {
 
   final String name;
   final String specialization;
-  final double rating;
+  // Ratings are intentionally optional: the directory must never invent a
+  // clinical rating when the backend has not provided a verified one.
+  final double? rating;
   final String? imageUrl;
   final VoidCallback? onTap;
   final bool highlighted;
@@ -24,7 +26,7 @@ class DoctorCard extends StatelessWidget {
     super.key,
     required this.name,
     required this.specialization,
-    required this.rating,
+    this.rating,
     this.imageUrl,
     this.onTap,
     this.highlighted = false,
@@ -115,32 +117,35 @@ class DoctorCard extends StatelessWidget {
                     : null,
               ),
               const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: highlighted
-                      ? Colors.white.withValues(alpha: 0.22)
-                      : primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(999),
+              if (rating != null)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: highlighted
+                        ? Colors.white.withValues(alpha: 0.22)
+                        : primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.star_rounded,
+                        size: 14,
+                        color:
+                            highlighted ? Colors.white : Colors.amber.shade700,
+                      ),
+                      const SizedBox(width: 2),
+                      AppText(
+                        rating!.toStringAsFixed(1),
+                        variant: AppTextVariant.caption,
+                        color: contentColor,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ],
+                  ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.star_rounded,
-                      size: 14,
-                      color: highlighted ? Colors.white : Colors.amber.shade700,
-                    ),
-                    const SizedBox(width: 2),
-                    AppText(
-                      rating.toStringAsFixed(1),
-                      variant: AppTextVariant.caption,
-                      color: contentColor,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ],
-                ),
-              ),
             ],
           ),
           SizedBox(height: compact ? 10 : 14),

@@ -36,6 +36,7 @@ import 'package:hello/providers/timezone_provider.dart';
 import 'package:hello/widgets/app_text.dart';
 import 'package:hello/widgets/settings_primitives.dart';
 import 'package:hello/features/family_care/screens/family_profile_access_controls_screen.dart';
+import 'package:hello/SettingPages/SessionDataManagementScreen.dart';
 import 'package:hello/features/family_care/screens/family_care_notification_preferences_screen.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -1032,9 +1033,19 @@ class _SettingsPageState extends State<SettingsPage> {
                   icon: Icons.family_restroom_rounded,
                   title: sectionContext.l10n.auto('Family and Profile Access'),
                   subtitle: sectionContext.l10n.auto('Control incoming requests, consent, permissions, and active family connections.'),
+                  showDivider: true,
                   onTap: () => pushSettingsRoute(
                     sectionContext,
                     const FamilyProfileAccessControlsScreen(),
+                  ),
+                ),
+                SettingsItemTile(
+                  icon: Icons.shield_outlined,
+                  title: sectionContext.l10n.auto('Session Data Management'),
+                  subtitle: sectionContext.l10n.auto('Set your default document, health-data, and doctor-capability sharing choices for future sessions.'),
+                  onTap: () => pushSettingsRoute(
+                    sectionContext,
+                    const SessionDataManagementScreen(),
                   ),
                 ),
               ],
@@ -1162,7 +1173,6 @@ class _SettingsPageState extends State<SettingsPage> {
               "emergencyContact": _userData["emergencyContact"],
               "medicalHistory": _userData["medicalHistory"] ?? [],
               "medications": _userData["medications"] ?? [],
-              "medicalRecords": _userData["medicalRecords"] ?? [],
               "profilePicture": _userData["profilePicture"],
               "profilePictureUrl": _userData["profilePictureUrl"],
             },

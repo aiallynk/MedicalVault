@@ -2,25 +2,31 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/responsive/responsive.dart';
+
 class DashboardFabPopover extends StatelessWidget {
   const DashboardFabPopover({
     super.key,
     required this.isOpen,
     required this.animation,
+    required this.onMessages,
     required this.onAiAssistant,
     required this.onNearbyHealthcare,
     required this.onProducts,
     required this.onAppointments,
     required this.onFamilyCare,
+    this.unreadMessageCount = 0,
   });
 
   final bool isOpen;
   final Animation<double> animation;
+  final VoidCallback onMessages;
   final VoidCallback onAiAssistant;
   final VoidCallback onNearbyHealthcare;
   final VoidCallback onProducts;
   final VoidCallback onAppointments;
   final VoidCallback onFamilyCare;
+  final int unreadMessageCount;
 
   static const _fabSize = 58.0;
   static const _fabToCardGap = 12.0;
@@ -29,9 +35,11 @@ class DashboardFabPopover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
-    final rightInset = media.size.width >= 600 ? 24.0 : 16.0;
+    final rightInset = responsiveValue(context, compact: 16.0, medium: 24.0, expanded: 24.0);
     final maxCardWidth = math.max(0.0, media.size.width - rightInset - 12.0);
-    final cardWidth = math.min(260.0, maxCardWidth);
+    final preferredCardWidth =
+        responsiveValue(context, compact: 260.0, medium: 300.0, expanded: 320.0);
+    final cardWidth = math.min(preferredCardWidth, maxCardWidth);
     final bottom = _bottomNavigationOffset +
         media.padding.bottom +
         _fabSize +
@@ -42,6 +50,12 @@ class DashboardFabPopover extends StatelessWidget {
     );
 
     final actions = <_DashboardFabAction>[
+      _DashboardFabAction(
+        icon: Icons.chat_bubble_outline_rounded,
+        label: 'Messages',
+        onTap: onMessages,
+        badgeCount: unreadMessageCount,
+      ),
       _DashboardFabAction(
         icon: Icons.smart_toy_rounded,
         label: 'AI Assistant',
@@ -189,6 +203,26 @@ class _DashboardFabActionRow extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (action.badgeCount > 0) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    constraints: const BoxConstraints(minWidth: 20),
+                    decoration: BoxDecoration(
+                      color: scheme.error,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      action.badgeCount > 99 ? '99+' : '${action.badgeCount}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(width: 8),
                 Icon(
                   Icons.chevron_right_rounded,
@@ -209,9 +243,11 @@ class _DashboardFabAction {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final int badgeCount;
 }

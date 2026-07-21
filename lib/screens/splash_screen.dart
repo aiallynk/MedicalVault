@@ -415,7 +415,7 @@ class _SplashScreenState extends State<SplashScreen>
         checksumVerified = true;
         readyToInstall = true;
         statusText =
-            'Installation not completed. Tap Install again to continue.';
+            'A previously downloaded update is ready. Tap to install.';
       }
     }
 
@@ -538,7 +538,12 @@ class _SplashScreenState extends State<SplashScreen>
                     onPressed: downloading || installing
                         ? null
                         : () async {
-                            if (!readyToInstall || downloadedApkPath == null) {
+                            String? apkPath = downloadedApkPath;
+
+                            // Only re-download if we don't already have a
+                            // verified APK on disk from a previous tap in
+                            // this same dialog session.
+                            if (!readyToInstall || apkPath == null) {
                               setDialogState(() {
                                 downloading = true;
                                 progress = 0;
@@ -570,16 +575,19 @@ class _SplashScreenState extends State<SplashScreen>
                                 return;
                               }
 
+                              apkPath = downloadResult.apkPath;
                               setDialogState(() {
                                 progress = 1;
                                 readyToInstall = true;
-                                downloadedApkPath = downloadResult.apkPath;
-                                statusText =
-                                    'Update verified. Tap Install to continue.';
+                                downloadedApkPath = apkPath;
                               });
-                              return;
                             }
 
+                            // Install immediately, in the same tap — the
+                            // user should not have to notice a relabeled
+                            // button and tap again. This is what actually
+                            // hands off to the Android installer, which
+                            // then closes and relaunches the app.
                             setDialogState(() {
                               installing = true;
                               progress = 1;
@@ -589,7 +597,7 @@ class _SplashScreenState extends State<SplashScreen>
                             final installResult =
                                 await _appUpdateService.launchInstallUpdate(
                               info: info,
-                              apkPath: downloadedApkPath!,
+                              apkPath: apkPath!,
                             );
 
                             if (!mounted) return;
@@ -636,10 +644,10 @@ class _SplashScreenState extends State<SplashScreen>
                             });
                           },
                     child: Text(
-                      downloading || installing
-                          ? '${l10n.t('update.action.updateNow')}...'
-                          : readyToInstall
-                              ? 'Install'
+                      downloading
+                          ? 'Downloading...'
+                          : installing
+                              ? 'Installing...'
                               : l10n.t('update.action.updateNow'),
                     ),
                   ),

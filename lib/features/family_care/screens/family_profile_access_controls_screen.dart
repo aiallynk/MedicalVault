@@ -20,6 +20,7 @@ class _FamilyProfileAccessControlsScreenState
   Map<String, List<FamilyInvitation>> _invitations = const {};
   bool _loading = true;
   bool _saving = false;
+  bool _responding = false;
   String? _error;
 
   @override
@@ -73,6 +74,8 @@ class _FamilyProfileAccessControlsScreenState
   }
 
   Future<void> _respond(FamilyInvitation invitation, bool accept) async {
+    if (_responding) return;
+    setState(() => _responding = true);
     try {
       await _repository.respondToInvitation(invitation.id, accept: accept);
       await _load();
@@ -80,6 +83,8 @@ class _FamilyProfileAccessControlsScreenState
       if (mounted)
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _responding = false);
     }
   }
 
@@ -305,6 +310,7 @@ class _FamilyProfileAccessControlsScreenState
                       _InvitationSection(
                         title: 'Pending incoming requests',
                         invitations: _invitations['incoming'] ?? const [],
+                        busy: _responding,
                         onAccept: (item) => _respond(item, true),
                         onDecline: (item) => _respond(item, false),
                       ),
@@ -361,12 +367,14 @@ class _InvitationSection extends StatelessWidget {
       required this.invitations,
       this.onAccept,
       this.onDecline,
-      this.onCancel});
+      this.onCancel,
+      this.busy = false});
   final String title;
   final List<FamilyInvitation> invitations;
   final ValueChanged<FamilyInvitation>? onAccept;
   final ValueChanged<FamilyInvitation>? onDecline;
   final ValueChanged<FamilyInvitation>? onCancel;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -393,12 +401,12 @@ class _InvitationSection extends StatelessWidget {
                 if (onAccept != null)
                   IconButton(
                       tooltip: 'Accept',
-                      onPressed: () => onAccept!(item),
+                      onPressed: busy ? null : () => onAccept!(item),
                       icon: const Icon(Icons.check)),
                 if (onDecline != null)
                   IconButton(
                       tooltip: 'Decline',
-                      onPressed: () => onDecline!(item),
+                      onPressed: busy ? null : () => onDecline!(item),
                       icon: const Icon(Icons.close)),
                 if (onCancel != null)
                   TextButton(
