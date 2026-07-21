@@ -603,15 +603,10 @@ class SettingsVisuals {
       chevron: theme.colorScheme.onSurface.withValues(alpha: 0.34),
       secondaryText: theme.textTheme.bodyMedium?.color ??
           theme.colorScheme.onSurface.withValues(alpha: 0.72),
-      cardShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(
-            alpha: brightness == Brightness.dark ? 0.2 : 0.05,
-          ),
-          blurRadius: brightness == Brightness.dark ? 22 : 16,
-          offset: const Offset(0, 8),
-        ),
-      ],
+      // Settings cards use a border and translucent surface for separation.
+      // A blurred black shadow extends outside the rounded clip and reads as a
+      // rectangular dark patch, particularly in dark/glass themes.
+      cardShadow: const [],
     );
   }
 }
