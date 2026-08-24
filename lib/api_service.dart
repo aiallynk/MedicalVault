@@ -40,6 +40,13 @@ class DocumentUploadResult {
   });
 }
 
+class DocumentPage {
+  final List<Document> documents;
+  final bool hasMore;
+
+  const DocumentPage({required this.documents, required this.hasMore});
+}
+
 class ApiService {
   static void _debugLog(String message) {
     if (!kReleaseMode) {
@@ -1203,6 +1210,47 @@ class ApiService {
       return data['success'] == true;
     } catch (e) {
       _debugLog("updateShowTopDoctorsPreference error: $e");
+      return false;
+    }
+  }
+
+  /// Fetches whether this account has turned off the AI/keyword medical
+  /// document check on upload (Settings > Controls). The backend still
+  /// always runs malware/magic-byte security checks regardless of this flag.
+  static Future<bool?> fetchAiMedicalCheckDisabled() async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.get(
+        Uri.parse("$authUrl/upload-preferences"),
+        headers: headers,
+      );
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final data = _decodeJsonMap(res.body);
+      final prefs = data['uploadPreferences'];
+      if (prefs is Map && prefs['aiMedicalCheckDisabled'] is bool) {
+        return prefs['aiMedicalCheckDisabled'] as bool;
+      }
+    } catch (e) {
+      _debugLog("fetchAiMedicalCheckDisabled error: $e");
+    }
+    return null;
+  }
+
+  /// Persists the "Turn off AI file check while uploading" toggle to the
+  /// account, so it stays consistent across logout/login and across devices.
+  static Future<bool> updateAiMedicalCheckDisabled(bool value) async {
+    try {
+      final headers = await _authHeaders();
+      final res = await http.put(
+        Uri.parse("$authUrl/upload-preferences"),
+        headers: {...headers, "Content-Type": "application/json"},
+        body: jsonEncode({'aiMedicalCheckDisabled': value}),
+      );
+      if (res.statusCode < 200 || res.statusCode >= 300) return false;
+      final data = _decodeJsonMap(res.body);
+      return data['success'] == true;
+    } catch (e) {
+      _debugLog("updateAiMedicalCheckDisabled error: $e");
       return false;
     }
   }
@@ -2487,6 +2535,65 @@ class ApiService {
 
     final cached = await getCachedMyDocs(normalizedUserId);
     return cached;
+  }
+
+  /// Fetches one small, server-authorized document page for scrollable vault
+  /// views. Unlike [fetchMyDocs], this never hydrates the entire vault.
+  static Future<DocumentPage?> fetchMyDocsPage(
+    String userId, {
+    int page = 1,
+    int limit = 30,
+    String? category,
+    String? search,
+    String? after,
+    String sort = 'newest',
+  }) async {
+    final normalizedUserId = _normalizeUserCacheId(userId);
+    if (normalizedUserId.isEmpty) return null;
+    final safePage = page < 1 ? 1 : page;
+    final safeLimit = limit.clamp(1, 50);
+    try {
+      Future<http.Response> fetch() async {
+        final headers = await _authHeaders();
+        final uri = Uri.parse('$filesUrl/user/$normalizedUserId').replace(
+          queryParameters: {
+            'page': '$safePage',
+            'limit': '$safeLimit',
+            'sort': sort,
+            if (category != null && category.trim().isNotEmpty)
+              'category': category.trim(),
+            if (search != null && search.trim().isNotEmpty)
+              'search': search.trim(),
+            if (after != null && after.trim().isNotEmpty) 'after': after.trim(),
+          },
+        );
+        return http
+            .get(uri, headers: headers)
+            .timeout(_documentsRequestTimeout);
+      }
+
+      var response = await fetch();
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        if (await _refreshAccessTokenIfPossible()) response = await fetch();
+      }
+      if (response.statusCode == 200) {
+        final data = _decodeJsonMap(response.body);
+        final pagination = _mapOf(data['pagination']);
+        return DocumentPage(
+          documents: _documentsFromDynamicList(data['documents']),
+          hasMore: pagination['hasMore'] == true,
+        );
+      }
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        final data = _decodeJsonMap(response.body);
+        _emitSessionInvalid(
+          (data['message'] ?? _defaultSessionExpiredMessage).toString(),
+        );
+      }
+    } catch (error) {
+      _debugLog('Fetch document page error: $error');
+    }
+    return null;
   }
 
   static Future<Map<String, dynamic>?> fetchGroupedDocs(String userId) async {
@@ -3892,25 +3999,41 @@ class ApiService {
     return null;
   }
 
-  static Future<Map<String, dynamic>?> approveGuestClinicalSession(String sessionId) async {
+  static Future<Map<String, dynamic>?> approveGuestClinicalSession(
+      String sessionId) async {
     try {
       final headers = await _authHeaders();
-      final response = await http.post(Uri.parse('$guestSessionsUrl/$sessionId/approve'), headers: headers);
+      final response = await http.post(
+          Uri.parse('$guestSessionsUrl/$sessionId/approve'),
+          headers: headers);
       final data = _decodeJsonMap(response.body);
-      return response.statusCode == 200 && data['success'] == true ? data : null;
-    } catch (e) { _debugLog('approveGuestClinicalSession error: $e'); return null; }
+      return response.statusCode == 200 && data['success'] == true
+          ? data
+          : null;
+    } catch (e) {
+      _debugLog('approveGuestClinicalSession error: $e');
+      return null;
+    }
   }
 
-  static Future<Map<String, dynamic>?> fetchGuestClinicalSession(String sessionId) async {
+  static Future<Map<String, dynamic>?> fetchGuestClinicalSession(
+      String sessionId) async {
     try {
       final headers = await _authHeaders();
-      final response = await http.get(Uri.parse('$guestSessionsUrl/$sessionId'), headers: headers);
+      final response = await http.get(Uri.parse('$guestSessionsUrl/$sessionId'),
+          headers: headers);
       final data = _decodeJsonMap(response.body);
-      return response.statusCode == 200 && data['success'] == true ? _mapOf(data['session']) : null;
-    } catch (e) { _debugLog('fetchGuestClinicalSession error: $e'); return null; }
+      return response.statusCode == 200 && data['success'] == true
+          ? _mapOf(data['session'])
+          : null;
+    } catch (e) {
+      _debugLog('fetchGuestClinicalSession error: $e');
+      return null;
+    }
   }
 
-  static Future<bool> endGuestClinicalSession(String sessionId, {bool revoke = false, String reason = ''}) async {
+  static Future<bool> endGuestClinicalSession(String sessionId,
+      {bool revoke = false, String reason = ''}) async {
     try {
       final headers = await _authHeaders();
       final response = await http.post(
@@ -3920,7 +4043,10 @@ class ApiService {
       );
       final data = _decodeJsonMap(response.body);
       return response.statusCode == 200 && data['success'] == true;
-    } catch (e) { _debugLog('endGuestClinicalSession error: $e'); return false; }
+    } catch (e) {
+      _debugLog('endGuestClinicalSession error: $e');
+      return false;
+    }
   }
 
   // ---------------- PUBLIC CONFIG ----------------

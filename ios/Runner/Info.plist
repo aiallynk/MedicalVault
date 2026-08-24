@@ -45,6 +45,10 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Medical Vault uses the camera to capture medical documents and profile images.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Medical Vault uses the photo library to select medical documents and profile images.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Medical Vault uses your location to find nearby healthcare services and include coordinates in SOS requests.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -55,6 +59,7 @@
 	<array>
 		<string>sms</string>
 		<string>tel</string>
+		<string>mailto</string>
 		<string>comgooglemaps</string>
 	</array>
 	<key>UIBackgroundModes</key>

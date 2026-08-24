@@ -39,9 +39,9 @@ class FamilyMemberCard extends StatelessWidget {
           'Could not load'
         ),
       FamilyDataState.noData => (
-          Colors.grey,
-          Icons.info_outline_rounded,
-          'No medicine data'
+          colorScheme.onSurfaceVariant,
+          Icons.medication_outlined,
+          'No medicines due today'
         ),
     };
     return Card(
@@ -91,27 +91,42 @@ class FamilyMemberCard extends StatelessWidget {
                   const Icon(Icons.chevron_right_rounded),
                 ],
               ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _Metric(
-                      icon: Icons.medication_outlined,
-                      text: member.medicinesScheduled == 0
-                          ? 'No doses scheduled'
-                          : '${member.medicinesTaken} of ${member.medicinesScheduled} taken'),
-                  _Metric(
-                      icon: Icons.calendar_today_outlined,
-                      text: member.appointmentsToday == 0
-                          ? 'No appointment today'
-                          : '${member.appointmentsToday} today'),
-                  if (member.recentDocuments > 0)
-                    _Metric(
+              if (member.medicinesScheduled > 0 ||
+                  member.appointmentsToday > 0 ||
+                  member.upcomingAppointments > 0 ||
+                  member.recentDocuments > 0) ...[
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (member.medicinesScheduled > 0)
+                      _Metric(
+                        icon: Icons.medication_outlined,
+                        text:
+                            '${member.medicinesTaken}/${member.medicinesScheduled} doses recorded',
+                      ),
+                    if (member.appointmentsToday > 0)
+                      _Metric(
+                        icon: Icons.calendar_today_outlined,
+                        text:
+                            '${member.appointmentsToday} appointment${member.appointmentsToday == 1 ? '' : 's'} today',
+                      )
+                    else if (member.upcomingAppointments > 0)
+                      _Metric(
+                        icon: Icons.event_outlined,
+                        text:
+                            '${member.upcomingAppointments} upcoming appointment${member.upcomingAppointments == 1 ? '' : 's'}',
+                      ),
+                    if (member.recentDocuments > 0)
+                      _Metric(
                         icon: Icons.description_outlined,
-                        text: '${member.recentDocuments} recent records'),
-                ],
-              ),
+                        text:
+                            '${member.recentDocuments} recent record${member.recentDocuments == 1 ? '' : 's'}',
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

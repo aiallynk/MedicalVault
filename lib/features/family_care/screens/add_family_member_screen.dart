@@ -8,7 +8,14 @@ import '../data/models/family_care_extensions.dart';
 import '../providers/family_dashboard_provider.dart';
 
 class AddFamilyMemberScreen extends StatefulWidget {
-  const AddFamilyMemberScreen({super.key});
+  const AddFamilyMemberScreen({
+    super.key,
+    this.managedProfileCount,
+    this.managedProfileLimit,
+  });
+
+  final int? managedProfileCount;
+  final int? managedProfileLimit;
 
   @override
   State<AddFamilyMemberScreen> createState() => _AddFamilyMemberScreenState();
@@ -33,6 +40,21 @@ class _AddFamilyMemberScreenState extends State<AddFamilyMemberScreen> {
   String _gender = '';
   String _bloodGroup = '';
   String? _mode;
+
+  bool get _managedProfileLimitReached =>
+      widget.managedProfileCount != null &&
+      widget.managedProfileLimit != null &&
+      widget.managedProfileCount! >= widget.managedProfileLimit!;
+
+  String get _managedProfileAvailability {
+    if (widget.managedProfileCount == null ||
+        widget.managedProfileLimit == null) {
+      return 'Create a dependent profile without login credentials or a separate user account.';
+    }
+    return _managedProfileLimitReached
+        ? 'You are using ${widget.managedProfileCount} of ${widget.managedProfileLimit} managed profiles.'
+        : 'Create a dependent profile without login credentials or a separate user account. ${widget.managedProfileCount} of ${widget.managedProfileLimit} used.';
+  }
 
   @override
   void didChangeDependencies() {
@@ -156,19 +178,22 @@ class _AddFamilyMemberScreenState extends State<AddFamilyMemberScreen> {
                       .headlineSmall
                       ?.copyWith(fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
-              const Text('Choose an existing account only when the person can approve the connection.'),
+              const Text(
+                  'Choose an existing account only when the person can approve the connection.'),
               const SizedBox(height: 24),
               _ChoiceCard(
                 icon: Icons.person_search_outlined,
                 title: 'Existing Medical Vault User',
-                subtitle: 'Find their Medical Vault ID, registered email, or phone number and send a consent request.',
+                subtitle:
+                    'Find their Medical Vault ID, registered email, or phone number and send a consent request.',
                 onTap: () => setState(() => _mode = 'existing'),
               ),
               const SizedBox(height: 14),
               _ChoiceCard(
                 icon: Icons.family_restroom_rounded,
                 title: 'Create Managed Family Profile',
-                subtitle: 'Create a dependent profile without login credentials or a separate user account.',
+                subtitle: _managedProfileAvailability,
+                enabled: !_managedProfileLimitReached,
                 onTap: () => setState(() => _mode = 'managed'),
               ),
             ],
@@ -389,31 +414,51 @@ class _ChoiceCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.enabled = true,
   });
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) => Card(
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: onTap,
+          onTap: enabled ? onTap : null,
           child: Padding(
             padding: const EdgeInsets.all(18),
             child: Row(children: [
-              Icon(icon, size: 32, color: Theme.of(context).colorScheme.primary),
+              Icon(icon,
+                  size: 32,
+                  color: enabled
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.38)),
               const SizedBox(width: 16),
-              Expanded(child: Column(
+              Expanded(
+                  child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 5),
                   Text(subtitle),
                 ],
               )),
-              const Icon(Icons.chevron_right),
+              Icon(enabled ? Icons.chevron_right : Icons.info_outline,
+                  color: enabled
+                      ? null
+                      : Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.38)),
             ]),
           ),
         ),
@@ -421,7 +466,8 @@ class _ChoiceCard extends StatelessWidget {
 }
 
 class ExistingMedicalVaultUserConnectionScreen extends StatefulWidget {
-  const ExistingMedicalVaultUserConnectionScreen({super.key, required this.onBack});
+  const ExistingMedicalVaultUserConnectionScreen(
+      {super.key, required this.onBack});
   final VoidCallback onBack;
 
   @override
@@ -455,12 +501,18 @@ class _ExistingMedicalVaultUserConnectionScreenState
       _results = const [];
     });
     try {
-      final results = await context.read<FamilyDashboardProvider>().searchExistingUsers(query);
+      final results = await context
+          .read<FamilyDashboardProvider>()
+          .searchExistingUsers(query);
       if (mounted) setState(() => _results = results);
     } on FamilyCareApiException catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
     } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not search Medical Vault accounts.')));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Could not search Medical Vault accounts.')));
     } finally {
       if (mounted) setState(() => _searching = false);
     }
@@ -468,21 +520,30 @@ class _ExistingMedicalVaultUserConnectionScreenState
 
   Future<void> _send() async {
     final selected = _selected;
-    if (selected == null || _relationship.text.trim().isEmpty || _sending) return;
+    if (selected == null || _relationship.text.trim().isEmpty || _sending)
+      return;
     setState(() => _sending = true);
     try {
-      await context.read<FamilyDashboardProvider>().requestExistingUserConnection(
+      await context
+          .read<FamilyDashboardProvider>()
+          .requestExistingUserConnection(
             targetUserId: selected.id,
             relationship: _relationship.text.trim(),
             role: _role,
           );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Consent request sent. No profile data is shared until acceptance.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Consent request sent. No profile data is shared until acceptance.')));
       Navigator.pop(context);
     } on FamilyCareApiException catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
     } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not send the connection request.')));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Could not send the connection request.')));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -491,56 +552,92 @@ class _ExistingMedicalVaultUserConnectionScreenState
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
-          leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: widget.onBack),
+          leading: IconButton(
+              icon: const Icon(Icons.arrow_back), onPressed: widget.onBack),
           title: const Text('Connect Medical Vault User'),
         ),
         body: SafeArea(
           child: ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              const Text('Search uses an exact Medical Vault ID, registered email, or phone number. Results are masked to protect privacy.'),
+              const Text(
+                  'Search uses an exact Medical Vault ID, registered email, or phone number. Results are masked to protect privacy.'),
               const SizedBox(height: 16),
               Row(children: [
-                Expanded(child: TextField(
+                Expanded(
+                    child: TextField(
                   controller: _query,
                   textInputAction: TextInputAction.search,
                   onSubmitted: (_) => _search(),
-                  decoration: const InputDecoration(labelText: 'Medical Vault ID, email, or phone', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'Medical Vault ID, email, or phone',
+                      border: OutlineInputBorder()),
                 )),
                 const SizedBox(width: 8),
-                FilledButton(onPressed: _searching ? null : _search, child: _searching ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Search')),
+                FilledButton(
+                    onPressed: _searching ? null : _search,
+                    child: _searching
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Search')),
               ]),
-              if (!_searching && _results.isEmpty) const Padding(padding: EdgeInsets.only(top: 14), child: Text('No account is selected.')), 
+              if (!_searching && _results.isEmpty)
+                const Padding(
+                    padding: EdgeInsets.only(top: 14),
+                    child: Text('No account is selected.')),
               for (final result in _results)
                 RadioListTile<FamilyUserSearchResult>(
                   value: result,
                   groupValue: _selected,
                   onChanged: (value) => setState(() => _selected = value),
                   title: Text(result.displayName),
-                  subtitle: Text([result.maskedEmail, result.maskedPhone].where((item) => item.isNotEmpty).join(' • ')),
+                  subtitle: Text([result.maskedEmail, result.maskedPhone]
+                      .where((item) => item.isNotEmpty)
+                      .join(' • ')),
                 ),
               const SizedBox(height: 16),
               TextField(
                 controller: _relationship,
                 onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(labelText: 'Your relationship', hintText: 'Daughter, spouse, caregiver…', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                    labelText: 'Your relationship',
+                    hintText: 'Daughter, spouse, caregiver…',
+                    border: OutlineInputBorder()),
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
                 initialValue: _role,
-                decoration: const InputDecoration(labelText: 'Requested role', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                    labelText: 'Requested role', border: OutlineInputBorder()),
                 items: const [
-                  DropdownMenuItem(value: 'primaryCaregiver', child: Text('Primary caregiver')),
-                  DropdownMenuItem(value: 'secondaryCaregiver', child: Text('Secondary caregiver')),
+                  DropdownMenuItem(
+                      value: 'primaryCaregiver',
+                      child: Text('Primary caregiver')),
+                  DropdownMenuItem(
+                      value: 'secondaryCaregiver',
+                      child: Text('Secondary caregiver')),
                   DropdownMenuItem(value: 'viewer', child: Text('Viewer')),
-                  DropdownMenuItem(value: 'emergencyContact', child: Text('Emergency contact')),
+                  DropdownMenuItem(
+                      value: 'emergencyContact',
+                      child: Text('Emergency contact')),
                 ],
-                onChanged: _sending ? null : (value) => setState(() => _role = value ?? _role),
+                onChanged: _sending
+                    ? null
+                    : (value) => setState(() => _role = value ?? _role),
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
-                onPressed: _selected == null || _relationship.text.trim().isEmpty || _sending ? null : _send,
-                icon: _sending ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send_outlined),
+                onPressed: _selected == null ||
+                        _relationship.text.trim().isEmpty ||
+                        _sending
+                    ? null
+                    : _send,
+                icon: _sending
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.send_outlined),
                 label: const Text('Send consent request'),
               ),
             ],

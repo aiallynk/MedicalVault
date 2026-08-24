@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -34,11 +33,21 @@ class CategoryVaultPage extends StatefulWidget {
 
 class _CategoryVaultPageState extends State<CategoryVaultPage>
     with WidgetsBindingObserver {
+  static const _documentPageSize = 24;
   List<Document> files = [];
   List<Document> filteredFiles = [];
   StreamSubscription<dynamic>? _connectivitySubscription;
+  final ScrollController _scrollController = ScrollController();
+  Timer? _searchDebounce;
   bool _wasConnected = true;
   bool _isLoading = true;
+  bool _isLoadingMore = false;
+  bool _isDocumentRequestInFlight = false;
+  bool _reloadAfterCurrentRequest = false;
+  bool _hasMoreDocuments = true;
+  int _nextDocumentPage = 1;
+  int _documentQueryRevision = 0;
+  String _resolvedUserId = '';
   final Dio dio = Dio();
 
   // Time filter options
@@ -122,6 +131,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
     WidgetsBinding.instance.addObserver(this);
     _initializeConnectivityObserver();
     _searchController.addListener(_onSearchChanged);
+    _scrollController.addListener(_onScroll);
     _loadFiles();
   }
 
@@ -130,6 +140,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.userId.trim() != widget.userId.trim() ||
         oldWidget.category != widget.category) {
+      _resolvedUserId = '';
       _loadFiles();
     }
   }
@@ -146,8 +157,18 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
     WidgetsBinding.instance.removeObserver(this);
     _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
+    _searchDebounce?.cancel();
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients ||
+        _scrollController.position.extentAfter > 360) {
+      return;
+    }
+    unawaited(_loadMoreFiles());
   }
 
   void _initializeConnectivityObserver() {
@@ -232,62 +253,126 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
     }).toList();
   }
 
-  Future<void> _loadFiles() async {
-    if (mounted && files.isEmpty) {
-      setState(() => _isLoading = true);
+  Future<String> _resolveDocumentUserId() async {
+    if (_resolvedUserId.isNotEmpty) return _resolvedUserId;
+    final prefs = await SharedPreferences.getInstance();
+    final fromWidget = widget.userId.trim();
+    final fromActiveProfile = (prefs.getString('activeProfileId') ?? '').trim();
+    final fromPrefs = (prefs.getString('userId') ?? '').trim();
+    _resolvedUserId = fromWidget.isNotEmpty
+        ? fromWidget
+        : (fromActiveProfile.isNotEmpty ? fromActiveProfile : fromPrefs);
+    if (_resolvedUserId.isEmpty) {
+      final remoteUser = await ApiService.me();
+      _resolvedUserId = (remoteUser?['id']?.toString() ??
+              remoteUser?['_id']?.toString() ??
+              '')
+          .trim();
+      if (_resolvedUserId.isNotEmpty) {
+        await prefs.setString('userId', _resolvedUserId);
+      }
     }
+    return _resolvedUserId;
+  }
 
+  String _apiCategory() => switch (widget.category.toLowerCase()) {
+        'reports' || 'report' => 'report',
+        'prescriptions' || 'prescription' => 'prescription',
+        'bills' || 'bill' => 'bill',
+        'insurance' || 'insurance details' => 'insurance',
+        _ => widget.category,
+      };
+
+  String _apiSort() => switch (_selectedSort) {
+        'Oldest First' => 'oldest',
+        'Name A-Z' => 'name_asc',
+        'Name Z-A' => 'name_desc',
+        _ => 'newest',
+      };
+
+  String? _dateAfter() {
+    final days = switch (selectedTimeFilter) {
+      '1 Month' => 30,
+      '3 Months' => 90,
+      '6 Months' => 180,
+      '12 Months' => 365,
+      _ => 0,
+    };
+    if (days == 0) return null;
+    return nowForContextTimeZone(context)
+        .subtract(Duration(days: days))
+        .toUtc()
+        .toIso8601String();
+  }
+
+  Future<void> _loadFiles() async {
+    final queryRevision = ++_documentQueryRevision;
+    if (_isDocumentRequestInFlight) {
+      _reloadAfterCurrentRequest = true;
+      return;
+    }
+    _nextDocumentPage = 1;
+    _hasMoreDocuments = true;
+    if (mounted) setState(() => _isLoading = files.isEmpty);
+    await _fetchFilesPage(reset: true, queryRevision: queryRevision);
+  }
+
+  Future<void> _loadMoreFiles() async {
+    if (_isLoading || _isLoadingMore || !_hasMoreDocuments) return;
+    await _fetchFilesPage(reset: false, queryRevision: _documentQueryRevision);
+  }
+
+  Future<void> _fetchFilesPage({
+    required bool reset,
+    required int queryRevision,
+  }) async {
+    if (_isDocumentRequestInFlight ||
+        (!reset && (_isLoadingMore || !_hasMoreDocuments))) {
+      return;
+    }
+    _isDocumentRequestInFlight = true;
+    if (!reset && mounted) setState(() => _isLoadingMore = true);
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final fromWidget = widget.userId.trim();
-      final fromActiveProfile =
-          (prefs.getString("activeProfileId") ?? "").trim();
-      final fromPrefs = (prefs.getString("userId") ?? "").trim();
-      var resolvedUserId = fromWidget.isNotEmpty
-          ? fromWidget
-          : (fromActiveProfile.isNotEmpty ? fromActiveProfile : fromPrefs);
-
-      if (resolvedUserId.isEmpty) {
-        final remoteUser = await ApiService.me();
-        resolvedUserId = (remoteUser?['id']?.toString() ??
-                remoteUser?['_id']?.toString() ??
-                '')
-            .trim();
-        if (resolvedUserId.isNotEmpty) {
-          await prefs.setString("userId", resolvedUserId);
-          if (remoteUser != null && remoteUser.isNotEmpty) {
-            await prefs.setString("userData", jsonEncode(remoteUser));
-          }
+      final userId = await _resolveDocumentUserId();
+      if (userId.isEmpty) return;
+      final result = await ApiService.fetchMyDocsPage(
+        userId,
+        page: _nextDocumentPage,
+        limit: _documentPageSize,
+        category: _apiCategory(),
+        search: _searchController.text,
+        after: _dateAfter(),
+        sort: _apiSort(),
+      );
+      if (result == null || queryRevision != _documentQueryRevision) return;
+      final seenIds = <String>{};
+      final next = reset ? <Document>[] : List<Document>.of(files);
+      for (final document in next) {
+        if (document.id != null) seenIds.add(document.id!);
+      }
+      for (final document in result.documents) {
+        if (document.id == null || seenIds.add(document.id!)) {
+          next.add(document);
         }
       }
-
-      if (resolvedUserId.isEmpty) {
-        if (mounted) setState(() => _isLoading = false);
-        return;
-      }
-
-      // First paint from local cache for offline/slow network UX.
-      final cachedDocs = await ApiService.getCachedMyDocs(resolvedUserId);
-      if (cachedDocs.isNotEmpty && mounted) {
-        files = _filterDocsByCurrentCategory(cachedDocs);
+      files = next;
+      _nextDocumentPage += 1;
+      _hasMoreDocuments = result.hasMore;
+      if (mounted) setState(() => filteredFiles = _recomputeFilteredFiles());
+    } catch (error) {
+      debugPrint('Error loading document page: $error');
+    } finally {
+      _isDocumentRequestInFlight = false;
+      if (mounted) {
         setState(() {
-          filteredFiles = _recomputeFilteredFiles();
           _isLoading = false;
+          _isLoadingMore = false;
         });
       }
-
-      final docs = await ApiService.fetchMyDocs(resolvedUserId);
-      final categoryFiltered = _filterDocsByCurrentCategory(docs);
-
-      if (!mounted) return;
-      setState(() {
-        files = categoryFiltered;
-        filteredFiles = _recomputeFilteredFiles();
-        _isLoading = false;
-      });
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-      debugPrint("Error loading files: $e");
+      if (_reloadAfterCurrentRequest && mounted) {
+        _reloadAfterCurrentRequest = false;
+        unawaited(_loadFiles());
+      }
     }
   }
 
@@ -319,6 +404,7 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
         selectedTimeFilter = newFilter;
         filteredFiles = _recomputeFilteredFiles();
       });
+      unawaited(_loadFiles());
     }
   }
 
@@ -328,12 +414,15 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
         _selectedSort = newSort;
         filteredFiles = _recomputeFilteredFiles();
       });
+      unawaited(_loadFiles());
     }
   }
 
   void _onSearchChanged() {
-    setState(() {
-      filteredFiles = _recomputeFilteredFiles();
+    if (mounted) setState(() => filteredFiles = _recomputeFilteredFiles());
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (mounted) unawaited(_loadFiles());
     });
   }
 
@@ -1351,8 +1440,25 @@ class _CategoryVaultPageState extends State<CategoryVaultPage>
                             ),
                           )
                         : ListView.builder(
-                            itemCount: filteredFiles.length,
+                            controller: _scrollController,
+                            itemCount: filteredFiles.length +
+                                (_hasMoreDocuments ? 1 : 0),
                             itemBuilder: (context, index) {
+                              if (index == filteredFiles.length) {
+                                return Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Center(
+                                    child: _isLoadingMore
+                                        ? const SizedBox.square(
+                                            dimension: 22,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const SizedBox.shrink(),
+                                  ),
+                                );
+                              }
                               final file = filteredFiles[index];
                               final title = file.title ??
                                   file.fileName ??

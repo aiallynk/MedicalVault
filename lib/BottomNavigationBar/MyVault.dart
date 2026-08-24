@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -235,10 +234,20 @@ class MyVault extends StatefulWidget {
 }
 
 class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
+  static const _documentPageSize = 24;
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   StreamSubscription<dynamic>? _connectivitySubscription;
+  Timer? _searchDebounce;
   bool _wasConnected = true;
   bool _isLoading = true;
+  bool _isLoadingMore = false;
+  bool _isDocumentRequestInFlight = false;
+  bool _reloadAfterCurrentRequest = false;
+  bool _hasMoreDocuments = true;
+  int _nextDocumentPage = 1;
+  int _documentQueryRevision = 0;
+  String _resolvedUserId = '';
 
   final List<String> _categories = [
     "All",
@@ -322,10 +331,8 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initializeConnectivityObserver();
-    _searchController.addListener(() {
-      if (!mounted) return;
-      setState(() {});
-    });
+    _searchController.addListener(_onSearchChanged);
+    _scrollController.addListener(_onScroll);
     _loadDocumentsFromAPI();
   }
 
@@ -333,6 +340,7 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
   void didUpdateWidget(covariant MyVault oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.userId.trim() != widget.userId.trim()) {
+      _resolvedUserId = '';
       _loadDocumentsFromAPI();
     }
   }
@@ -349,8 +357,26 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
+    _searchDebounce?.cancel();
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients ||
+        _scrollController.position.extentAfter > 360) {
+      return;
+    }
+    unawaited(_loadMoreDocuments());
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (mounted) unawaited(_loadDocumentsFromAPI());
+    });
   }
 
   void _initializeConnectivityObserver() {
@@ -388,62 +414,124 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
     return true;
   }
 
-  Future<void> _loadDocumentsFromAPI() async {
-    if (mounted && MyVault._allDocuments.isEmpty) {
-      setState(() => _isLoading = true);
+  Future<String> _resolveDocumentUserId() async {
+    if (_resolvedUserId.isNotEmpty) return _resolvedUserId;
+    final prefs = await SharedPreferences.getInstance();
+    final fromWidget = widget.userId.trim();
+    final fromActiveProfile = (prefs.getString('activeProfileId') ?? '').trim();
+    final fromPrefs = (prefs.getString('userId') ?? '').trim();
+    _resolvedUserId = fromWidget.isNotEmpty
+        ? fromWidget
+        : (fromActiveProfile.isNotEmpty ? fromActiveProfile : fromPrefs);
+    if (_resolvedUserId.isEmpty) {
+      final remoteUser = await ApiService.me();
+      _resolvedUserId = (remoteUser?['id']?.toString() ??
+              remoteUser?['_id']?.toString() ??
+              '')
+          .trim();
+      if (_resolvedUserId.isNotEmpty) {
+        await prefs.setString('userId', _resolvedUserId);
+      }
     }
+    return _resolvedUserId;
+  }
 
+  String _apiSort() => switch (_selectedSort) {
+        'Oldest First' => 'oldest',
+        'Name A-Z' => 'name_asc',
+        'Name Z-A' => 'name_desc',
+        _ => 'newest',
+      };
+
+  String? _dateAfter() {
+    final days = switch (_selectedTimeFilter) {
+      '1 Month' => 30,
+      '3 Months' => 90,
+      '6 Months' => 180,
+      '12 Months' => 365,
+      _ => 0,
+    };
+    if (days == 0) return null;
+    return nowForContextTimeZone(context)
+        .subtract(Duration(days: days))
+        .toUtc()
+        .toIso8601String();
+  }
+
+  Future<void> _loadDocumentsFromAPI() async {
+    final queryRevision = ++_documentQueryRevision;
+    if (_isDocumentRequestInFlight) {
+      _reloadAfterCurrentRequest = true;
+      return;
+    }
+    _nextDocumentPage = 1;
+    _hasMoreDocuments = true;
+    if (mounted) setState(() => _isLoading = MyVault._allDocuments.isEmpty);
+    await _fetchDocumentPage(reset: true, queryRevision: queryRevision);
+  }
+
+  Future<void> _loadMoreDocuments() async {
+    if (_isLoading || _isLoadingMore || !_hasMoreDocuments) return;
+    await _fetchDocumentPage(
+      reset: false,
+      queryRevision: _documentQueryRevision,
+    );
+  }
+
+  Future<void> _fetchDocumentPage({
+    required bool reset,
+    required int queryRevision,
+  }) async {
+    if (_isDocumentRequestInFlight ||
+        (!reset && (_isLoadingMore || !_hasMoreDocuments))) {
+      return;
+    }
+    _isDocumentRequestInFlight = true;
+    if (!reset && mounted) setState(() => _isLoadingMore = true);
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final fromWidget = widget.userId.trim();
-      final fromActiveProfile =
-          (prefs.getString("activeProfileId") ?? "").trim();
-      final fromPrefs = (prefs.getString("userId") ?? "").trim();
-      var resolvedUserId = fromWidget.isNotEmpty
-          ? fromWidget
-          : (fromActiveProfile.isNotEmpty ? fromActiveProfile : fromPrefs);
-
-      if (resolvedUserId.isEmpty) {
-        final remoteUser = await ApiService.me();
-        resolvedUserId = (remoteUser?['id']?.toString() ??
-                remoteUser?['_id']?.toString() ??
-                '')
-            .trim();
-        if (resolvedUserId.isNotEmpty) {
-          await prefs.setString("userId", resolvedUserId);
-          if (remoteUser != null && remoteUser.isNotEmpty) {
-            await prefs.setString("userData", jsonEncode(remoteUser));
-          }
+      final userId = await _resolveDocumentUserId();
+      if (userId.isEmpty) return;
+      final result = await ApiService.fetchMyDocsPage(
+        userId,
+        page: _nextDocumentPage,
+        limit: _documentPageSize,
+        category: _selectedCategory == 'All' ? null : _selectedCategory,
+        search: _searchController.text,
+        after: _dateAfter(),
+        sort: _apiSort(),
+      );
+      if (result == null || queryRevision != _documentQueryRevision) return;
+      final seenIds = <String>{};
+      final next =
+          reset ? <Document>[] : List<Document>.of(MyVault._allDocuments);
+      for (final document in next) {
+        if (document.id != null) seenIds.add(document.id!);
+      }
+      for (final document in result.documents) {
+        if (document.id == null || seenIds.add(document.id!)) {
+          next.add(document);
         }
       }
-
-      if (resolvedUserId.isEmpty) {
-        debugPrint("No userId available for document loading");
-        if (mounted) setState(() => _isLoading = false);
-        return;
+      MyVault._allDocuments
+        ..clear()
+        ..addAll(next);
+      _nextDocumentPage += 1;
+      _hasMoreDocuments = result.hasMore;
+    } catch (error) {
+      debugPrint('Error loading document page: $error');
+    } finally {
+      _isDocumentRequestInFlight = false;
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isLoadingMore = false;
+        });
       }
-
-      // Load cached documents first so offline/slow network still shows data.
-      final cachedDocs = await ApiService.getCachedMyDocs(resolvedUserId);
-      if (cachedDocs.isNotEmpty) {
-        MyVault._allDocuments
-          ..clear()
-          ..addAll(cachedDocs);
-        if (mounted) setState(() => _isLoading = false);
+      if (_reloadAfterCurrentRequest && mounted) {
+        _reloadAfterCurrentRequest = false;
+        unawaited(_loadDocumentsFromAPI());
       }
-
-      final docs = await ApiService.fetchMyDocs(resolvedUserId);
-      if (docs.isNotEmpty || MyVault._allDocuments.isEmpty) {
-        MyVault._allDocuments
-          ..clear()
-          ..addAll(docs);
-      }
-      debugPrint("Loaded ${docs.length} documents for user: $resolvedUserId");
-    } catch (e) {
-      debugPrint("Error loading documents: $e");
     }
-
-    if (mounted) setState(() => _isLoading = false);
   }
 
   List<Document> _filterAndSortDocuments() {
@@ -452,11 +540,10 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
 
     // Step 1: Filter by category
     var docs = _selectedCategory == "All"
-        ? MyVault._allDocuments
+        ? List<Document>.of(MyVault._allDocuments)
         : MyVault._allDocuments
-            .where((doc) =>
-                (doc.category ?? '').toLowerCase() ==
-                _selectedCategory.toLowerCase())
+            .where(
+                (doc) => doc.normalizedType == _selectedCategory.toLowerCase())
             .toList();
 
     // Step 2: Apply time filter
@@ -1228,6 +1315,7 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
                         setState(() {
                           _selectedCategory = cat;
                         });
+                        unawaited(_loadDocumentsFromAPI());
                       },
                     ),
                   );
@@ -1275,6 +1363,7 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
                           onChanged: (val) {
                             if (val != null) {
                               setState(() => _selectedTimeFilter = val);
+                              unawaited(_loadDocumentsFromAPI());
                             }
                           },
                         ),
@@ -1316,6 +1405,7 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
                           onChanged: (val) {
                             if (val != null) {
                               setState(() => _selectedSort = val);
+                              unawaited(_loadDocumentsFromAPI());
                             }
                           },
                         ),
@@ -1339,8 +1429,24 @@ class _MyVaultState extends State<MyVault> with WidgetsBindingObserver {
                   : docs.isEmpty
                       ? Center(child: Text(l10n.t('myVault.noDocuments')))
                       : ListView.builder(
-                          itemCount: docs.length,
+                          controller: _scrollController,
+                          itemCount: docs.length + (_hasMoreDocuments ? 1 : 0),
                           itemBuilder: (context, index) {
+                            if (index == docs.length) {
+                              return Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Center(
+                                  child: _isLoadingMore
+                                      ? const SizedBox.square(
+                                          dimension: 22,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const SizedBox.shrink(),
+                                ),
+                              );
+                            }
                             final doc = docs[index];
                             final categoryLabel = _localizedCategoryLabel(
                                 doc.category ?? '', l10n);

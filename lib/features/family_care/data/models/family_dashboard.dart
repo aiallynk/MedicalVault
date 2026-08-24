@@ -35,8 +35,8 @@ class FamilyDashboardMember {
     final appointments = _map(json['appointments']);
     final state = switch ((medication['state'] ?? '').toString()) {
       'complete' => FamilyDataState.complete,
-      'needs_attention' => FamilyDataState.needsAttention,
-      'upcoming' => FamilyDataState.upcoming,
+      'needs_attention' || 'attention' => FamilyDataState.needsAttention,
+      'upcoming' || 'scheduled' => FamilyDataState.upcoming,
       'restricted' => FamilyDataState.restricted,
       'failed' => FamilyDataState.failed,
       _ => FamilyDataState.noData,
@@ -58,11 +58,24 @@ class FamilyDashboard {
   final String date;
   final String timezone;
   final List<FamilyDashboardMember> members;
+  final int? managedProfileCount;
+  final int? managedProfileLimit;
 
-  const FamilyDashboard(
-      {required this.date, required this.timezone, required this.members});
+  const FamilyDashboard({
+    required this.date,
+    required this.timezone,
+    required this.members,
+    this.managedProfileCount,
+    this.managedProfileLimit,
+  });
+
+  bool get canCreateManagedProfile =>
+      managedProfileLimit == null || managedProfileCount == null
+          ? true
+          : managedProfileCount! < managedProfileLimit!;
 
   factory FamilyDashboard.fromJson(Map<String, dynamic> json) {
+    final managedProfiles = _map(json['managedProfiles']);
     return FamilyDashboard(
       date: (json['date'] ?? '').toString(),
       timezone: (json['timezone'] ?? 'Asia/Kolkata').toString(),
@@ -70,6 +83,12 @@ class FamilyDashboard {
           .whereType<Map>()
           .map((item) => FamilyDashboardMember.fromJson(_map(item)))
           .toList(growable: false),
+      managedProfileCount: managedProfiles.containsKey('used')
+          ? _integer(managedProfiles['used'])
+          : null,
+      managedProfileLimit: managedProfiles.containsKey('limit')
+          ? _integer(managedProfiles['limit'])
+          : null,
     );
   }
 }

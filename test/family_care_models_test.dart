@@ -33,6 +33,36 @@ void main() {
     expect(dashboard.members.single.medicationState, FamilyDataState.noData);
   });
 
+  test('dashboard maps the backend medication status names and profile usage',
+      () {
+    final dashboard = FamilyDashboard.fromJson({
+      'date': '2026-07-10',
+      'timezone': 'Asia/Kolkata',
+      'managedProfiles': {'used': 2, 'limit': 5},
+      'profiles': [
+        {
+          'profile': {'_id': 'p1', 'displayName': 'Father'},
+          'medicationStatus': {'state': 'attention'},
+          'appointments': {'today': [], 'upcoming': []},
+          'recentDocuments': [],
+        },
+        {
+          'profile': {'_id': 'p2', 'displayName': 'Mother'},
+          'medicationStatus': {'state': 'scheduled'},
+          'appointments': {'today': [], 'upcoming': []},
+          'recentDocuments': [],
+        },
+      ],
+    });
+
+    expect(dashboard.members.first.medicationState,
+        FamilyDataState.needsAttention);
+    expect(dashboard.members.last.medicationState, FamilyDataState.upcoming);
+    expect(dashboard.managedProfileCount, 2);
+    expect(dashboard.managedProfileLimit, 5);
+    expect(dashboard.canCreateManagedProfile, isTrue);
+  });
+
   test('active patient provider switches health subject without auth changes',
       () {
     final provider = ActivePatientProfileProvider();

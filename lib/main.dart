@@ -30,6 +30,7 @@ import 'services/offline/offline_storage_service.dart';
 import 'services/offline/offline_sync_engine.dart';
 import 'services/session_conflict_service.dart';
 import 'widgets/ai_floating_button.dart';
+import 'widgets/privacy_guard_overlay.dart';
 import 'features/family_care/providers/active_patient_profile_provider.dart';
 import 'features/family_care/providers/family_dashboard_provider.dart';
 
@@ -141,11 +142,13 @@ class MyApp extends StatelessWidget {
 
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: systemUiStyle,
-              child: DraggableAIAssistantOverlay(
-                enabled: false,
-                routeNameListenable: appRouteObserver.currentRouteName,
-                visibleRouteNames: const {'/dashboard'},
-                child: child ?? const SizedBox.shrink(),
+              child: PrivacyGuardOverlay(
+                child: DraggableAIAssistantOverlay(
+                  enabled: false,
+                  routeNameListenable: appRouteObserver.currentRouteName,
+                  visibleRouteNames: const {'/dashboard'},
+                  child: child ?? const SizedBox.shrink(),
+                ),
               ),
             );
           },

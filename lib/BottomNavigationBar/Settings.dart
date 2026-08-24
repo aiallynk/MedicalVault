@@ -29,6 +29,7 @@ import 'package:hello/api_service.dart';
 import 'package:hello/BottomNavigationBar/dashboard1.dart';
 import 'package:hello/Notifications/notification_settings_service.dart';
 import 'package:hello/services/dashboard_display_settings.dart';
+import 'package:hello/services/upload_ai_check_settings.dart';
 import 'package:hello/Login_Signup/logout_service.dart';
 import 'package:hello/localization/app_localizations.dart';
 import 'package:hello/providers/language_provider.dart';
@@ -38,6 +39,7 @@ import 'package:hello/widgets/settings_primitives.dart';
 import 'package:hello/features/family_care/screens/family_profile_access_controls_screen.dart';
 import 'package:hello/SettingPages/SessionDataManagementScreen.dart';
 import 'package:hello/features/family_care/screens/family_care_notification_preferences_screen.dart';
+import 'package:hello/features/family_care/data/family_care_repository.dart';
 
 class SettingsPage extends StatefulWidget {
   final Map<String, dynamic> userData; // 👈 full user data map
@@ -54,6 +56,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool systemNotifs = true;
   bool familyCareNotifs = true;
   bool showTopDoctors = true;
+  bool aiMedicalCheckDisabled = false;
+  bool isUpdatingAiMedicalCheck = false;
   bool allowMultipleSessions = false;
   bool isLoadingSessionPolicy = false;
   bool isUpdatingSessionPolicy = false;
@@ -69,6 +73,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final NotificationSettingsService _settingsService =
       NotificationSettingsService();
   final LogoutService _logoutService = LogoutService();
+  final FamilyCareRepository _familyCareRepository = FamilyCareRepository();
 
   @override
   void initState() {
@@ -82,6 +87,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _loadLinkedProfiles();
     _loadNotificationSettings();
     _loadDashboardDisplaySettings();
+    _loadAiMedicalCheckSetting();
     _loadDeviceSessions();
     _loadSessionPolicy();
     _refreshUserFromPrefs();
@@ -207,6 +213,42 @@ class _SettingsPageState extends State<SettingsPage> {
     _notifySectionRefresh();
   }
 
+  Future<void> _loadAiMedicalCheckSetting() async {
+    final disabled = await UploadAiCheckSettings().getDisabled();
+    if (!mounted) return;
+    setState(() {
+      aiMedicalCheckDisabled = disabled;
+    });
+    _notifySectionRefresh();
+  }
+
+  Future<void> _updateAiMedicalCheckDisabled(bool value) async {
+    if (isUpdatingAiMedicalCheck) return;
+    if (!mounted) return;
+    setState(() {
+      isUpdatingAiMedicalCheck = true;
+    });
+    _notifySectionRefresh();
+
+    final saved = await UploadAiCheckSettings().setDisabled(value);
+    if (!mounted) return;
+    setState(() {
+      if (saved) aiMedicalCheckDisabled = value;
+      isUpdatingAiMedicalCheck = false;
+    });
+    _notifySectionRefresh();
+
+    if (!saved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n.auto('Unable to update upload settings. Please try again.'),
+          ),
+        ),
+      );
+    }
+  }
+
   Future<void> _loadNotificationSettings() async {
     if (!mounted) return;
     setState(() {
@@ -223,6 +265,27 @@ class _SettingsPageState extends State<SettingsPage> {
         familyCareNotifs = settings['familyCare'] ?? true;
       });
       _notifySectionRefresh();
+
+      // The on/off switch here must reflect the server-enforced preference
+      // (the one that actually stops Family Care push notifications from
+      // being sent), not just the local device flag that only hides the
+      // in-app banner while the app is open.
+      try {
+        final preferences = await _familyCareRepository.getNotificationPreferences();
+        if (!mounted) return;
+        if (familyCareNotifs != preferences.enabled) {
+          await _settingsService.updateNotificationSetting(
+            'familyCare',
+            preferences.enabled,
+          );
+        }
+        setState(() {
+          familyCareNotifs = preferences.enabled;
+        });
+        _notifySectionRefresh();
+      } catch (e) {
+        print("Error loading Family Care notification preference: $e");
+      }
     } catch (e) {
       print("Error loading notification settings: $e");
     } finally {
@@ -365,6 +428,14 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _updateNotificationSetting(String type, bool value) async {
     try {
+      if (type == 'familyCare') {
+        // This is the server-enforced switch: the scheduler checks it before
+        // sending any Family Care push, so turning it off here actually
+        // stops the notifications instead of only hiding the in-app banner.
+        await _familyCareRepository.updateNotificationPreferences({
+          'enabled': value,
+        });
+      }
       await _settingsService.updateNotificationSetting(type, value);
       setState(() {
         switch (type) {
@@ -1010,47 +1081,86 @@ class _SettingsPageState extends State<SettingsPage> {
       refreshListenable: _sectionRefreshToken,
       contentBuilder: (sectionContext) {
         final scheme = Theme.of(sectionContext).colorScheme;
-        return SettingsSection(
-          title: sectionContext.l10n.auto('Dashboard'),
-          subtitle: sectionContext.l10n.auto(
-            'Choose which sections show up on your home dashboard.',
-          ),
-          child: SettingsGroupCard(
-            child: Column(
-              children: [
-                SettingsSwitchTile(
-                  icon: Icons.medical_services_outlined,
-                  title: sectionContext.l10n.auto('Top Doctors'),
-                  subtitle: sectionContext.l10n.auto(
-                    'Show the "Top Doctors" section on your dashboard.',
-                  ),
-                  value: showTopDoctors,
-                  accentColor: scheme.primary,
-                  onChanged: _updateShowTopDoctors,
+        return Column(
+          children: [
+            SettingsSection(
+              title: sectionContext.l10n.auto('Dashboard'),
+              subtitle: sectionContext.l10n.auto(
+                'Choose which sections show up on your home dashboard.',
+              ),
+              child: SettingsGroupCard(
+                child: Column(
+                  children: [
+                    SettingsSwitchTile(
+                      icon: Icons.medical_services_outlined,
+                      title: sectionContext.l10n.auto('Top Doctors'),
+                      subtitle: sectionContext.l10n.auto(
+                        'Show the "Top Doctors" section on your dashboard.',
+                      ),
+                      value: showTopDoctors,
+                      accentColor: scheme.primary,
+                      onChanged: _updateShowTopDoctors,
+                    ),
+                    const Divider(height: 1),
+                    SettingsItemTile(
+                      icon: Icons.family_restroom_rounded,
+                      title: sectionContext.l10n.auto('Family and Profile Access'),
+                      subtitle: sectionContext.l10n.auto('Control incoming requests, consent, permissions, and active family connections.'),
+                      showDivider: true,
+                      onTap: () => pushSettingsRoute(
+                        sectionContext,
+                        const FamilyProfileAccessControlsScreen(),
+                      ),
+                    ),
+                    SettingsItemTile(
+                      icon: Icons.shield_outlined,
+                      title: sectionContext.l10n.auto('Session Data Management'),
+                      subtitle: sectionContext.l10n.auto('Set your default document, health-data, and doctor-capability sharing choices for future sessions.'),
+                      onTap: () => pushSettingsRoute(
+                        sectionContext,
+                        const SessionDataManagementScreen(),
+                      ),
+                    ),
+                  ],
                 ),
-                const Divider(height: 1),
-                SettingsItemTile(
-                  icon: Icons.family_restroom_rounded,
-                  title: sectionContext.l10n.auto('Family and Profile Access'),
-                  subtitle: sectionContext.l10n.auto('Control incoming requests, consent, permissions, and active family connections.'),
-                  showDivider: true,
-                  onTap: () => pushSettingsRoute(
-                    sectionContext,
-                    const FamilyProfileAccessControlsScreen(),
-                  ),
-                ),
-                SettingsItemTile(
-                  icon: Icons.shield_outlined,
-                  title: sectionContext.l10n.auto('Session Data Management'),
-                  subtitle: sectionContext.l10n.auto('Set your default document, health-data, and doctor-capability sharing choices for future sessions.'),
-                  onTap: () => pushSettingsRoute(
-                    sectionContext,
-                    const SessionDataManagementScreen(),
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
+            const SizedBox(height: SettingsTokens.sectionGap),
+            SettingsSection(
+              title: sectionContext.l10n.auto('Uploads'),
+              subtitle: sectionContext.l10n.auto(
+                'Control how documents are checked when you upload them.',
+              ),
+              child: SettingsGroupCard(
+                child: Column(
+                  children: [
+                    SettingsSwitchTile(
+                      icon: Icons.rule_folder_outlined,
+                      title: sectionContext.l10n.auto('Turn off AI file check while uploading'),
+                      subtitle: aiMedicalCheckDisabled
+                          ? sectionContext.l10n.auto(
+                              'Off: any file you upload is saved directly, without the AI medical-document check. Use this if the check is misbehaving.',
+                            )
+                          : sectionContext.l10n.auto(
+                              'On: uploads are verified as medical documents (reports, prescriptions, bills, insurance) before being saved.',
+                            ),
+                      value: aiMedicalCheckDisabled,
+                      accentColor: scheme.error,
+                      onChanged: (value) {
+                        if (isUpdatingAiMedicalCheck) return;
+                        _updateAiMedicalCheckDisabled(value);
+                      },
+                    ),
+                    if (isUpdatingAiMedicalCheck)
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 0, 16, 14),
+                        child: LinearProgressIndicator(minHeight: 2),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         );
       },
     );

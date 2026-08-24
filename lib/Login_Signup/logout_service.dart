@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hello/services/secure_token_storage.dart';
 import 'package:hello/services/ai_service.dart';
 import 'package:hello/services/dashboard_display_settings.dart';
+import 'package:hello/services/upload_ai_check_settings.dart';
 import 'package:hello/features/family_care/providers/active_patient_profile_provider.dart';
 import 'package:hello/features/family_care/providers/family_dashboard_provider.dart';
 
@@ -41,6 +42,11 @@ class LogoutService {
       // this device.
       await prefs.remove('dashboard_show_top_doctors');
       DashboardDisplaySettings().resetHydration();
+
+      // Same reasoning as dashboard preferences above: this is account-scoped
+      // and backend-synced, so clear the local cache on logout.
+      await prefs.remove('upload_ai_medical_check_disabled');
+      UploadAiCheckSettings().resetHydration();
 
       if (kDebugMode) {
         print('User logged out successfully - all session data cleared');

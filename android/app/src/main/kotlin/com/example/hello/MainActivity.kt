@@ -10,9 +10,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.telephony.SmsManager
+import android.view.WindowManager
 import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
@@ -25,6 +27,16 @@ class MainActivity: FlutterActivity() {
     private val sosSmsChannel = "medical_vault/sos_sms"
     private val googleConfigChannel = "medical_vault/google_sign_in_config"
     private val smsTimeoutMs = 15000L
+
+    // Blocks screenshots and screen recording of medical document/session
+    // content, and blanks the OS app-switcher thumbnail as a side effect.
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
